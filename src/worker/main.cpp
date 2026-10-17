@@ -1,0 +1,264 @@
+// denpachan-worker: 1 チャンネル分の受信 → デコード → 仮想カメラ出力。
+//
+// M1 では単体で起動する (エンジンからの起動・監視は M3)。
+//   denpachan-worker --ch 1 --cam 1 --port 9001
+//   denpachan-worker --ch 2 --cam 2 --srt-mode caller --host 203.0.113.10 --port 5000 --passphrase xxxxxxxxxx
+
+#include <srt/srt.h>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+
+#include <atomic>
+#include <charconv>
+#include <cstdio>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "byte_queue.h"
+#include "decoder.h"
+#include "denpachan/win_util.h"
+#include "frame_queue.h"
+#include "metrics.h"
+#include "playout.h"
+#include "srt_ingest.h"
+#include "vcam_writer.h"
+
+using namespace denpachan;
+using namespace denpachan::worker;
+
+namespace {
+
+struct Options {
+    int ch = 1;
+    int cam = 1;  // 0 = vcam に出さない
+    SrtOptions srt;
+    PlayoutOptions playout;
+    bool hw = true;
+    std::string log_file;
+};
+
+void print_usage() {
+    std::fputs(
+        "usage: denpachan-worker [options]\n"
+        "  --ch N              channel number (log label)         [1]\n"
+        "  --cam N             virtual camera 1-4, 0 = none       [1]\n"
+        "  --srt-mode M        listener | caller                  [listener]\n"
+        "  --host H            listener: bind address / caller: remote host [0.0.0.0]\n"
+        "  --port P            SRT port (required)\n"
+        "  --latency MS        SRT latency; the larger of ours and the sender's is used [120]\n"
+        "  --passphrase S      SRT passphrase (10-79 chars)\n"
+        "  --pbkeylen N        16 | 24 | 32\n"
+        "  --streamid S        SRT stream id (caller)\n"
+        "  --buffer MS         playout buffer                     [0]\n"
+        "  --stall-ms MS       time without video before state becomes Hold [2000]\n"
+        "  --no-hw             disable hardware decoding\n"
+        "  --log-file PATH     also log to a rotating file\n"
+        "\n"
+        "usage: denpachan-worker --reset-cam N\n"
+        "  reset camera N to NO SIGNAL (until video is received again)\n",
+        stderr);
+}
+
+std::optional<int> to_int(std::string_view s) {
+    int v = 0;
+    const auto [p, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+    if (ec != std::errc{} || p != s.data() + s.size()) return std::nullopt;
+    return v;
+}
+
+std::optional<Options> parse_args(int argc, char** argv) {
+    Options o;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view a = argv[i];
+        auto value = [&]() -> std::optional<std::string_view> {
+            if (i + 1 >= argc) return std::nullopt;
+            return std::string_view(argv[++i]);
+        };
+        auto int_value = [&](int& out) {
+            const auto v = value();
+            const auto n = v ? to_int(*v) : std::nullopt;
+            if (n) out = *n;
+            return n.has_value();
+        };
+        auto str_value = [&](std::string& out) {
+            const auto v = value();
+            if (v) out = std::string(*v);
+            return v.has_value();
+        };
+
+        bool ok = true;
+        if (a == "--ch") ok = int_value(o.ch);
+        else if (a == "--cam") ok = int_value(o.cam);
+        else if (a == "--srt-mode") ok = str_value(o.srt.mode);
+        else if (a == "--host") ok = str_value(o.srt.host);
+        else if (a == "--port") ok = int_value(o.srt.port);
+        else if (a == "--latency") ok = int_value(o.srt.latency_ms);
+        else if (a == "--passphrase") ok = str_value(o.srt.passphrase);
+        else if (a == "--pbkeylen") ok = int_value(o.srt.pbkeylen);
+        else if (a == "--streamid") ok = str_value(o.srt.streamid);
+        else if (a == "--buffer") ok = int_value(o.playout.buffer_ms);
+        else if (a == "--stall-ms") ok = int_value(o.playout.stall_ms);
+        else if (a == "--no-hw") o.hw = false;
+        else if (a == "--log-file") ok = str_value(o.log_file);
+        else ok = false;
+
+        if (!ok) {
+            std::fprintf(stderr, "invalid argument: %s\n", argv[i]);
+            return std::nullopt;
+        }
+    }
+    if (o.srt.port <= 0 || o.cam < 0 || o.cam > vcam::kNumCams ||
+        (o.srt.mode != "listener" && o.srt.mode != "caller")) {
+        return std::nullopt;
+    }
+    return o;
+}
+
+UniqueHandle g_stop_event;
+
+BOOL WINAPI on_console_ctrl(DWORD) {
+    SetEvent(g_stop_event.get());
+    return TRUE;
+}
+
+void setup_logging(const Options& o) {
+    std::vector<spdlog::sink_ptr> sinks{std::make_shared<spdlog::sinks::stdout_color_sink_mt>()};
+    if (!o.log_file.empty()) {
+        sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(o.log_file, 10 * 1024 * 1024, 5));
+    }
+    auto logger = std::make_shared<spdlog::logger>("ch" + std::to_string(o.ch), sinks.begin(), sinks.end());
+    logger->set_pattern("%Y-%m-%d %H:%M:%S.%e [%n] %^%l%$ %v");
+    logger->flush_on(spdlog::level::warn);
+    spdlog::set_default_logger(logger);
+    spdlog::flush_every(std::chrono::seconds(1));
+}
+
+// 1 秒ごとのメトリクス出力 (M3 以降はエンジンへ送る)
+class MetricsReporter {
+public:
+    explicit MetricsReporter(ChannelMetrics& m) : m_(m) {}
+
+    void report() {
+        const uint64_t bytes = m_.bytes_in.load();
+        const uint64_t decoded = m_.frames_decoded.load();
+        const uint64_t presented = m_.frames_presented.load();
+        std::string peer, codec;
+        SrtStats srt;
+        {
+            std::lock_guard lk(m_.mutex);
+            peer = m_.peer;
+            codec = m_.codec;
+            srt = m_.srt;
+        }
+        if (m_.connected) {
+            spdlog::info(
+                "{} {} {}x{} {} | {:.2f} Mbps | dec {} fps, out {} fps, delay {} ms | drop late {} queue {} | "
+                "err {} | srt latency {} ms rtt {:.1f} ms buf {} ms lost {} retrans {} drop {}",
+                peer, codec, m_.width.load(), m_.height.load(), m_.hw_decode ? "hw" : "sw",
+                double(bytes - last_bytes_) * 8 / 1e6, decoded - last_decoded_, presented - last_presented_,
+                m_.delay_us.load() / 1000, m_.frames_dropped_late.load(), m_.frames_dropped_queue.load(),
+                m_.decode_errors.load(), srt.tsbpd_delay_ms, srt.rtt_ms, srt.rcv_buf_ms, srt.lost_total, srt.retrans_total,
+                srt.dropped_total);
+        }
+        last_bytes_ = bytes;
+        last_decoded_ = decoded;
+        last_presented_ = presented;
+    }
+
+private:
+    ChannelMetrics& m_;
+    uint64_t last_bytes_ = 0;
+    uint64_t last_decoded_ = 0;
+    uint64_t last_presented_ = 0;
+};
+
+}  // namespace
+
+// 仮想カメラの表示を NO SIGNAL に戻す (M3 以降は UI → エンジンから行う)
+int reset_cam(std::string_view arg) {
+    const auto cam = to_int(arg);
+    if (!cam || *cam < 1 || *cam > vcam::kNumCams) {
+        print_usage();
+        return 2;
+    }
+    SharedMapping mapping;
+    vcam::Header* header = vcam::open_shared(mapping, *cam);
+    if (!header) {
+        std::fprintf(stderr, "cannot open vcam %d\n", *cam);
+        return 1;
+    }
+    vcam::reset_display(header);
+    std::fprintf(stderr, "vcam %d reset to NO SIGNAL\n", *cam);
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--reset-cam") return reset_cam(argv[2]);
+
+    const auto opts = parse_args(argc, argv);
+    if (!opts) {
+        print_usage();
+        return 2;
+    }
+    setup_logging(*opts);
+
+    // 配信中にスリープ・省電力で止まらないようにする (設計書 §4)
+    SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+    SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
+    PROCESS_POWER_THROTTLING_STATE throttling{};
+    throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    throttling.StateMask = 0;  // EcoQoS を使わない
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &throttling, sizeof(throttling));
+
+    g_stop_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    SetConsoleCtrlHandler(on_console_ctrl, TRUE);
+
+    if (srt_startup() < 0) {
+        spdlog::critical("srt_startup failed");
+        return 1;
+    }
+
+    ChannelMetrics metrics;
+    ByteQueue bytes(16 * 1024 * 1024);
+    FrameQueue frames(24);
+
+    std::unique_ptr<VcamWriter> writer;
+    if (opts->cam > 0) {
+        writer = std::make_unique<VcamWriter>();
+        if (!writer->open(opts->cam)) return 1;
+    }
+
+    SrtIngest ingest(opts->srt, bytes, metrics);
+    Decoder decoder("mpegts", bytes, frames, metrics, opts->hw);
+    Playout playout(opts->playout, frames, writer.get(), metrics);
+
+    spdlog::info("worker start: ch {} -> cam {}", opts->ch, opts->cam);
+    playout.start();
+    decoder.start();
+    if (!ingest.start()) {
+        bytes.stop();
+        frames.stop();
+        decoder.stop();
+        playout.stop();
+        return 1;
+    }
+
+    MetricsReporter reporter(metrics);
+    while (WaitForSingleObject(g_stop_event.get(), 1000) == WAIT_TIMEOUT) reporter.report();
+
+    spdlog::info("worker stopping");
+    ingest.stop();
+    bytes.stop();
+    decoder.stop();
+    frames.stop();
+    playout.stop();
+    if (writer) writer->close();
+    srt_cleanup();
+    spdlog::info("worker stopped");
+    return 0;
+}

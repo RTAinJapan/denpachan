@@ -1,0 +1,26 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/out/build",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "x64",
+      "inherits": "base",
+      "displayName": "x64 (MSVC, Ninja Multi-Config)",
+      "architecture": { "value": "x64", "strategy": "external" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "x64", "configuration": "Debug" },
+    { "name": "release", "configurePreset": "x64", "configuration": "Release" }
+  ]
+}

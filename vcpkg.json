@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "denpachan",
+  "version-string": "0.1.0",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [ "avcodec", "avformat", "swresample", "swscale" ]
+    },
+    "libsrt",
+    "spdlog"
+  ],
+  "builtin-baseline": "bf19794383e8fb95eba5aa553235bc8ec2271688"
+}
