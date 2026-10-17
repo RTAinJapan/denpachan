@@ -19,9 +19,15 @@ int64_t frame_duration_us(const AVStream* st) {
 
 }  // namespace
 
-Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, ChannelMetrics& metrics,
-                 bool allow_hw)
-    : input_format_(std::move(input_format)), input_(input), output_(output), metrics_(metrics), hw_enabled_(allow_hw) {
+Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, AudioWriter* audio,
+                 ChannelMetrics& metrics, bool allow_hw)
+    : input_format_(std::move(input_format)),
+      input_(input),
+      output_(output),
+      audio_(audio),
+      metrics_(metrics),
+      audio_frame_(av_frame_alloc()),
+      hw_enabled_(allow_hw) {
     if (hw_enabled_) {
         AVBufferRef* dev = nullptr;
         const int err = av_hwdevice_ctx_create(&dev, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0);
@@ -34,7 +40,11 @@ Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output,
     }
 }
 
-Decoder::~Decoder() { stop(); }
+Decoder::~Decoder() {
+    stop();
+    swr_free(&swr_);
+    av_channel_layout_uninit(&swr_in_layout_);
+}
 
 void Decoder::start() {
     stop_ = false;
@@ -149,6 +159,71 @@ void Decoder::handle_frame(AVFrame* frame, const AVStream* stream, uint64_t sess
     if (output_.push(DecodedFrame{std::move(out), pts_us, qpc_now(), session})) ++metrics_.frames_dropped_queue;
 }
 
+bool Decoder::open_audio_decoder(const AVStream* stream) {
+    audio_codec_.reset();
+    const AVCodec* dec = avcodec_find_decoder(stream->codecpar->codec_id);
+    if (!dec) {
+        spdlog::warn("decoder: no audio decoder for codec id {}", int(stream->codecpar->codec_id));
+        return false;
+    }
+    CodecContextPtr ctx(avcodec_alloc_context3(dec));
+    if (!ctx || avcodec_parameters_to_context(ctx.get(), stream->codecpar) < 0) return false;
+    ctx->pkt_timebase = stream->time_base;
+    const int err = avcodec_open2(ctx.get(), dec, nullptr);
+    if (err < 0) {
+        spdlog::warn("decoder: open audio {} failed: {}", dec->name, av_error_string(err));
+        return false;
+    }
+    spdlog::info("decoder: audio {} {} Hz {} ch", dec->name, ctx->sample_rate, ctx->ch_layout.nb_channels);
+    audio_codec_ = std::move(ctx);
+    return true;
+}
+
+void Decoder::handle_audio_frame(const AVFrame* frame, const AVStream* stream, uint64_t session) {
+    // 入力形式が変わったら変換器を作り直す
+    if (!swr_ || frame->format != swr_in_format_ || frame->sample_rate != swr_in_rate_ ||
+        av_channel_layout_compare(&frame->ch_layout, &swr_in_layout_) != 0) {
+        swr_free(&swr_);
+        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+        if (swr_alloc_set_opts2(&swr_, &stereo, AV_SAMPLE_FMT_FLT, int(audio::kSampleRate), &frame->ch_layout,
+                                AVSampleFormat(frame->format), frame->sample_rate, 0, nullptr) < 0 ||
+            swr_init(swr_) < 0) {
+            swr_free(&swr_);
+            ++metrics_.decode_errors;
+            return;
+        }
+        av_channel_layout_uninit(&swr_in_layout_);
+        av_channel_layout_copy(&swr_in_layout_, &frame->ch_layout);
+        swr_in_format_ = frame->format;
+        swr_in_rate_ = frame->sample_rate;
+    }
+
+    const int max_out = swr_get_out_samples(swr_, frame->nb_samples);
+    if (max_out <= 0) return;
+    audio_buf_.resize(size_t(max_out) * audio::kChannels);
+    uint8_t* out[1] = {reinterpret_cast<uint8_t*>(audio_buf_.data())};
+    const int n = swr_convert(swr_, out, max_out, frame->extended_data, frame->nb_samples);
+    if (n <= 0) return;
+
+    int64_t ts = frame->best_effort_timestamp;
+    if (ts == AV_NOPTS_VALUE) ts = frame->pts;
+    if (ts == AV_NOPTS_VALUE) return;  // 時刻がなければ合わせようがない
+    const int64_t pts_us = av_rescale_q(ts, stream->time_base, AVRational{1, 1'000'000});
+    audio_->write(session, pts_us, qpc_now(), audio_buf_.data(), n);
+}
+
+void Decoder::decode_audio(const AVPacket* pkt, const AVStream* stream, uint64_t session) {
+    int err = avcodec_send_packet(audio_codec_.get(), pkt);
+    if (err < 0 && err != AVERROR(EAGAIN)) {
+        ++metrics_.decode_errors;
+        return;
+    }
+    while (avcodec_receive_frame(audio_codec_.get(), audio_frame_.get()) == 0) {
+        handle_audio_frame(audio_frame_.get(), stream, session);
+        av_frame_unref(audio_frame_.get());
+    }
+}
+
 void Decoder::run_session(uint64_t session) {
     session_ = session;
     last_pts_us_ = AV_NOPTS_VALUE;
@@ -168,6 +243,7 @@ void Decoder::run_session(uint64_t session) {
 
     auto cleanup = [&] {
         codec_.reset();
+        audio_codec_.reset();
         avformat_close_input(&fmt);  // 失敗時は open_input が解放済みで nullptr
         if (pb) av_freep(&pb->buffer);
         avio_context_free(&pb);
@@ -197,6 +273,16 @@ void Decoder::run_session(uint64_t session) {
         cleanup();
         return;
     }
+    int aidx = -1;
+    if (audio_) {
+        aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, vidx, nullptr, 0);
+        if (aidx < 0) {
+            spdlog::warn("decoder: no audio stream");
+        } else if (!open_audio_decoder(fmt->streams[aidx])) {
+            aidx = -1;
+        }
+    }
+    const AVStream* audio_stream = aidx >= 0 ? fmt->streams[aidx] : nullptr;
 
     PacketPtr pkt(av_packet_alloc());
     FramePtr frame(av_frame_alloc());
@@ -222,6 +308,11 @@ void Decoder::run_session(uint64_t session) {
     while (!stop_ && codec_) {
         err = av_read_frame(fmt, pkt.get());
         if (err < 0) break;  // セッション終了 (EOF) / 停止
+        if (pkt->stream_index == aidx) {
+            decode_audio(pkt.get(), audio_stream, session);
+            av_packet_unref(pkt.get());
+            continue;
+        }
         if (pkt->stream_index != vidx) {
             av_packet_unref(pkt.get());
             continue;

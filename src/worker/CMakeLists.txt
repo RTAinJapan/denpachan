@@ -8,6 +8,7 @@ add_executable(denpachan-worker
     srt_ingest.cpp
     decoder.cpp
     playout.cpp
+    audio_writer.cpp
     scaler.cpp
     vcam_writer.cpp
 )

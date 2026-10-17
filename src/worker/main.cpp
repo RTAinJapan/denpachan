@@ -18,8 +18,12 @@
 #include <string_view>
 #include <vector>
 
+#include <cmath>
+
+#include "audio_writer.h"
 #include "byte_queue.h"
 #include "decoder.h"
+#include "playout_clock.h"
 #include "denpachan/win_util.h"
 #include "frame_queue.h"
 #include "metrics.h"
@@ -38,6 +42,7 @@ struct Options {
     SrtOptions srt;
     PlayoutOptions playout;
     bool hw = true;
+    bool audio = true;
     std::string log_file;
 };
 
@@ -56,6 +61,7 @@ void print_usage() {
         "  --buffer MS         playout buffer                     [0]\n"
         "  --stall-ms MS       time without video before state becomes Hold [2000]\n"
         "  --no-hw             disable hardware decoding\n"
+        "  --no-audio          do not output audio\n"
         "  --log-file PATH     also log to a rotating file\n"
         "\n"
         "usage: denpachan-worker --reset-cam N\n"
@@ -103,6 +109,7 @@ std::optional<Options> parse_args(int argc, char** argv) {
         else if (a == "--buffer") ok = int_value(o.playout.buffer_ms);
         else if (a == "--stall-ms") ok = int_value(o.playout.stall_ms);
         else if (a == "--no-hw") o.hw = false;
+        else if (a == "--no-audio") o.audio = false;
         else if (a == "--log-file") ok = str_value(o.log_file);
         else ok = false;
 
@@ -154,19 +161,27 @@ public:
             codec = m_.codec;
             srt = m_.srt;
         }
+        const uint64_t audio_frames = m_.audio_frames.load();
+        const float peak_l = m_.audio_peak_l.exchange(0);
+        const float peak_r = m_.audio_peak_r.exchange(0);
+        auto dbfs = [](float v) { return v > 1e-5f ? 20.0 * std::log10(v) : -100.0; };
         if (m_.connected) {
             spdlog::info(
                 "{} {} {}x{} {} | {:.2f} Mbps | dec {} fps, out {} fps, delay {} ms | drop late {} queue {} | "
-                "err {} | srt latency {} ms rtt {:.1f} ms buf {} ms lost {} retrans {} drop {}",
+                "err {} | audio {} Hz peak {:.1f}/{:.1f} dBFS gaps {} delay {} ms a/v {:+} ms | "
+                "srt latency {} ms rtt {:.1f} ms buf {} ms lost {} retrans {} drop {}",
                 peer, codec, m_.width.load(), m_.height.load(), m_.hw_decode ? "hw" : "sw",
                 double(bytes - last_bytes_) * 8 / 1e6, decoded - last_decoded_, presented - last_presented_,
                 m_.delay_us.load() / 1000, m_.frames_dropped_late.load(), m_.frames_dropped_queue.load(),
-                m_.decode_errors.load(), srt.tsbpd_delay_ms, srt.rtt_ms, srt.rcv_buf_ms, srt.lost_total, srt.retrans_total,
-                srt.dropped_total);
+                m_.decode_errors.load(), audio_frames - last_audio_frames_, dbfs(peak_l), dbfs(peak_r),
+                m_.audio_gaps.load(), m_.audio_delay_us.load() / 1000, m_.av_offset_us.load() / 1000,
+                srt.tsbpd_delay_ms, srt.rtt_ms, srt.rcv_buf_ms, srt.lost_total,
+                srt.retrans_total, srt.dropped_total);
         }
         last_bytes_ = bytes;
         last_decoded_ = decoded;
         last_presented_ = presented;
+        last_audio_frames_ = audio_frames;
     }
 
 private:
@@ -174,6 +189,7 @@ private:
     uint64_t last_bytes_ = 0;
     uint64_t last_decoded_ = 0;
     uint64_t last_presented_ = 0;
+    uint64_t last_audio_frames_ = 0;
 };
 
 }  // namespace
@@ -233,9 +249,16 @@ int main(int argc, char** argv) {
         if (!writer->open(opts->cam)) return 1;
     }
 
+    PlayoutClock clock(opts->playout.buffer_ms);
+    std::unique_ptr<AudioWriter> audio;
+    if (opts->audio) {
+        audio = std::make_unique<AudioWriter>(clock, metrics);
+        if (!audio->open(opts->ch)) return 1;
+    }
+
     SrtIngest ingest(opts->srt, bytes, metrics);
-    Decoder decoder("mpegts", bytes, frames, metrics, opts->hw);
-    Playout playout(opts->playout, frames, writer.get(), metrics);
+    Decoder decoder("mpegts", bytes, frames, audio.get(), metrics, opts->hw);
+    Playout playout(opts->playout, clock, frames, writer.get(), metrics);
 
     spdlog::info("worker start: ch {} -> cam {}", opts->ch, opts->cam);
     playout.start();
@@ -258,6 +281,7 @@ int main(int argc, char** argv) {
     frames.stop();
     playout.stop();
     if (writer) writer->close();
+    if (audio) audio->close();
     srt_cleanup();
     spdlog::info("worker stopped");
     return 0;

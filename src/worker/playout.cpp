@@ -10,8 +10,9 @@ namespace denpachan::worker {
 
 using namespace std::chrono_literals;
 
-Playout::Playout(PlayoutOptions options, FrameQueue& queue, VcamWriter* writer, ChannelMetrics& metrics)
-    : options_(options), queue_(queue), writer_(writer), metrics_(metrics) {
+Playout::Playout(PlayoutOptions options, PlayoutClock& clock, FrameQueue& queue, VcamWriter* writer,
+                 ChannelMetrics& metrics)
+    : options_(options), clock_(clock), queue_(queue), writer_(writer), metrics_(metrics) {
     timer_.reset(CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS));
     if (!timer_) timer_.reset(CreateWaitableTimerW(nullptr, FALSE, nullptr));
 }
@@ -49,17 +50,15 @@ void Playout::run() {
     DWORD task_index = 0;
     HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Playback", &task_index);
 
-    const int64_t buffer = qpc_from_ms(options_.buffer_ms);
+    const int64_t buffer = clock_.buffer_qpc();
     const int64_t stall = qpc_from_ms(options_.stall_ms);
 
-    bool anchored = false;
-    uint64_t anchor_session = 0;
-    int64_t anchor_pts_us = 0;
-    int64_t anchor_qpc = 0;
+    uint64_t last_session = 0;
     int64_t last_pts_us = 0;
     int64_t last_arrival_qpc = 0;
     int64_t frame_us = 16'667;
 
+    uint64_t clock_generation = 0;
     int64_t window_start = 0;
     int64_t window_min_slack = LLONG_MAX;
 
@@ -76,7 +75,7 @@ void Playout::run() {
             // 途絶中は最後のフレームを出し続ける (NO SIGNAL にはしない)
             if (live && now - last_output_qpc > stall) {
                 live = false;
-                anchored = false;
+                clock_.invalidate();
                 if (writer_) writer_->set_state(vcam::WriterState::Hold);
                 spdlog::info("playout: stalled, holding last frame");
             }
@@ -88,7 +87,7 @@ void Playout::run() {
         // 送出停止時にデマクサ内に残っていた末尾が切断後に出てくるもので、出すと保持中の絵が
         // 一瞬だけ切り替わって live 扱いになる。
         const int64_t gap_us = f->pts_us - last_pts_us;
-        if (f->session == anchor_session && gap_us > 0 && gap_us < 1'000'000 &&
+        if (f->session == last_session && gap_us > 0 && gap_us < 1'000'000 &&
             f->arrival_qpc - last_arrival_qpc > stall) {
             last_arrival_qpc = f->arrival_qpc;
             last_pts_us = f->pts_us;
@@ -97,29 +96,32 @@ void Playout::run() {
         }
         last_arrival_qpc = f->arrival_qpc;
 
-        // 時間軸の取り直し: 新しい接続 / タイムスタンプの飛び (1 秒以上)
-        if (!anchored || f->session != anchor_session || gap_us < -1'000'000 || gap_us > 1'000'000) {
-            if (anchored) spdlog::info("playout: re-anchor (gap {} ms)", gap_us / 1000);
-            anchored = true;
-            anchor_session = f->session;
-            anchor_pts_us = f->pts_us;
-            anchor_qpc = f->arrival_qpc + buffer;
-            window_start = now;
-            window_min_slack = LLONG_MAX;
+        // 時間軸の取り直し: タイムスタンプの飛び (1 秒以上)。新しい接続は due() が取り直す。
+        if (f->session == last_session && clock_.anchored_for(f->session) &&
+            (gap_us < -1'000'000 || gap_us > 1'000'000)) {
+            spdlog::info("playout: re-anchor (gap {} ms)", gap_us / 1000);
+            clock_.reanchor(f->session, f->pts_us, f->arrival_qpc);
         } else if (gap_us > 0 && gap_us < 100'000) {
             frame_us = gap_us;
         }
+        last_session = f->session;
         last_pts_us = f->pts_us;
 
+        int64_t target = clock_.due(f->session, f->pts_us, f->arrival_qpc);
+        if (const uint64_t g = clock_.generation(); g != clock_generation) {
+            clock_generation = g;
+            window_start = now;
+            window_min_slack = LLONG_MAX;
+        }
+
         // 遅延を再生バッファの値に保つ
-        int64_t target = anchor_qpc + qpc_from_us(f->pts_us - anchor_pts_us);
         window_min_slack = std::min(window_min_slack, target - f->arrival_qpc);
         if (now - window_start >= qpc_from_ms(1000)) {
             const int64_t error = window_min_slack - buffer;  // 正: 遅延が大きすぎる / 負: 小さすぎる
             const int64_t step = std::abs(error) > qpc_from_us(frame_us * 3)
                                      ? error
                                      : std::clamp(error, -qpc_from_ms(1), qpc_from_ms(1));
-            anchor_qpc -= step;
+            clock_.shift(step);
             target -= step;
             window_start = now;
             window_min_slack = LLONG_MAX;

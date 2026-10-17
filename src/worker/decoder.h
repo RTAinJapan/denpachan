@@ -1,24 +1,32 @@
 #pragma once
-// デマックス + 映像デコード。
+// デマックス + 映像・音声デコード。
 //
 // ByteQueue のセッション (接続) ごとに libavformat の入力を開き直す。
-// デコードは D3D11VA を優先し、使えない / エラーが続く場合はソフトウェアに切り替える。
+// 映像は D3D11VA を優先し、使えない / エラーが続く場合はソフトウェアに切り替える。
 // デコード結果は CPU 上のフレームとして FrameQueue に渡す。
+// 音声は 48kHz / float32 / ステレオに変換して AudioWriter に渡す。
 
 #include <atomic>
 #include <string>
 #include <thread>
+#include <vector>
 
+#include "audio_writer.h"
 #include "byte_queue.h"
 #include "ffmpeg_util.h"
 #include "frame_queue.h"
 #include "metrics.h"
 
+extern "C" {
+#include <libswresample/swresample.h>
+}
+
 namespace denpachan::worker {
 
 class Decoder {
 public:
-    Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, ChannelMetrics& metrics, bool allow_hw);
+    Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, AudioWriter* audio,
+            ChannelMetrics& metrics, bool allow_hw);
     ~Decoder();
 
     void start();
@@ -29,6 +37,9 @@ private:
     void run_session(uint64_t session);
     bool open_decoder(const AVStream* stream);
     void handle_frame(AVFrame* frame, const AVStream* stream, uint64_t session);
+    bool open_audio_decoder(const AVStream* stream);
+    void decode_audio(const AVPacket* pkt, const AVStream* stream, uint64_t session);
+    void handle_audio_frame(const AVFrame* frame, const AVStream* stream, uint64_t session);
 
     static int read_packet(void* opaque, uint8_t* buf, int size);
     static int interrupt_cb(void* opaque);
@@ -37,7 +48,16 @@ private:
     const std::string input_format_;
     ByteQueue& input_;
     FrameQueue& output_;
+    AudioWriter* audio_;  // nullptr = 音声を出さない
     ChannelMetrics& metrics_;
+
+    CodecContextPtr audio_codec_;
+    FramePtr audio_frame_;
+    SwrContext* swr_ = nullptr;
+    AVChannelLayout swr_in_layout_{};
+    int swr_in_format_ = -1;
+    int swr_in_rate_ = 0;
+    std::vector<float> audio_buf_;
 
     bool hw_enabled_;
     BufferRefPtr hw_device_;

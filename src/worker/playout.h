@@ -13,6 +13,7 @@
 #include "denpachan/win_util.h"
 #include "frame_queue.h"
 #include "metrics.h"
+#include "playout_clock.h"
 #include "vcam_writer.h"
 
 namespace denpachan::worker {
@@ -24,7 +25,8 @@ struct PlayoutOptions {
 
 class Playout {
 public:
-    Playout(PlayoutOptions options, FrameQueue& queue, VcamWriter* writer, ChannelMetrics& metrics);
+    Playout(PlayoutOptions options, PlayoutClock& clock, FrameQueue& queue, VcamWriter* writer,
+            ChannelMetrics& metrics);
     ~Playout();
 
     void start();
@@ -35,6 +37,7 @@ private:
     bool wait_until(int64_t target_qpc);
 
     const PlayoutOptions options_;
+    PlayoutClock& clock_;
     FrameQueue& queue_;
     VcamWriter* writer_;  // nullptr = vcam 出力なし
     ChannelMetrics& metrics_;
