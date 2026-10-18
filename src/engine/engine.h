@@ -1,0 +1,52 @@
+#pragma once
+// engine の中心: 設定・worker・音声出力をまとめ、IPC の要求を処理する。設計書 §2 / §10。
+
+#include <nlohmann/json.hpp>
+
+#include <array>
+#include <memory>
+#include <mutex>
+#include <string>
+
+#include "audio_router.h"
+#include "config.h"
+#include "denpachan/vcam_shm.h"
+#include "denpachan/win_util.h"
+#include "worker_process.h"
+
+namespace denpachan::engine {
+
+class Engine {
+public:
+    Engine(std::wstring config_path, std::wstring worker_exe, std::wstring log_dir);
+    ~Engine();
+
+    // 設定を読み、前回動いていたチャンネルを再開する
+    void init();
+    // 定期処理 (worker の監視、見つからない音声デバイスの探し直し)。200ms ごとに呼ぶ。
+    void tick();
+    // IPC の要求を処理する。エラーは例外で返す。
+    nlohmann::json handle(const std::string& method, const nlohmann::json& params);
+    nlohmann::json state();
+    // stop_workers = false なら worker は動かしたまま終わる (engine を入れ替えるとき用)
+    void shutdown(bool stop_workers);
+
+private:
+    std::wstring worker_args(const ChannelConfig& ch) const;
+    void apply_channel_locked(int ch);
+    void save_locked();
+    nlohmann::json state_locked();
+
+    std::mutex mutex_;
+    const std::wstring config_path_;
+    const std::wstring worker_exe_;
+    const std::wstring log_dir_;
+    Config config_;
+    std::array<std::unique_ptr<WorkerProcess>, kChannelCount> workers_;
+    AudioRouter audio_;
+    SharedMapping vcam_mappings_[vcam::kNumCams];
+    vcam::Header* vcam_headers_[vcam::kNumCams] = {};
+    int64_t last_audio_retry_qpc_ = 0;
+};
+
+}  // namespace denpachan::engine

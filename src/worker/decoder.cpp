@@ -306,8 +306,10 @@ void Decoder::run_session(uint64_t session) {
     };
 
     while (!stop_ && codec_) {
-        err = av_read_frame(fmt, pkt.get());
-        if (err < 0) break;  // セッション終了 (EOF) / 停止
+        err = av_read_frame(fmt, pkt.get());  // ネットワーク待ちでブロックしうる
+        if (err < 0) break;                   // セッション終了 (EOF) / 停止
+        // ここから先のデコード処理 (ブロックしないはず) で固まったら engine が検出する
+        DecoderBusy busy(metrics_);
         if (pkt->stream_index == aidx) {
             decode_audio(pkt.get(), audio_stream, session);
             av_packet_unref(pkt.get());

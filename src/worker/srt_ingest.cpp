@@ -78,7 +78,17 @@ void SrtIngest::stop() {
     if (thread_.joinable()) thread_.join();
 }
 
-bool SrtIngest::sleep_interruptible(int ms) { return WaitForSingleObject(stop_event_.get(), DWORD(ms)) == WAIT_TIMEOUT; }
+bool SrtIngest::sleep_interruptible(int ms) {
+    // 待っている間もハートビートを出す (engine に固まったと思われないように)
+    while (ms > 0) {
+        metrics_.heartbeat_ingest();
+        const int chunk = std::min(ms, 500);
+        if (WaitForSingleObject(stop_event_.get(), DWORD(chunk)) != WAIT_TIMEOUT) return false;
+        ms -= chunk;
+    }
+    metrics_.heartbeat_ingest();
+    return true;
+}
 
 bool SrtIngest::configure(int sock, bool listener) {
     auto set_int = [&](SRT_SOCKOPT opt, int value, const char* name) {
@@ -157,6 +167,10 @@ void SrtIngest::run_listener() {
             srt_bind(lsn, reinterpret_cast<sockaddr*>(&addr), addr_len) == SRT_ERROR ||
             srt_listen(lsn, 4) == SRT_ERROR) {
             spdlog::error("SRT: cannot listen on {}:{}: {}", options_.host, options_.port, last_error());
+            {
+                std::lock_guard lk(metrics_.mutex);
+                metrics_.last_error = std::string("cannot listen: ") + last_error();
+            }
             if (lsn != SRT_INVALID_SOCK) srt_close(lsn);
             if (!sleep_interruptible(2000)) return;
             continue;
@@ -178,6 +192,7 @@ void SrtIngest::run_listener() {
 
         int64_t last_stats = qpc_now();
         while (!stop_) {
+            metrics_.heartbeat_ingest();
             SRT_EPOLL_EVENT events[4];
             const int n = srt_epoll_uwait(eid, events, 4, 100);
             for (int i = 0; i < n; ++i) {
@@ -228,6 +243,7 @@ void SrtIngest::run_listener() {
 void SrtIngest::run_caller() {
     int backoff_ms = 500;
     while (!stop_) {
+        metrics_.heartbeat_ingest();  // srt_connect は最大 3 秒 (CONNTIMEO) ブロックする
         const SRTSOCKET sock = srt_create_socket();
         sockaddr_storage addr{};
         int addr_len = 0;
@@ -259,6 +275,7 @@ void SrtIngest::run_caller() {
 
         int64_t last_stats = qpc_now();
         while (!stop_) {
+            metrics_.heartbeat_ingest();
             SRT_EPOLL_EVENT events[1];
             const int n = srt_epoll_uwait(eid, events, 1, 100);
             if (n > 0 && ((events[0].events & SRT_EPOLL_ERR) || !pump(sock, queue_, metrics_))) break;

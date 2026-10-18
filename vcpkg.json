@@ -9,6 +9,7 @@
       "features": [ "avcodec", "avformat", "swresample", "swscale" ]
     },
     "libsrt",
+    "nlohmann-json",
     "spdlog"
   ],
   "builtin-baseline": "bf19794383e8fb95eba5aa553235bc8ec2271688"

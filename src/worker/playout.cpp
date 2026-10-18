@@ -32,6 +32,7 @@ void Playout::stop() {
 bool Playout::wait_until(int64_t target_qpc) {
     while (!stop_) {
         if (writer_) writer_->heartbeat();
+        metrics_.heartbeat_playout();
         const int64_t remaining = target_qpc - qpc_now();
         if (remaining <= 0) return true;
         const int64_t chunk_us = std::min<int64_t>(qpc_to_us(remaining), 50'000);
@@ -61,8 +62,16 @@ void Playout::run() {
     int64_t last_output_qpc = 0;
     FramePtr held;  // 最後に出したフレーム (途絶中に読み手が来たら書き直す)
 
+    const int64_t test_hang_at =
+        options_.test_hang_after_sec > 0 ? qpc_now() + qpc_from_ms(int64_t(options_.test_hang_after_sec) * 1000) : 0;
+
     while (!stop_) {
+        if (test_hang_at != 0 && qpc_now() >= test_hang_at) {
+            spdlog::warn("playout: test hang");
+            Sleep(INFINITE);
+        }
         if (writer_) writer_->heartbeat();
+        metrics_.heartbeat_playout();
         auto f = queue_.pop(50ms);
         const int64_t now = qpc_now();
 
@@ -72,6 +81,7 @@ void Playout::run() {
                 live = false;
                 clock_.invalidate();
                 if (writer_) writer_->set_state(vcam::WriterState::Hold);
+                metrics_.video_state = uint32_t(worker_status::VideoState::Hold);
                 spdlog::info("playout: stalled, holding last frame");
             }
             if (writer_) writer_->refresh(held.get());
@@ -131,6 +141,7 @@ void Playout::run() {
         if (!live) {
             live = true;
             if (writer_) writer_->set_state(vcam::WriterState::Live);
+            metrics_.video_state = uint32_t(worker_status::VideoState::Live);
             spdlog::info("playout: live");
         }
     }

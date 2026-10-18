@@ -52,6 +52,9 @@ public:
     DeviceStatus status();
     const DeviceOptions& options() const { return options_; }
 
+    // ミュートの切り替え (デバイスを開き直しても保たれる)
+    void set_mute(int ch, bool mute);
+
     // 各チャンネルの ChannelSource に f を適用する (デバイスを開いたことがなければ何もしない)
     template <typename F>
     void for_each_source(F&& f) {
@@ -69,7 +72,7 @@ private:
     void write_samples(BYTE* dst, int frames);
 
     const DeviceOptions options_;
-    const std::vector<RouteOptions> routes_;
+    std::vector<RouteOptions> routes_;  // mute だけ変わる (sources_mutex_ で保護)
 
     Microsoft::WRL::ComPtr<IAudioClient> client_;
     Microsoft::WRL::ComPtr<IAudioRenderClient> render_;

@@ -57,6 +57,14 @@ void DeviceOutput::stop() {
     if (thread_.joinable()) thread_.join();
 }
 
+void DeviceOutput::set_mute(int ch, bool mute) {
+    std::lock_guard lk(sources_mutex_);
+    for (auto& r : routes_)
+        if (r.ch == ch) r.mute = mute;
+    for (auto& s : sources_)
+        if (s->options().ch == ch) s->set_mute(mute);
+}
+
 DeviceStatus DeviceOutput::status() {
     std::lock_guard lk(status_mutex_);
     return status_;

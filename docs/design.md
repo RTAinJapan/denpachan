@@ -267,16 +267,16 @@ application live {
 
 | 障害 | 対策 |
 |------|------|
-| ワーカーのクラッシュ (FFmpeg, ドライバ) | エンジンが Job Object 配下で子プロセスとして管理し、終了を検知したら即再起動。直近 1 分で 5 回以上落ちた場合はバックオフ (UI に警告表示) |
+| ワーカーのクラッシュ (FFmpeg, ドライバ) | エンジンが子プロセスとして起動・監視し、終了を検知したら再起動する。連続で落ちるときは間隔を 0.5 → 1 → 2 → 5 秒と延ばす (60 秒動けばリセット)。落ちたときはミニダンプを `%LOCALAPPDATA%\denpachan\dumps` に保存する。worker は 0.5 秒で待ち受けを再開するが、映像が戻るまでの時間は送出側 (SRT caller) が切断に気づくまでの時間 (SRT の既定で最大 5 秒、送出側の peer idle timeout) に左右される |
 | RTMP ゲートウェイのクラッシュ | 同上。Nginx 側の `push_reconnect` で自動的に再 push される |
-| ワーカーのハング | 各スレッドが共有メモリ上のハートビートを更新。3 秒止まったらエンジンが強制終了 → 再起動 |
+| ワーカーのハング | 受信・出力スレッドが共有メモリ上のハートビートを更新し、デコーダはデコード処理に入った時刻を置く (ネットワーク待ちと区別するため)。どれかが 5 秒止まったらエンジンが強制終了 → 再起動 (起動直後 5 秒は猶予)。長い待ち (再接続の間隔など) は 0.5 秒ごとに区切ってハートビートを出す |
 | ストリーム途絶・再接続 | ワーカー内で自動再接続。途絶中は仮想カメラに最後のフレームを出し続ける (時間で NO SIGNAL に切り替えない)。worker が落ちて再起動する間も同じ |
 | RTMP の半開き接続 | 同一キーの新しい publish が来たら古い接続を切る。無通信 N 秒 (既定 5s) でも切断 |
 | 不正データ | デマックス / デコードエラーはカウントして読み飛ばす。連続エラーが閾値を超えたらデコーダ再生成 → それでもダメならワーカー再起動 |
 | 音声デバイスの消失 (DVS の再起動、デバイス変更) | `IMMNotificationClient` でデバイスの増減を監視し、復活したら自動で再オープン。その間は該当デバイスの出力だけ止まり、映像は継続 |
 | 録画のディスク遅延・容量不足 | 録画キューが溢れたら録画側のみフレームを捨てる。空き容量が閾値 (既定 5 GB) を切ったら録画を停止して警告。ライブ経路には影響させない |
 | UI のクラッシュ | 配信には影響なし。再起動後に現状をエンジンから取り直す |
-| エンジンのクラッシュ | エンジンは最小限に保つ。万一に備え、ログオン時の自動起動 + 「前回の待受状態を復元」オプションを用意。設定ファイルは一時ファイルに書いてからリネーム (原子的保存) |
+| エンジンのクラッシュ | **worker はエンジンが落ちても動き続ける** (映像は止まらない。音声出力はエンジン内なので止まる)。エンジンは起動時、同じコマンドライン (= 同じ設定) で動いている worker がいればそのまま引き継ぎ (worker の pid と引数のハッシュを共有メモリに置く)、設定の違う worker が残っていれば止めてから起動し直す。前回の待ち受け状態は設定ファイルから復元する。ログオン時の自動起動は M7 で用意する。設定ファイルは一時ファイルに書いてから差し替える (原子的保存) |
 | OS 起因 | スリープ抑止 (`SetThreadExecutionState`)、EcoQoS / 電力スロットリングの無効化、音声スレッドを MMCSS "Pro Audio" に登録、プロセス優先度 `ABOVE_NORMAL`、タイマー分解能の確保 |
 | GPU リセット (TDR) | D3D11 のデバイスロストを検知したらデバイスを作り直し、ソフトウェアデコードへ一時退避 |
 
@@ -592,16 +592,25 @@ stateDiagram-v2
 
 名前付きパイプ上の改行区切り JSON (リクエスト / レスポンス + サーバからのイベント通知)。
 
-**UI ⇔ エンジン** (`\\.\pipe\denpachan`)
+**UI ⇔ エンジン** (`\\.\pipe\denpachan`、現在のユーザーと SYSTEM のみ、リモート接続は拒否)
 
-| 種別 | 例 |
-|------|----|
-| 取得 | `getConfig`, `getState`, `listAudioDevices`, `listEncoders`, `getMetricsHistory(ch, seconds)` |
-| 操作 | `startChannel(ch)`, `stopChannel(ch)`, `setRecording(ch, on)`, `setPreview(ch, on)` |
-| 設定 | `updateChannel(ch, patch)`, `updateGeneral(patch)`, `updateRtmpServer(patch)` |
-| 通知 | `metrics` (1 秒ごと)、`stateChanged`、`event` (ログ)、`devicesChanged` |
+```
+要求: {"id": 1, "method": "patchChannel", "params": {"ch": 1, "patch": {"playoutBufferMs": 16}}}
+応答: {"id": 1, "result": {...}}  /  {"id": 1, "error": "ch1: port 9001 is already used"}
+通知: {"event": "state", "data": {...getState と同じ...}}   (1 秒ごと)
+```
 
-**エンジン ⇔ ワーカー / rtmpd**: 同じ形式の別パイプ (`\\.\pipe\denpachan-worker-{ch}`, `\\.\pipe\denpachan-rtmpd`)。映像 / 音声 / プレビュー / FLV / ハートビートは共有メモリ。
+| 種別 | メソッド (M3 時点) | 予定 |
+|------|------|------|
+| 取得 | `getConfig`, `getState`, `listAudioDevices` | `listEncoders`, `getMetricsHistory(ch, seconds)` |
+| 操作 | `startChannel(ch)`, `stopChannel(ch)`, `setMute(ch, mute)`, `resetCam(cam)` | `setRecording`, `setPreview` |
+| 設定 | `patchChannel(ch, patch)`, `patchGeneral(patch)` (JSON Merge Patch。検証してから保存・反映) | `patchRtmpServer` |
+| 通知 | `state` (1 秒ごと。全チャンネルの worker 状態・映像/SRT/音声メトリクス・音声デバイス状態) | |
+
+- 設定変更で worker に渡す内容が変われば worker を再起動する (再接続になる)。ミュートと音声のルーティングは worker を止めずに反映する (ルーティングの変わったデバイスだけ開き直す)。
+- 開発・試験用のコマンドライン クライアント `denpachan-ctl` (UI ができるまでの代わり)。
+
+**エンジン ⇔ ワーカー**: 設定は起動時のコマンドライン引数で渡す。状態 (pid、引数のハッシュ、スレッドごとのハートビート、1 秒ごとのメトリクス) は共有メモリ `Local\denpachan_worker_{ch}`、停止要求は名前付きイベント。映像 / 音声 / プレビュー / FLV は共有メモリ。パイプを使わないので、エンジンが落ちても worker は影響を受けない。
 
 メッセージ定義は `schema/ipc.json` (JSON Schema) を正とし、C++ と C# の型をそこから生成またはテストで突き合わせて、両言語の食い違いを防ぐ。
 

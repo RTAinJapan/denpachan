@@ -6,6 +6,9 @@
 #include <mutex>
 #include <string>
 
+#include "denpachan/win_util.h"
+#include "denpachan/worker_status.h"
+
 namespace denpachan::worker {
 
 struct SrtStats {
@@ -47,10 +50,42 @@ struct ChannelMetrics {
     std::atomic<uint64_t> frames_dropped_queue{0};
     std::atomic<int64_t> delay_us{0};  // 受信 (デコード完了) から vcam 出力までの遅延
 
+    std::atomic<uint32_t> video_state{0};  // worker_status::VideoState
+
     std::mutex mutex;  // 以下を保護
     std::string peer;
     std::string codec;
+    std::string last_error;
     SrtStats srt;
+
+    // engine に見せる状態の書き先 (worker_status 共有メモリ)。スレッドごとのハートビートをここに書く。
+    worker_status::Header* status = nullptr;
+
+    void heartbeat_ingest() {
+        if (status) status->ingest_heartbeat_qpc.store(qpc_now(), std::memory_order_relaxed);
+    }
+    void heartbeat_playout() {
+        if (status) status->playout_heartbeat_qpc.store(qpc_now(), std::memory_order_relaxed);
+    }
+    // デコード処理の出入り (ネットワーク待ちとは区別する)
+    void decoder_enter() {
+        if (status) status->decoder_busy_since_qpc.store(qpc_now(), std::memory_order_relaxed);
+    }
+    void decoder_leave() {
+        if (status) status->decoder_busy_since_qpc.store(0, std::memory_order_relaxed);
+    }
+};
+
+// デコード処理の区間 (この間に固まったら engine が検出する)
+class DecoderBusy {
+public:
+    explicit DecoderBusy(ChannelMetrics& m) : m_(m) { m_.decoder_enter(); }
+    ~DecoderBusy() { m_.decoder_leave(); }
+    DecoderBusy(const DecoderBusy&) = delete;
+    DecoderBusy& operator=(const DecoderBusy&) = delete;
+
+private:
+    ChannelMetrics& m_;
 };
 
 }  // namespace denpachan::worker

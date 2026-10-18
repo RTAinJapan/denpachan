@@ -22,6 +22,8 @@
 
 #include "audio_writer.h"
 #include "byte_queue.h"
+#include "denpachan/crash_dump.h"
+#include "denpachan/worker_status.h"
 #include "decoder.h"
 #include "playout_clock.h"
 #include "denpachan/win_util.h"
@@ -113,6 +115,7 @@ std::optional<Options> parse_args(int argc, char** argv) {
         else if (a == "--no-hw") o.hw = false;
         else if (a == "--no-audio") o.audio = false;
         else if (a == "--no-av-sync") o.av_sync = false;
+        else if (a == "--test-hang-playout") ok = int_value(o.playout.test_hang_after_sec);
         else if (a == "--log-file") ok = str_value(o.log_file);
         else ok = false;
 
@@ -147,7 +150,7 @@ void setup_logging(const Options& o) {
     spdlog::flush_every(std::chrono::seconds(1));
 }
 
-// 1 秒ごとのメトリクス出力 (M3 以降はエンジンへ送る)
+// 1 秒ごとのメトリクス出力 (ログと、engine に見せる共有メモリ)
 class MetricsReporter {
 public:
     explicit MetricsReporter(ChannelMetrics& m) : m_(m) {}
@@ -156,12 +159,13 @@ public:
         const uint64_t bytes = m_.bytes_in.load();
         const uint64_t decoded = m_.frames_decoded.load();
         const uint64_t presented = m_.frames_presented.load();
-        std::string peer, codec;
+        std::string peer, codec, last_error;
         SrtStats srt;
         {
             std::lock_guard lk(m_.mutex);
             peer = m_.peer;
             codec = m_.codec;
+            last_error = m_.last_error;
             srt = m_.srt;
         }
         const uint64_t audio_frames = m_.audio_frames.load();
@@ -180,6 +184,40 @@ public:
                 m_.audio_gaps.load(), m_.audio_delay_us.load() / 1000, m_.av_offset_us.load() / 1000,
                 srt.tsbpd_delay_ms, srt.rtt_ms, srt.rcv_buf_ms, srt.lost_total,
                 srt.retrans_total, srt.dropped_total);
+        }
+
+        if (m_.status) {
+            worker_status::Metrics s{};
+            s.connected = m_.connected ? 1 : 0;
+            s.connections = m_.connections.load();
+            strncpy_s(s.peer, peer.c_str(), _TRUNCATE);
+            strncpy_s(s.codec, codec.c_str(), _TRUNCATE);
+            strncpy_s(s.last_error, last_error.c_str(), _TRUNCATE);
+            s.width = m_.width.load();
+            s.height = m_.height.load();
+            s.hw_decode = m_.hw_decode ? 1 : 0;
+            s.video_state = m_.video_state.load();
+            s.bitrate_mbps = double(bytes - last_bytes_) * 8 / 1e6;
+            s.decode_fps = double(decoded - last_decoded_);
+            s.output_fps = double(presented - last_presented_);
+            s.video_delay_ms = double(m_.delay_us.load()) / 1000;
+            s.dropped_late = m_.frames_dropped_late.load();
+            s.dropped_queue = m_.frames_dropped_queue.load();
+            s.decode_errors = m_.decode_errors.load();
+            s.overflow_bytes = m_.overflow_bytes.load();
+            s.srt_latency_ms = srt.tsbpd_delay_ms;
+            s.srt_rcv_buf_ms = srt.rcv_buf_ms;
+            s.srt_rtt_ms = srt.rtt_ms;
+            s.srt_recv_mbps = srt.recv_mbps;
+            s.srt_lost = srt.lost_total;
+            s.srt_retrans = srt.retrans_total;
+            s.srt_dropped = srt.dropped_total;
+            s.audio_peak_l_db = dbfs(peak_l);
+            s.audio_peak_r_db = dbfs(peak_r);
+            s.audio_delay_ms = double(m_.audio_delay_us.load()) / 1000;
+            s.av_offset_ms = double(m_.av_offset_us.load()) / 1000;
+            s.audio_gaps = m_.audio_gaps.load();
+            worker_status::write_metrics(m_.status, s);
         }
         last_bytes_ = bytes;
         last_decoded_ = decoded;
@@ -224,6 +262,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     setup_logging(*opts);
+    install_crash_dump(local_app_dir(L"dumps"), L"worker-ch" + std::to_wstring(opts->ch));
 
     // 配信中にスリープ・省電力で止まらないようにする (設計書 §4)
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
@@ -236,6 +275,10 @@ int main(int argc, char** argv) {
 
     g_stop_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     SetConsoleCtrlHandler(on_console_ctrl, TRUE);
+    // engine からの停止要求 (コンソールがないので Ctrl+C は届かない)
+    SharedSecurity sec;
+    UniqueHandle engine_stop(CreateEventW(sec.get(), TRUE, FALSE, worker_status::stop_event_name(opts->ch).c_str()));
+    ResetEvent(engine_stop.get());
 
     if (srt_startup() < 0) {
         spdlog::critical("srt_startup failed");
@@ -243,6 +286,21 @@ int main(int argc, char** argv) {
     }
 
     ChannelMetrics metrics;
+
+    // engine に見せる状態。engine は pid と args_hash で、再起動後にこの worker を引き継げるか判断する。
+    SharedMapping status_mapping;
+    if (auto* status = worker_status::open_shared(status_mapping, opts->ch)) {
+        status->metrics_seq.store(0);
+        status->pid.store(GetCurrentProcessId());
+        status->args_hash.store(worker_status::hash_args(GetCommandLineW()));
+        status->started_qpc.store(qpc_now());
+        status->ingest_heartbeat_qpc.store(qpc_now());
+        status->playout_heartbeat_qpc.store(qpc_now());
+        status->decoder_busy_since_qpc.store(0);
+        metrics.status = status;
+    } else {
+        spdlog::warn("cannot open worker status shared memory");
+    }
     ByteQueue bytes(16 * 1024 * 1024);
     FrameQueue frames(24);
 
@@ -275,7 +333,8 @@ int main(int argc, char** argv) {
     }
 
     MetricsReporter reporter(metrics);
-    while (WaitForSingleObject(g_stop_event.get(), 1000) == WAIT_TIMEOUT) reporter.report();
+    HANDLE stop_handles[2] = {g_stop_event.get(), engine_stop.get()};
+    while (WaitForMultipleObjects(2, stop_handles, FALSE, 1000) == WAIT_TIMEOUT) reporter.report();
 
     spdlog::info("worker stopping");
     ingest.stop();
@@ -285,6 +344,7 @@ int main(int argc, char** argv) {
     playout.stop();
     if (writer) writer->close();
     if (audio) audio->close();
+    if (metrics.status && metrics.status->pid.load() == GetCurrentProcessId()) metrics.status->pid.store(0);
     srt_cleanup();
     spdlog::info("worker stopped");
     return 0;

@@ -21,4 +21,5 @@ target_link_libraries(denpachan-worker PRIVATE
     spdlog::spdlog
     ws2_32
     avrt
+    dbghelp
 )

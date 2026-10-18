@@ -1,28 +1,30 @@
 // denpachan-engine: 常駐の本体 (設計書 §2)。
 //
-// M2 の時点では次だけを行う。ワーカーの起動・監視、IPC、設定ファイルは M3 で追加する。
-// - 音声出力: 各チャンネルの音声リングを、指定したデバイスの指定チャンネルに出す
-// - 仮想カメラの共有メモリを常に開いておく (誰も開いていないと最後のフレームが消えるため)
+// - 設定 (%APPDATA%\denpachan\config.json) を読み、前回動いていたチャンネルの worker を起動・監視する
+// - 各チャンネルの音声を設定どおりのデバイスに出す
+// - 仮想カメラの共有メモリを保持する
+// - UI からの操作を名前付きパイプ (\\.\pipe\denpachan) で受ける
 //
+//   denpachan-engine                  通常起動 (終了時に worker も止める)
+//   denpachan-engine --keep-workers   終了しても worker を止めない (engine を入れ替えるとき)
 //   denpachan-engine --list-devices
-//   denpachan-engine --out "ch=1,dev=Dante Virtual Soundcard,start=1,mode=exclusive" --out "ch=2,dev=Dante,start=3"
 
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-#include <cmath>
 #include <cstdio>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "audio_devices.h"
-#include "denpachan/vcam_shm.h"
+#include "config.h"
+#include "denpachan/crash_dump.h"
 #include "denpachan/win_util.h"
-#include "device_output.h"
+#include "engine.h"
+#include "ipc_server.h"
 
 #include <timeapi.h>  // windows.h の後に置く
 
@@ -31,88 +33,21 @@ using namespace denpachan::engine;
 
 namespace {
 
-struct OutSpec {
-    RouteOptions route;
-    std::wstring device_query;
-    std::optional<bool> exclusive;
-};
-
 struct Options {
     bool list_devices = false;
-    std::vector<OutSpec> outs;
-    int margin_ms = 10;
+    bool keep_workers = false;
+    std::wstring config_path;
     std::wstring log_file;
 };
 
 void print_usage() {
     std::fputs(
         "usage: denpachan-engine [options]\n"
-        "  --list-devices        list audio output devices\n"
-        "  --out SPEC            route a channel's audio to a device (repeatable)\n"
-        "                        SPEC = ch=N,dev=NAME|ID[,start=N][,mode=shared|exclusive][,offset=MS][,fade=0|1][,mute=0|1]\n"
-        "                          ch     channel 1-4\n"
-        "                          dev    device id, or part of its name\n"
-        "                          start  first device channel for L (R = start+1)  [1]\n"
-        "                          mode   WASAPI share mode (per device)           [shared]\n"
-        "                          offset added audio delay in ms (may be negative) [0]\n"
-        "                          fade   10ms fade at start / dropout / resync / mute toggle [1]\n"
-        "                          mute   start muted                               [0]\n"
-        "  --margin MS           audio margin added to the device buffer          [10]\n"
-        "  --log-file PATH       also log to a rotating file\n",
+        "  --config PATH      config file          [%APPDATA%\\denpachan\\config.json]\n"
+        "  --log-file PATH    log file             [%LOCALAPPDATA%\\denpachan\\logs\\engine.log]\n"
+        "  --keep-workers     leave workers running on exit\n"
+        "  --list-devices     list audio output devices\n",
         stderr);
-}
-
-std::optional<int> to_int(const std::wstring& s) {
-    try {
-        size_t pos = 0;
-        const int v = std::stoi(s, &pos);
-        if (pos != s.size()) return std::nullopt;
-        return v;
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
-std::optional<OutSpec> parse_out(const std::wstring& spec) {
-    OutSpec o;
-    size_t begin = 0;
-    while (begin <= spec.size()) {
-        size_t end = spec.find(L',', begin);
-        if (end == std::wstring::npos) end = spec.size();
-        const std::wstring item = spec.substr(begin, end - begin);
-        begin = end + 1;
-        if (item.empty()) continue;
-        const size_t eq = item.find(L'=');
-        if (eq == std::wstring::npos) return std::nullopt;
-        const std::wstring key = item.substr(0, eq);
-        const std::wstring value = item.substr(eq + 1);
-        if (key == L"ch") {
-            const auto v = to_int(value);
-            if (!v || *v < 1 || *v > audio::kNumChannels) return std::nullopt;
-            o.route.ch = *v;
-        } else if (key == L"dev") {
-            o.device_query = value;
-        } else if (key == L"start") {
-            const auto v = to_int(value);
-            if (!v || *v < 1) return std::nullopt;
-            o.route.start_channel = *v;
-        } else if (key == L"mode") {
-            if (value != L"shared" && value != L"exclusive") return std::nullopt;
-            o.exclusive = value == L"exclusive";
-        } else if (key == L"offset") {
-            const auto v = to_int(value);
-            if (!v) return std::nullopt;
-            o.route.offset_ms = *v;
-        } else if (key == L"fade") {
-            o.route.fade = value != L"0";
-        } else if (key == L"mute") {
-            o.route.mute = value != L"0";
-        } else {
-            return std::nullopt;
-        }
-    }
-    if (o.device_query.empty()) return std::nullopt;
-    return o;
 }
 
 std::optional<Options> parse_args(int argc, wchar_t** argv) {
@@ -125,19 +60,12 @@ std::optional<Options> parse_args(int argc, wchar_t** argv) {
         };
         if (a == L"--list-devices") {
             o.list_devices = true;
-        } else if (a == L"--out") {
+        } else if (a == L"--keep-workers") {
+            o.keep_workers = true;
+        } else if (a == L"--config") {
             const auto v = value();
-            const auto spec = v ? parse_out(*v) : std::nullopt;
-            if (!spec) {
-                std::fprintf(stderr, "invalid --out: %s\n", v ? to_utf8(*v).c_str() : "");
-                return std::nullopt;
-            }
-            o.outs.push_back(*spec);
-        } else if (a == L"--margin") {
-            const auto v = value();
-            const auto n = v ? to_int(*v) : std::nullopt;
-            if (!n || *n < 0) return std::nullopt;
-            o.margin_ms = *n;
+            if (!v) return std::nullopt;
+            o.config_path = *v;
         } else if (a == L"--log-file") {
             const auto v = value();
             if (!v) return std::nullopt;
@@ -157,11 +85,9 @@ BOOL WINAPI on_console_ctrl(DWORD) {
     return TRUE;
 }
 
-void setup_logging(const Options& o) {
+void setup_logging(const std::wstring& log_file) {
     std::vector<spdlog::sink_ptr> sinks{std::make_shared<spdlog::sinks::stdout_color_sink_mt>()};
-    if (!o.log_file.empty()) {
-        sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(to_utf8(o.log_file), 10 * 1024 * 1024, 5));
-    }
+    sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(to_utf8(log_file), 10 * 1024 * 1024, 5));
     auto logger = std::make_shared<spdlog::logger>("engine", sinks.begin(), sinks.end());
     logger->set_pattern("%Y-%m-%d %H:%M:%S.%e [%n] %^%l%$ %v");
     logger->flush_on(spdlog::level::warn);
@@ -169,40 +95,11 @@ void setup_logging(const Options& o) {
     spdlog::flush_every(std::chrono::seconds(1));
 }
 
-double dbfs(float v) { return v > 1e-5f ? 20.0 * std::log10(v) : -100.0; }
-
-void report(std::vector<std::unique_ptr<DeviceOutput>>& outputs) {
-    for (auto& out : outputs) {
-        const DeviceStatus st = out->status();
-        std::string line = "[" + to_utf8(out->options().name) + "] ";
-        if (!st.open) {
-            line += "closed (retrying)";
-        } else {
-            line += fmt::format("{} {} Hz {} ch {} buf {:.2f} ms calls {}/s max gap {:.1f} ms",
-                                st.exclusive ? "exclusive" : "shared", st.sample_rate, st.channels, st.sample_format,
-                                st.buffer_ms, out->take_render_count(), double(out->take_max_gap_us()) / 1000);
-        }
-        out->for_each_source([&](ChannelSource& s) {
-            auto& stats = s.stats();
-            const auto& r = s.options();
-            line += fmt::format(" | ch{}->{}-{} ", r.ch, r.start_channel, r.start_channel + 1);
-            if (!stats.playing) {
-                line += "idle";
-            } else {
-                line += fmt::format("latency {:.1f} ms err {:+.2f} ms ", stats.latency_ms.load(), stats.error_ms.load());
-                line += stats.passthrough ? fmt::format("slips {}", stats.slips.load())
-                                          : fmt::format("ratio {:+.0f} ppm", stats.ratio_ppm.load());
-            }
-            line += fmt::format(" underruns {} resyncs {} peak {:.1f}/{:.1f} dBFS", stats.underruns.load(),
-                                stats.resyncs.load(), dbfs(stats.peak_l.exchange(0)), dbfs(stats.peak_r.exchange(0)));
-            std::lock_guard lk(stats.reason_mutex);
-            if (!stats.last_resync_reason.empty()) {
-                line += " last resync: " + stats.last_resync_reason;
-                stats.last_resync_reason.clear();
-            }
-        });
-        spdlog::info("{}", line);
-    }
+std::wstring exe_dir() {
+    wchar_t buf[MAX_PATH * 2] = {};
+    const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
+    std::wstring path(buf, n);
+    return path.substr(0, path.find_last_of(L"\\/"));
 }
 
 }  // namespace
@@ -225,7 +122,17 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
 
-    setup_logging(*opts);
+    // 二重起動しない
+    UniqueHandle instance(CreateMutexW(nullptr, TRUE, L"Local\\denpachan_engine"));
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        std::fputs("denpachan-engine is already running\n", stderr);
+        return 1;
+    }
+
+    const std::wstring log_dir = local_app_dir(L"logs");
+    setup_logging(opts->log_file.empty() ? log_dir + L"\\engine.log" : opts->log_file);
+    install_crash_dump(local_app_dir(L"dumps"), L"engine");
+
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
     SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
     PROCESS_POWER_THROTTLING_STATE throttling{};
@@ -241,55 +148,24 @@ int wmain(int argc, wchar_t** argv) {
     g_stop_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     SetConsoleCtrlHandler(on_console_ctrl, TRUE);
 
-    // 仮想カメラの共有メモリを保持する
-    SharedMapping vcams[vcam::kNumCams];
-    for (int cam = 1; cam <= vcam::kNumCams; ++cam) {
-        if (!vcam::open_shared(vcams[cam - 1], cam)) spdlog::warn("vcam {}: cannot open shared memory", cam);
+    Engine engine(opts->config_path.empty() ? default_config_path() : opts->config_path,
+                  exe_dir() + L"\\denpachan-worker.exe", log_dir);
+    spdlog::info("engine start");
+    engine.init();
+
+    IpcServer ipc([&](const std::string& method, const nlohmann::json& params) { return engine.handle(method, params); });
+    ipc.start();
+
+    // 200ms ごとに監視、1 秒ごとに状態を全クライアントへ通知
+    int ticks = 0;
+    while (WaitForSingleObject(g_stop_event.get(), 200) == WAIT_TIMEOUT) {
+        engine.tick();
+        if (++ticks % 5 == 0) ipc.broadcast({{"event", "state"}, {"data", engine.state()}});
     }
 
-    // デバイスごとにまとめる
-    struct DevicePlan {
-        DeviceOptions options;
-        std::vector<RouteOptions> routes;
-    };
-    std::map<std::wstring, DevicePlan> plans;
-    for (const auto& o : opts->outs) {
-        const auto dev = find_audio_device(eRender, o.device_query);
-        if (!dev) {
-            spdlog::error("audio device not found: {}", to_utf8(o.device_query));
-            return 1;
-        }
-        auto& plan = plans[dev->id];
-        if (plan.options.id.empty()) {
-            plan.options.id = dev->id;
-            plan.options.name = dev->name;
-            plan.options.margin_ms = opts->margin_ms;
-            plan.options.exclusive = o.exclusive.value_or(false);
-        } else if (o.exclusive && *o.exclusive != plan.options.exclusive) {
-            spdlog::warn("[{}]: conflicting mode for ch{}, using {}", to_utf8(dev->name), o.route.ch,
-                         plan.options.exclusive ? "exclusive" : "shared");
-        }
-        for (const auto& r : plan.routes) {
-            const bool overlap = o.route.start_channel <= r.start_channel + 1 && r.start_channel <= o.route.start_channel + 1;
-            if (overlap) {
-                spdlog::warn("[{}]: ch{} and ch{} overlap on output channels", to_utf8(dev->name), r.ch, o.route.ch);
-            }
-        }
-        plan.routes.push_back(o.route);
-    }
-
-    std::vector<std::unique_ptr<DeviceOutput>> outputs;
-    for (auto& [id, plan] : plans) {
-        outputs.push_back(std::make_unique<DeviceOutput>(plan.options, plan.routes));
-        outputs.back()->start();
-    }
-    spdlog::info("engine start: {} audio device(s)", outputs.size());
-
-    while (WaitForSingleObject(g_stop_event.get(), 1000) == WAIT_TIMEOUT) report(outputs);
-
-    spdlog::info("engine stopping");
-    for (auto& out : outputs) out->stop();
-    outputs.clear();
+    spdlog::info("engine stopping{}", opts->keep_workers ? " (workers keep running)" : "");
+    ipc.stop();
+    engine.shutdown(!opts->keep_workers);
     timeEndPeriod(1);
     CoUninitialize();
     spdlog::info("engine stopped");
