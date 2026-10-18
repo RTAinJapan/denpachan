@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json.Nodes;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
@@ -40,6 +41,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         ResetCamCommand = new RelayCommand(() => _ = _main.CallAsync("resetCam", new JsonObject { ["cam"] = Vcam }),
                                            () => _main.Connected && Vcam > 0);
         SettingsCommand = new RelayCommand(() => _main.OpenChannelSettings(this), () => _main.Connected && Config != null);
+        RecordCommand = new RelayCommand(() => _ = _main.CallAsync("setRecording", new JsonObject { ["ch"] = Id, ["enabled"] = !RecordEnabled }),
+                                         () => _main.Connected);
         PreviewCommand = new RelayCommand(() => PreviewEnabled = !PreviewEnabled);
     }
 
@@ -51,6 +54,19 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     public ICommand ResetCamCommand { get; }
     public ICommand SettingsCommand { get; }
     public ICommand PreviewCommand { get; }
+    public ICommand RecordCommand { get; }
+
+    // ---- 録画 ----
+
+    private bool _recordEnabled;
+    public bool RecordEnabled { get => _recordEnabled; private set => SetProperty(ref _recordEnabled, value); }
+
+    private string _recordKind = "off";
+    /// <summary>off / waiting / recording / error</summary>
+    public string RecordKind { get => _recordKind; private set => SetProperty(ref _recordKind, value); }
+
+    private string _recordLine = "";
+    public string RecordLine { get => _recordLine; private set => SetProperty(ref _recordLine, value); }
 
     private string _name;
     public string Name { get => _name; private set => SetProperty(ref _name, value); }
@@ -242,6 +258,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         _audioDevice = audio.Str("device") is { Length: > 0 } d ? d : "なし";
         _audioStartChannel = audio.Int("startChannel", 1);
         Mute = audio.Bool("mute");
+        RecordEnabled = config.At("record").Bool("enabled");
         SourceSummary = DescribeSource(config.At("source"));
         _applying = false;
         RefreshAudioDeviceChoices();
@@ -340,6 +357,23 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             _ => audioOut.Bool("open") ? "音声 待機中" : "音声デバイスを開けません",
         };
 
+        var record = st.At("record");
+        var recState = record.Str("state", "off");
+        if (recState != RecordKind)
+        {
+            if (recState == "recording") events.Add($"録画を開始しました ({Path.GetFileName(record.Str("file"))})");
+            else if (RecordKind == "recording") events.Add("録画ファイルを閉じました");
+            if (recState == "error") events.Add($"録画: {record.Str("error")}");
+        }
+        RecordKind = recState;
+        RecordLine = recState switch
+        {
+            "recording" => $"● REC {TimeSpan.FromSeconds(record.Num("seconds")):hh\\:mm\\:ss}  {FormatBytes(record.Num("bytes"))}  {Path.GetFileName(record.Str("file"))}",
+            "waiting" => "● 録画待機 (映像を待っています)",
+            "error" => $"録画エラー: {record.Str("error")}",
+            _ => "",
+        };
+
         Push(_bitrate, bitrate);
         Push(_delay, delay);
         Push(_rtt, rtt);
@@ -352,6 +386,9 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         Details = BuildDetails(st);
         return events;
     }
+
+    private static string FormatBytes(double b) =>
+        b >= 1024.0 * 1024 * 1024 ? $"{b / (1024.0 * 1024 * 1024):0.00} GB" : $"{b / (1024.0 * 1024):0} MB";
 
     private static void Push(List<double> list, double v)
     {
@@ -403,6 +440,13 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
                 Add("音声の遅延", $"{ao.Num("latencyMs"):0.0} ms (ずれ {ao.Num("errorMs"):+0.00;-0.00} ms)");
                 Add("重複・間引き / 音切れ / 合わせ直し", $"{ao.Num("slips"):0} / {ao.Num("underruns"):0} / {ao.Num("resyncs"):0}");
             }
+        }
+        if (st.At("record") is JsonNode rec && rec.Str("state") != "off")
+        {
+            Add("録画", rec.Str("state") switch { "recording" => "録画中", "waiting" => "映像待ち", "error" => "エラー", _ => "-" });
+            if (rec.Str("file") is { Length: > 0 } file) Add("録画ファイル", file);
+            Add("録画サイズ / 捨てた数", $"{FormatBytes(rec.Num("bytes"))} / {rec.Num("dropped"):0}");
+            if (rec.Str("error") is { Length: > 0 } recErr) Add("録画エラー", recErr);
         }
         Add("worker", $"{worker.Str("state")} pid {worker.Num("pid"):0}  稼働 {TimeSpan.FromSeconds(worker.Num("uptimeSec")):hh\\:mm\\:ss}  再起動 {worker.Num("restarts"):0} 回");
         if (worker.Str("lastEvent") is { Length: > 0 } ev) Add("直近の異常", ev);

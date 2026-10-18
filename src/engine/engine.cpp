@@ -154,6 +154,11 @@ std::wstring Engine::worker_args(const ChannelConfig& ch) const {
 void Engine::apply_channel_locked(int ch) {
     const auto& c = config_.channels[size_t(ch - 1)];
     auto& w = *workers_[size_t(ch - 1)];
+    // 録画の設定は共有メモリで渡す (worker を再起動しない)。起動前に書いておけば起動時に読まれる。
+    json record = c.record;
+    record["name"] = c.name;
+    record["ffmpegPath"] = config_.general.ffmpeg_path;
+    w.set_record_config(record.dump());
     if (c.enabled) {
         w.start(worker_args(c));  // 同じ設定で動いていれば何もしない
     } else {
@@ -214,6 +219,15 @@ json Engine::handle(const std::string& method, const json& params) {
         for (const auto& c : config_.channels) apply_channel_locked(c.id);
         audio_.apply(config_);
         return to_json(config_.general);
+    }
+
+    if (method == "setRecording") {
+        // 録画のオン・オフ (受信は止めない)
+        const int ch = channel_param(params);
+        config_.channels[size_t(ch - 1)].record["enabled"] = params.at("enabled").get<bool>();
+        save_locked();
+        apply_channel_locked(ch);
+        return {{"ok", true}};
     }
 
     if (method == "setMute") {
@@ -295,6 +309,13 @@ json Engine::state_locked() {
                             {"delayMs", m.audio_delay_ms},
                             {"avOffsetMs", m.av_offset_ms},
                             {"gaps", m.audio_gaps}};
+            static const char* rec_states[] = {"off", "waiting", "recording", "error"};
+            j["record"] = {{"state", rec_states[std::min<uint32_t>(m.rec_state, 3)]},
+                           {"file", m.rec_file},
+                           {"seconds", m.rec_seconds},
+                           {"bytes", m.rec_bytes},
+                           {"dropped", m.rec_dropped},
+                           {"error", m.rec_error}};
         }
         j["audioOut"] = audio_.channel_status(c.id);
         channels.push_back(j);

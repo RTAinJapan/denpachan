@@ -194,6 +194,7 @@ void Decoder::handle_frame(AVFrame* frame, const AVStream* stream, uint64_t sess
     ++metrics_.frames_decoded;
     metrics_.width = frame->width;
     metrics_.height = frame->height;
+    if (recorder_ && recorder_->wants_frames()) recorder_->video_frame(out.get(), pts_us);  // 再エンコード録画
     if (output_.push(DecodedFrame{std::move(out), pts_us, qpc_now(), session})) ++metrics_.frames_dropped_queue;
 }
 
@@ -247,7 +248,8 @@ void Decoder::handle_audio_frame(const AVFrame* frame, const AVStream* stream, u
     if (ts == AV_NOPTS_VALUE) ts = frame->pts;
     if (ts == AV_NOPTS_VALUE) return;  // 時刻がなければ合わせようがない
     const int64_t pts_us = av_rescale_q(ts, stream->time_base, AVRational{1, 1'000'000});
-    audio_->write(session, pts_us, qpc_now(), audio_buf_.data(), n);
+    if (audio_) audio_->write(session, pts_us, qpc_now(), audio_buf_.data(), n);
+    if (recorder_ && recorder_->wants_frames()) recorder_->audio_samples(audio_buf_.data(), n, pts_us);
 }
 
 void Decoder::decode_audio(const AVPacket* pkt, const AVStream* stream, uint64_t session) {
@@ -338,7 +340,7 @@ void Decoder::run_session(uint64_t session) {
         return;
     }
     int aidx = -1;
-    if (audio_) {
+    if (audio_ || recorder_) {
         aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, vidx, nullptr, 0);
         if (aidx < 0) {
             spdlog::warn("decoder: no audio stream");
@@ -347,6 +349,7 @@ void Decoder::run_session(uint64_t session) {
         }
     }
     const AVStream* audio_stream = aidx >= 0 ? fmt->streams[aidx] : nullptr;
+    if (recorder_) recorder_->begin_session(session, stream, audio_stream);
 
     PacketPtr pkt(av_packet_alloc());
     FramePtr frame(av_frame_alloc());
@@ -378,6 +381,10 @@ void Decoder::run_session(uint64_t session) {
         }
         // ここから先のデコード処理 (ブロックしないはず) で固まったら engine が検出する
         DecoderBusy busy(metrics_);
+        if (recorder_ && recorder_->wants_packets()) {  // パススルー録画 (参照を渡すだけ)
+            if (pkt->stream_index == vidx) recorder_->video_packet(pkt.get());
+            else if (pkt->stream_index == aidx) recorder_->audio_packet(pkt.get());
+        }
         if (pkt->stream_index == aidx) {
             decode_audio(pkt.get(), audio_stream, session);
             av_packet_unref(pkt.get());

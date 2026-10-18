@@ -42,8 +42,65 @@ public partial class ChannelSettingsWindow : Window
         Select(AudioModeBox, a.Str("mode", "shared"));
         OffsetBox.Text = a.Int("offsetMs").ToString();
         FadeBox.IsChecked = a.Bool("fade", true);
+
+        var r = c.At("record");
+        var v = r.At("encode").At("video");
+        RecordEnabledBox.IsChecked = r.Bool("enabled");
+        RecordDirBox.Text = r.Str("dir");
+        TemplateBox.Text = r.Str("template", "{ch} - {YYYY}{MM}/{DD} {hh}-{mm}-{ss}");
+        ReplacementBox.Text = r.Str("invalidCharReplacement", "-");
+        Select(ContainerBox, r.Str("container", "mkv"));
+        GapBox.Text = r.Int("gapTimeoutSec", 10).ToString();
+        MaxSegmentBox.Text = r.Int("maxSegmentMin").ToString();
+        MinFreeBox.Text = r.Int("minFreeGb", 5).ToString();
+        var encoder = v.Str("encoder", "auto");
+        (r.Str("mode", "passthrough") != "encode" ? PassthroughBox : encoder == "cpu" ? CpuEncodeBox : EncodeBox).IsChecked = true;
+        Select(CodecBox, v.Str("codec", "h264"));
+        Select(EncoderBox, encoder);
+        Select(RcBox, v.Str("rc", "cbr"));
+        BitrateBox.Text = v.Int("bitrateKbps", 12000).ToString();
+        QpBox.Text = v.Int("qp", 23).ToString();
+        Select(PresetBox, v.Str("preset", "p4"));
+        GopBox.Text = v.Int("gopSec", 2).ToString();
+        AudioBitrateBox.Text = r.At("encode").At("audio").Int("bitrateKbps", 192).ToString();
+
         UpdatePanels();
         UpdatePushUrl();
+        UpdateTemplatePreview();
+        UpdateEncodePanel();
+    }
+
+    // ---- 録画 ----
+
+    private void Mode_Changed(object sender, RoutedEventArgs e) => UpdateEncodePanel();
+
+    private void UpdateEncodePanel()
+    {
+        if (EncodePanel == null || EncoderBox == null || CpuNote == null) return;
+        var gpu = EncodeBox.IsChecked == true;
+        var cpu = CpuEncodeBox.IsChecked == true;
+        EncodePanel.IsEnabled = gpu || cpu;
+        EncoderBox.Visibility = cpu ? Visibility.Collapsed : Visibility.Visible;
+        CpuNote.Visibility = cpu ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void Template_Changed(object sender, RoutedEventArgs e) => UpdateTemplatePreview();
+
+    private void UpdateTemplatePreview()
+    {
+        if (TemplatePreview == null || TemplateBox == null || ContainerBox?.SelectedItem == null) return;
+        var dir = RecordDirBox.Text.Trim();
+        if (dir.Length == 0) dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Videos", "denpachan");
+        var name = RecordFilename.Expand(TemplateBox.Text, _channel.Id, NameBox.Text.Trim(), DateTime.Now, 1, "h264", 1920, 1080,
+                                         ReplacementBox.Text);
+        TemplatePreview.Text = System.IO.Path.Combine(dir, name) + "." + SelectedTag(ContainerBox);
+    }
+
+    private void BrowseDir_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "録画の保存先" };
+        if (System.IO.Directory.Exists(RecordDirBox.Text)) dialog.InitialDirectory = RecordDirBox.Text;
+        if (dialog.ShowDialog(this) == true) RecordDirBox.Text = dialog.FolderName;
     }
 
     private static void Select(ComboBox box, string tag)
@@ -128,6 +185,13 @@ public partial class ChannelSettingsWindow : Window
         TryInt(LatencyBox, "latency", out var latency, errors);
         TryInt(BufferBox, "再生バッファ", out var buffer, errors);
         TryInt(OffsetBox, "音声オフセット", out var offset, errors);
+        TryInt(GapBox, "区切りまでの秒数", out var gap, errors);
+        TryInt(MaxSegmentBox, "最大の長さ", out var maxSegment, errors);
+        TryInt(MinFreeBox, "空き容量の下限", out var minFree, errors);
+        TryInt(BitrateBox, "ビットレート", out var bitrate, errors);
+        TryInt(QpBox, "QP", out var qp, errors);
+        TryInt(GopBox, "キーフレーム間隔", out var gop, errors);
+        TryInt(AudioBitrateBox, "音声ビットレート", out var audioBitrate, errors);
         if (errors.Count > 0)
         {
             ShowError(string.Join("\n", errors));
@@ -161,6 +225,32 @@ public partial class ChannelSettingsWindow : Window
                 ["mode"] = SelectedTag(AudioModeBox),
                 ["offsetMs"] = offset,
                 ["fade"] = FadeBox.IsChecked == true,
+            },
+            ["record"] = new JsonObject
+            {
+                ["enabled"] = RecordEnabledBox.IsChecked == true,
+                ["dir"] = RecordDirBox.Text.Trim(),
+                ["template"] = TemplateBox.Text.Trim(),
+                ["invalidCharReplacement"] = ReplacementBox.Text,
+                ["container"] = SelectedTag(ContainerBox),
+                ["mode"] = PassthroughBox.IsChecked == true ? "passthrough" : "encode",
+                ["gapTimeoutSec"] = gap,
+                ["maxSegmentMin"] = maxSegment,
+                ["minFreeGb"] = minFree,
+                ["encode"] = new JsonObject
+                {
+                    ["video"] = new JsonObject
+                    {
+                        ["codec"] = SelectedTag(CodecBox),
+                        ["encoder"] = CpuEncodeBox.IsChecked == true ? "cpu" : SelectedTag(EncoderBox),
+                        ["rc"] = SelectedTag(RcBox),
+                        ["bitrateKbps"] = bitrate,
+                        ["qp"] = qp,
+                        ["preset"] = SelectedTag(PresetBox),
+                        ["gopSec"] = gop,
+                    },
+                    ["audio"] = new JsonObject { ["bitrateKbps"] = audioBitrate },
+                },
             },
         };
 

@@ -65,7 +65,62 @@ T get_or(const json& j, const char* key, const T& def) {
     return j.at(key).get<T>();
 }
 
+std::optional<std::string> validate_record(const json& r) {
+    try {
+        auto in = [](int v, int lo, int hi) { return v >= lo && v <= hi; };
+        const std::string container = r.at("container");
+        const std::string mode = r.at("mode");
+        const std::string tmpl = r.at("template");
+        const std::string repl = r.at("invalidCharReplacement");
+        if (container != "mkv" && container != "ts") return "record.container must be mkv or ts";
+        if (mode != "passthrough" && mode != "encode") return "record.mode must be passthrough or encode";
+        if (tmpl.empty()) return "record.template is empty";
+        if (repl.size() > 8 || repl.find_first_of(":*?\"<>|/\\") != std::string::npos) {
+            return "record.invalidCharReplacement must not contain characters that are invalid in file names";
+        }
+        if (!in(r.at("gapTimeoutSec").get<int>(), 1, 3600)) return "record.gapTimeoutSec must be 1-3600";
+        if (!in(r.at("maxSegmentMin").get<int>(), 0, 1440)) return "record.maxSegmentMin must be 0-1440";
+        if (!in(r.at("minFreeGb").get<int>(), 0, 100000)) return "record.minFreeGb must be 0 or more";
+        const auto& v = r.at("encode").at("video");
+        const std::string codec = v.at("codec");
+        const std::string rc = v.at("rc");
+        const std::string encoder = v.at("encoder");
+        if (encoder != "auto" && encoder != "nvenc" && encoder != "qsv" && encoder != "amf" && encoder != "cpu") {
+            return "record.encode.video.encoder must be auto, nvenc, qsv, amf or cpu";
+        }
+        if (codec != "h264" && codec != "hevc" && codec != "av1") return "record.encode.video.codec must be h264, hevc or av1";
+        if (rc != "cbr" && rc != "vbr" && rc != "cqp") return "record.encode.video.rc must be cbr, vbr or cqp";
+        if (!in(v.at("bitrateKbps").get<int>(), 100, 500'000)) return "record.encode.video.bitrateKbps must be 100-500000";
+        if (!in(v.at("qp").get<int>(), 0, 51)) return "record.encode.video.qp must be 0-51";
+        if (!in(v.at("gopSec").get<int>(), 1, 20)) return "record.encode.video.gopSec must be 1-20";
+        if (!in(r.at("encode").at("audio").at("bitrateKbps").get<int>(), 32, 512)) return "record.encode.audio.bitrateKbps must be 32-512";
+        r.at("dir").get<std::string>();
+        r.at("enabled").get<bool>();
+        v.at("preset").get<std::string>();
+    } catch (const json::exception& e) {
+        return std::string("record: ") + e.what();
+    }
+    return std::nullopt;
+}
+
 }  // namespace
+
+json default_record_json() {
+    return {
+        {"enabled", false},
+        {"dir", ""},  // 空 = %USERPROFILE%\Videos\denpachan
+        {"template", "{ch} - {YYYY}{MM}/{DD} {hh}-{mm}-{ss}"},
+        {"container", "mkv"},
+        {"mode", "passthrough"},
+        {"gapTimeoutSec", 10},
+        {"maxSegmentMin", 0},
+        {"invalidCharReplacement", "-"},
+        {"minFreeGb", 5},
+        {"encode",
+         {{"video", {{"codec", "h264"}, {"encoder", "auto"}, {"rc", "cbr"}, {"bitrateKbps", 12000}, {"qp", 23}, {"preset", "p4"}, {"gopSec", 2}}},
+          {"audio", {{"bitrateKbps", 192}}}}},
+    };
+}
 
 Config default_config() {
     Config c;
@@ -76,6 +131,7 @@ Config default_config() {
         ch.source.port = 9001 + i;
         ch.vcam = i + 1;
         ch.audio.start_channel = 1 + 2 * i;
+        ch.record = default_record_json();
     }
     return c;
 }
@@ -119,6 +175,7 @@ json to_json(const ChannelConfig& c, JsonForm form) {
           {"mute", c.audio.mute},
           {"fade", c.audio.fade}}},
     };
+    j["record"] = c.record;
     if (!c.debug_args.empty()) j["debugArgs"] = c.debug_args;
     return j;
 }
@@ -127,6 +184,7 @@ json to_json(const GeneralConfig& g) {
     return {{"stallMs", g.stall_ms},
             {"audioMarginMs", g.audio_margin_ms},
             {"avSync", g.av_sync},
+            {"ffmpegPath", g.ffmpeg_path},
             {"rtmpServer", {{"bind", g.rtmp_bind}, {"port", g.rtmp_port}, {"idleTimeoutMs", g.rtmp_idle_timeout_ms}}}};
 }
 
@@ -145,6 +203,8 @@ ChannelConfig channel_from_json(const json& j, int id) {
     c.playout_buffer_ms = get_or(j, "playoutBufferMs", def.playout_buffer_ms);
     c.vcam = get_or(j, "vcam", def.vcam);
     c.debug_args = get_or<std::string>(j, "debugArgs", "");
+    c.record = default_record_json();
+    if (j.contains("record") && j.at("record").is_object()) c.record.merge_patch(j.at("record"));
     if (j.contains("source")) {
         const auto& s = j.at("source");
         c.source.protocol = get_or(s, "protocol", def.source.protocol);
@@ -183,6 +243,7 @@ GeneralConfig general_from_json(const json& j) {
     g.stall_ms = get_or(j, "stallMs", def.stall_ms);
     g.audio_margin_ms = get_or(j, "audioMarginMs", def.audio_margin_ms);
     g.av_sync = get_or(j, "avSync", def.av_sync);
+    g.ffmpeg_path = get_or(j, "ffmpegPath", def.ffmpeg_path);
     if (j.contains("rtmpServer")) {
         const auto& r = j.at("rtmpServer");
         g.rtmp_bind = get_or(r, "bind", def.rtmp_bind);
@@ -232,6 +293,7 @@ std::optional<std::string> validate(const Config& c) {
         if (!in(ch.audio.start_channel, 1, 64)) return p + "audio.startChannel must be 1-64";
         if (ch.audio.mode != "shared" && ch.audio.mode != "exclusive") return p + "audio.mode must be shared or exclusive";
         if (!in(ch.audio.offset_ms, -1000, 1000)) return p + "audio.offsetMs must be -1000-1000";
+        if (auto err = validate_record(ch.record)) return p + *err;
 
         if (s.protocol == "rtmp") {
             if (s.mode == "push") {

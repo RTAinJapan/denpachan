@@ -86,6 +86,24 @@
                                 <c:LevelMeter Db="{Binding PeakR}" Height="5" />
                             </StackPanel>
                         </Grid>
+                        <TextBlock Text="{Binding RecordLine}" FontFamily="Consolas, Segoe UI" TextTrimming="CharacterEllipsis" Margin="0,2,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource DimTextBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding RecordKind}" Value="off">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding RecordKind}" Value="recording">
+                                            <Setter Property="Foreground" Value="#FFFF5C5C" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding RecordKind}" Value="error">
+                                            <Setter Property="Foreground" Value="#FFF0B44C" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
                     </StackPanel>
 
                     <!-- ビットレートの推移 -->
@@ -95,6 +113,8 @@
                     <!-- 操作 -->
                     <WrapPanel Grid.Row="4" Margin="0,8,0,0">
                         <Button Content="{Binding StartStopLabel}" Command="{Binding StartStopCommand}" Style="{StaticResource PrimaryButton}" MinWidth="64" />
+                        <ToggleButton Content="● 録画" IsChecked="{Binding RecordEnabled, Mode=OneWay}" Command="{Binding RecordCommand}"
+                                      Style="{StaticResource RecordChip}" ToolTip="録画のオン・オフ (受信は止めない)" />
                         <ToggleButton Content="プレビュー" IsChecked="{Binding PreviewEnabled}" Style="{StaticResource ToggleChip}" />
                         <ToggleButton Content="{Binding MuteLabel}" IsChecked="{Binding Mute, Mode=OneWay}" Command="{Binding MuteCommand}"
                                       Style="{StaticResource ToggleChip}" />

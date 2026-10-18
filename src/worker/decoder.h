@@ -16,6 +16,7 @@
 #include "ffmpeg_util.h"
 #include "frame_queue.h"
 #include "metrics.h"
+#include "recorder.h"
 
 extern "C" {
 #include <libswresample/swresample.h>
@@ -31,6 +32,8 @@ public:
 
     // URL (rtmp:// など) を直接読む。切れたら間隔を空けて繋ぎ直す。start() の前に呼ぶ。
     void set_url(std::string url);
+    // 録画に受信パケット / デコード結果を渡す。start() の前に呼ぶ。
+    void set_recorder(Recorder* recorder) { recorder_ = recorder; }
 
     void start();
     void stop();
@@ -53,6 +56,7 @@ private:
     ByteQueue& input_;
     FrameQueue& output_;
     AudioWriter* audio_;  // nullptr = 音声を出さない
+    Recorder* recorder_ = nullptr;
     ChannelMetrics& metrics_;
 
     CodecContextPtr audio_codec_;

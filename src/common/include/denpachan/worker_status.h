@@ -18,8 +18,8 @@
 namespace denpachan::worker_status {
 
 inline constexpr uint32_t kMagic = 0x53575044;  // "DPWS"
-inline constexpr uint32_t kLayoutVersion = 1;
-inline constexpr size_t kMappingBytes = 4096;
+inline constexpr uint32_t kLayoutVersion = 2;
+inline constexpr size_t kMappingBytes = 16384;
 
 enum class VideoState : uint32_t { Waiting = 0, Live = 1, Hold = 2 };
 
@@ -60,6 +60,13 @@ struct Metrics {
     double audio_delay_ms;
     double av_offset_ms;
     uint64_t audio_gaps;
+
+    uint32_t rec_state;  // 0 オフ / 1 映像待ち / 2 録画中 / 3 エラー
+    double rec_seconds;
+    uint64_t rec_bytes;
+    uint64_t rec_dropped;
+    char rec_file[512];
+    char rec_error[160];
 };
 
 struct Header {
@@ -75,9 +82,38 @@ struct Header {
 
     std::atomic<uint32_t> metrics_seq;  // 書き込み中は奇数
     Metrics metrics;
+
+    // engine → worker: 録画の設定 (JSON)。再起動せずに変えられるよう、コマンドラインでなくここで渡す。
+    std::atomic<uint32_t> control_seq;  // 書き込み中は奇数
+    char record_json[4096];
 };
 
 static_assert(sizeof(Header) <= kMappingBytes);
+
+// engine 側 (書き手は 1 つ)
+inline void write_record_config(Header* h, const std::string& json) {
+    const uint32_t s = h->control_seq.load(std::memory_order_relaxed);
+    h->control_seq.store(s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    strncpy_s(h->record_json, json.c_str(), _TRUNCATE);
+    h->control_seq.store(s + 2, std::memory_order_release);
+}
+
+// worker 側: 前回読んだ seq から変わっていれば out に読んで true
+inline bool read_record_config(const Header* h, uint32_t& last_seq, std::string& out) {
+    for (int i = 0; i < 100; ++i) {
+        const uint32_t s1 = h->control_seq.load(std::memory_order_acquire);
+        if (s1 & 1) continue;
+        if (s1 == last_seq) return false;
+        std::string copy(h->record_json, strnlen(h->record_json, sizeof(h->record_json)));
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (h->control_seq.load(std::memory_order_relaxed) != s1) continue;
+        last_seq = s1;
+        out = std::move(copy);
+        return true;
+    }
+    return false;
+}
 
 inline std::wstring mapping_name(int ch) { return L"Local\\denpachan_worker_" + std::to_wstring(ch); }
 inline std::wstring stop_event_name(int ch) { return L"Local\\denpachan_worker_" + std::to_wstring(ch) + L"_stop"; }

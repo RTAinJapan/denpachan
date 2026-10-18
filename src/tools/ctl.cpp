@@ -6,6 +6,7 @@
 //   denpachan-ctl devices                   音声出力デバイス
 //   denpachan-ctl start <ch> / stop <ch>    待ち受け開始 / 停止
 //   denpachan-ctl mute <ch> on|off
+//   denpachan-ctl record <ch> on|off        録画のオン・オフ (受信は止めない)
 //   denpachan-ctl reset-cam <cam>           仮想カメラを NO SIGNAL に戻す
 //   denpachan-ctl set <ch> <json>           チャンネル設定を部分変更 (JSON Merge Patch)
 //   denpachan-ctl set-general <json>
@@ -120,6 +121,14 @@ std::string summary_line(const json& ch) {
             line += a.value("open", false) ? " | audio idle" : " | audio closed";
         }
     }
+    if (ch.contains("record") && ch.at("record").at("state") != "off") {
+        const json& r = ch.at("record");
+        snprintf(buf, sizeof(buf), " | rec %s %.0fs %.1fMB drop %llu", r.at("state").get<std::string>().c_str(),
+                 r.at("seconds").get<double>(), r.at("bytes").get<double>() / 1e6,
+                 (unsigned long long)r.at("dropped").get<uint64_t>());
+        line += buf;
+        if (!r.at("error").get<std::string>().empty()) line += " err: " + r.at("error").get<std::string>();
+    }
     if (!w.at("lastEvent").get<std::string>().empty()) line += " | last: " + w.at("lastEvent").get<std::string>();
     return line;
 }
@@ -130,6 +139,7 @@ void usage() {
         "  state | summary | config | devices\n"
         "  start <ch> | stop <ch>\n"
         "  mute <ch> on|off\n"
+        "  record <ch> on|off\n"
         "  reset-cam <cam>\n"
         "  set <ch> <json-merge-patch>\n"
         "  set-general <json-merge-patch>\n"
@@ -168,6 +178,8 @@ int wmain(int argc, wchar_t** argv) {
             if (!call(c, cmd == "start" ? "startChannel" : "stopChannel", {{"ch", std::stoi(args[1])}}, result)) return 1;
         } else if (cmd == "mute" && args.size() == 3) {
             if (!call(c, "setMute", {{"ch", std::stoi(args[1])}, {"mute", args[2] == "on"}}, result)) return 1;
+        } else if (cmd == "record" && args.size() == 3) {
+            if (!call(c, "setRecording", {{"ch", std::stoi(args[1])}, {"enabled", args[2] == "on"}}, result)) return 1;
         } else if (cmd == "reset-cam" && args.size() == 2) {
             if (!call(c, "resetCam", {{"cam", std::stoi(args[1])}}, result)) return 1;
         } else if (cmd == "set" && args.size() == 3) {

@@ -158,7 +158,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             await _client.CallAsync(method, parameters);
-            if (method is "startChannel" or "stopChannel" or "setMute") await LoadConfigAsync();
+            if (method is "startChannel" or "stopChannel" or "setMute" or "setRecording") await LoadConfigAsync();
             return true;
         }
         catch (EngineException e)

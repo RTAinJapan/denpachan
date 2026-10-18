@@ -54,10 +54,18 @@ struct ChannelMetrics {
 
     std::atomic<uint32_t> video_state{0};  // worker_status::VideoState
 
+    // 録画
+    std::atomic<uint32_t> rec_state{0};  // 0 オフ / 1 映像待ち / 2 録画中 / 3 エラー
+    std::atomic<uint64_t> rec_bytes{0};
+    std::atomic<uint64_t> rec_dropped{0};
+    std::atomic<int64_t> rec_started_qpc{0};
+
     std::mutex mutex;  // 以下を保護
     std::string peer;
     std::string codec;
     std::string last_error;
+    std::string rec_file;
+    std::string rec_error;
     SrtStats srt;
 
     // engine に見せる状態の書き先 (worker_status 共有メモリ)。スレッドごとのハートビートをここに書く。

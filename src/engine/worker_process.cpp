@@ -229,6 +229,15 @@ void WorkerProcess::poll() {
     }
 }
 
+void WorkerProcess::set_record_config(const std::string& json) {
+    std::lock_guard lk(mutex_);
+    if (auto* st = status_locked()) {
+        if (std::string_view(st->record_json, strnlen(st->record_json, sizeof(st->record_json))) != json) {
+            worker_status::write_record_config(st, json);
+        }
+    }
+}
+
 WorkerSnapshot WorkerProcess::snapshot() {
     std::lock_guard lk(mutex_);
     WorkerSnapshot s;

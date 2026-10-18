@@ -28,6 +28,7 @@
 #include "playout_clock.h"
 #include "denpachan/win_util.h"
 #include "flv_ring_ingest.h"
+#include "recorder.h"
 #include "frame_queue.h"
 #include "metrics.h"
 #include "playout.h"
@@ -230,6 +231,16 @@ public:
             s.audio_delay_ms = double(m_.audio_delay_us.load()) / 1000;
             s.av_offset_ms = double(m_.av_offset_us.load()) / 1000;
             s.audio_gaps = m_.audio_gaps.load();
+            s.rec_state = m_.rec_state.load();
+            const int64_t rec_started = m_.rec_started_qpc.load();
+            s.rec_seconds = rec_started ? double(qpc_to_us(qpc_now() - rec_started)) / 1e6 : 0;
+            s.rec_bytes = m_.rec_bytes.load();
+            s.rec_dropped = m_.rec_dropped.load();
+            {
+                std::lock_guard lk(m_.mutex);
+                strncpy_s(s.rec_file, m_.rec_file.c_str(), _TRUNCATE);
+                strncpy_s(s.rec_error, m_.rec_error.c_str(), _TRUNCATE);
+            }
             worker_status::write_metrics(m_.status, s);
         }
         last_bytes_ = bytes;
@@ -342,6 +353,18 @@ int main(int argc, char** argv) {
     }
     Decoder decoder(input_format, bytes, frames, audio.get(), metrics, opts->hw);
     if (opts->input == "url") decoder.set_url(opts->url);
+    Recorder recorder(opts->ch, metrics);
+    decoder.set_recorder(&recorder);
+    recorder.start();
+    // 録画の設定は engine が共有メモリに書く (受信を止めずに変えられるように)
+    uint32_t record_seq = 0;
+    auto apply_record_config = [&] {
+        std::string json;
+        if (metrics.status && worker_status::read_record_config(metrics.status, record_seq, json)) {
+            recorder.configure(parse_record_config(json, opts->ch));
+        }
+    };
+    apply_record_config();
     PreviewWriter preview;
     preview.open(opts->ch);
     Playout playout(opts->playout, clock, frames, writer.get(), &preview, metrics);
@@ -359,13 +382,22 @@ int main(int argc, char** argv) {
 
     MetricsReporter reporter(metrics);
     HANDLE stop_handles[2] = {g_stop_event.get(), engine_stop.get()};
-    while (WaitForMultipleObjects(2, stop_handles, FALSE, 1000) == WAIT_TIMEOUT) reporter.report();
+    // 録画の設定は 100 ms ごとに見る (オン・オフをすぐ反映する)。状態の報告は 1 秒ごと。
+    int64_t next_report = qpc_now() + qpc_from_ms(1000);
+    while (WaitForMultipleObjects(2, stop_handles, FALSE, 100) == WAIT_TIMEOUT) {
+        apply_record_config();
+        if (qpc_now() >= next_report) {
+            next_report += qpc_from_ms(1000);
+            reporter.report();
+        }
+    }
 
     spdlog::info("worker stopping");
     if (srt_ingest) srt_ingest->stop();
     if (flv_ingest) flv_ingest->stop();
     bytes.stop();
     decoder.stop();
+    recorder.stop();  // 開いているファイルを閉じる
     frames.stop();
     playout.stop();
     if (writer) writer->close();

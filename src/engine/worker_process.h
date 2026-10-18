@@ -43,6 +43,8 @@ public:
     void stop();
     // 監視 (定期的に呼ぶ)
     void poll();
+    // 録画の設定を共有メモリに書く (動いている worker が 1 秒以内に読む。再起動はしない)
+    void set_record_config(const std::string& json);
 
     WorkerSnapshot snapshot();
 
