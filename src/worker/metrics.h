@@ -8,6 +8,7 @@
 
 #include "denpachan/win_util.h"
 #include "denpachan/worker_status.h"
+#include "srt_advisor.h"
 
 namespace denpachan::worker {
 
@@ -20,6 +21,7 @@ struct SrtStats {
     int64_t dropped_total = 0;
     int rcv_buf_ms = 0;
     int tsbpd_delay_ms = 0;
+    SrtAdvice advice;  // latency の推奨値
 };
 
 struct ChannelMetrics {

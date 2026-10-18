@@ -9,7 +9,10 @@ namespace denpachan::worker {
 namespace {
 
 constexpr int kIoBufferSize = 64 * 1024;
-constexpr int kMaxConsecutiveErrors = 60;  // これを超えたら HW デコードをやめる
+// キーフレームのデコードがこれだけ続けて失敗したら HW デコードをやめる (本当に HW で読めないとき)。
+// キーフレーム以外の失敗 (途中から受けた、ロスで参照が欠けた) では数えない
+constexpr int kMaxKeyframeErrors = 3;
+constexpr int64_t kKeyframeWaitMs = 10'000;  // 受信開始・エラーのあと、これだけキーフレームが来なければそのまま渡す
 constexpr int64_t kOpenTimeoutMs = 10'000;  // URL を開く・ストリームを解析するまでの上限
 constexpr int64_t kReadTimeoutMs = 5'000;   // URL からこれだけ届かなければ切って繋ぎ直す
 
@@ -368,10 +371,18 @@ void Decoder::run_session(uint64_t session) {
     PacketPtr pkt(av_packet_alloc());
     FramePtr frame(av_frame_alloc());
 
+    // 途中から受けたとき (SRT は GOP の途中から届く) やロスのあとは、次のキーフレームまで映像をデコーダに渡さない。
+    // 参照の欠けたフレームはどうせ読めず、エラーが続いて HW デコードをやめる判断を誤らせるため。
+    bool need_key = true;
+    int64_t key_deadline = qpc_now() + qpc_from_ms(kKeyframeWaitMs);
+    bool sent_key = false;  // 直前にデコーダに渡したのがキーフレームか
+
     auto on_error = [&](int e) {
         ++metrics_.decode_errors;
-        if (++consecutive_errors_ == kMaxConsecutiveErrors && hw_enabled_) {
-            spdlog::warn("decoder: too many errors ({}), falling back to software", av_error_string(e));
+        need_key = true;
+        key_deadline = qpc_now() + qpc_from_ms(kKeyframeWaitMs);
+        if (sent_key && ++consecutive_errors_ == kMaxKeyframeErrors && hw_enabled_) {
+            spdlog::warn("decoder: keyframes keep failing ({}), falling back to software", av_error_string(e));
             hw_enabled_ = false;
             open_decoder(stream);
         }
@@ -425,6 +436,14 @@ void Decoder::run_session(uint64_t session) {
         if (pkt->stream_index != vidx) {
             av_packet_unref(pkt.get());
             continue;
+        }
+        sent_key = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
+        if (need_key) {
+            if (!sent_key && qpc_now() < key_deadline) {
+                av_packet_unref(pkt.get());
+                continue;
+            }
+            need_key = false;
         }
         err = avcodec_send_packet(codec_.get(), pkt.get());
         if (err == AVERROR(EAGAIN)) {

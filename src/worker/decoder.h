@@ -70,7 +70,7 @@ private:
     bool hw_enabled_;
     BufferRefPtr hw_device_;
     CodecContextPtr codec_;
-    int consecutive_errors_ = 0;
+    int consecutive_errors_ = 0;  // キーフレームのデコードが続けて失敗した回数 (成功で 0)
 
     uint64_t session_ = 0;  // read_packet が読むセッション
 

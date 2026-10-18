@@ -120,7 +120,15 @@ bool SrtIngest::configure(int sock, bool listener) {
 void SrtIngest::update_stats(int sock) {
     SRT_TRACEBSTATS perf{};
     if (srt_bstats(sock, &perf, 1) == SRT_ERROR) return;
+    // latency の推奨値 (接続ごと。1 秒ごとの区間の値を溜める)
+    if (sock != advisor_sock_) {
+        advisor_.reset();
+        advisor_sock_ = sock;
+    }
+    advisor_.add(perf.msRTT, perf.pktRecv, perf.pktRcvLoss, perf.pktRcvDrop);
+    const SrtAdvice advice = advisor_.advice(perf.msRcvTsbPdDelay);
     std::lock_guard lk(metrics_.mutex);
+    metrics_.srt.advice = advice;
     auto& s = metrics_.srt;
     s.rtt_ms = perf.msRTT;
     s.recv_mbps = perf.mbpsRecvRate;

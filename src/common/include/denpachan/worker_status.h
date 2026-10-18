@@ -18,7 +18,7 @@
 namespace denpachan::worker_status {
 
 inline constexpr uint32_t kMagic = 0x53575044;  // "DPWS"
-inline constexpr uint32_t kLayoutVersion = 2;
+inline constexpr uint32_t kLayoutVersion = 3;
 inline constexpr size_t kMappingBytes = 16384;
 
 // worker の終了コード: FFmpeg の DLL が無い / 版が合わない (engine は再起動を繰り返さず、FFmpeg を探し直す)
@@ -54,6 +54,13 @@ struct Metrics {
     int64_t srt_lost;
     int64_t srt_retrans;
     int64_t srt_dropped;
+    // latency の推奨値 (worker の srt_advisor.h)
+    int32_t srt_rec_latency_ms;  // 0 = 計測中
+    int32_t srt_rec_multiplier;
+    double srt_rec_rtt_ms;       // 計算に使った RTT (窓の最大)
+    double srt_rec_loss_pct;
+    int64_t srt_rec_drops;       // 窓の中の取りこぼし
+    int32_t srt_rec_window_sec;
 
     double tcp_rtt_ms;  // RTMP push
     uint64_t tcp_retrans_bytes;

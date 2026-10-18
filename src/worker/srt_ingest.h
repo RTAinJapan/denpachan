@@ -46,6 +46,8 @@ private:
     std::thread thread_;
     std::atomic<bool> stop_{false};
     UniqueHandle stop_event_;
+    SrtLatencyAdvisor advisor_;  // 受信スレッドだけが触る
+    int advisor_sock_ = -1;      // 接続が変わったら統計を捨てる
 };
 
 }  // namespace denpachan::worker

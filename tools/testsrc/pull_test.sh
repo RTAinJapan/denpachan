@@ -2,18 +2,19 @@
 # 実際のサーバーからの受信試験 (RTMP pull、または SRT caller)。
 #
 # 試験用の設定 (out/check/pull-config.json) で engine を起動し、ch1 を RTMP pull / SRT caller にして受信する。
-# URL が srt://ホスト:ポート なら SRT caller (latency 120 ms、パスフレーズなし)、それ以外は RTMP pull。
+# URL が srt://ホスト:ポート なら SRT caller (latency は引数、既定 120 ms。パスフレーズなし)、それ以外は RTMP pull。
 # 状態を 1 秒ごとに表示し、仮想カメラ (DirectShow) から映像が取れるか確かめ、画面を撮る。
 # 音声は "CABLE Input" (VB-Audio Virtual Cable) に出す。
 #
-#   tools/testsrc/pull_test.sh <url> [seconds] [playout_buffer_ms]
+#   tools/testsrc/pull_test.sh <url> [seconds] [playout_buffer_ms] [srt_latency_ms]
 #     例: tools/testsrc/pull_test.sh rtmp://example.com/app/key 30 60
-#         tools/testsrc/pull_test.sh srt://example.com:5000 30
+#         tools/testsrc/pull_test.sh srt://example.com:5000 30 0 60
 set -u
 
 URL="${1:?usage: pull_test.sh <rtmp-url> [seconds] [playout_buffer_ms]}"
 SECONDS_TO_WATCH="${2:-30}"
 BUFFER_MS="${3:-0}"
+SRT_LATENCY_MS="${4:-120}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT/tools/testsrc/dev_env.sh"
 BIN="$ROOT/out/build/bin/Release"
@@ -36,7 +37,7 @@ case "$URL" in
     srt://*)
         HOSTPORT="${URL#srt://}"
         HOSTPORT="${HOSTPORT%%[/?]*}"
-        SOURCE="{\"protocol\":\"srt\",\"mode\":\"caller\",\"host\":\"${HOSTPORT%:*}\",\"port\":${HOSTPORT##*:},\"latencyMs\":120}"
+        SOURCE="{\"protocol\":\"srt\",\"mode\":\"caller\",\"host\":\"${HOSTPORT%:*}\",\"port\":${HOSTPORT##*:},\"latencyMs\":$SRT_LATENCY_MS}"
         ;;
     *) SOURCE="{\"protocol\":\"rtmp\",\"mode\":\"pull\",\"url\":\"$URL\"}" ;;
 esac
@@ -56,8 +57,9 @@ YAVG=$(ffmpeg -hide_banner -f dshow -i video="denpachan Cam 1" -frames:v 30 -vf 
     grep -o 'YAVG=[0-9.]*' | tail -1)
 echo "cam1 $YAVG (slate は 32.9 付近)"
 
-step "5. 画面を撮る (out/check/ui-pull.png)"
+step "5. 画面を撮る (out/check/ui-pull.png、設定画面は ui-pull-settings.png)"
 "$BIN/denpachan.exe" --screenshot "$OUT/ui-pull.png" --delay 6 --select 1
+"$BIN/denpachan.exe" --screenshot "$OUT/ui-pull-settings.png" --delay 4 --settings 1
 
 step "6. 停止"
 "$CTL" stop 1

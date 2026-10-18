@@ -121,6 +121,15 @@ std::string summary_line(const json& ch) {
             line += a.value("open", false) ? " | audio idle" : " | audio closed";
         }
     }
+    if (ch.contains("srt") && ch.at("srt").contains("recommend")) {
+        const json& r = ch.at("srt").at("recommend");
+        if (r.at("latencyMs").get<int>() > 0) {
+            snprintf(buf, sizeof(buf), " | srt rec %d ms (rtt %.1f x%d loss %.2f%% drops %lld)", r.at("latencyMs").get<int>(),
+                     r.at("rttMs").get<double>(), r.at("multiplier").get<int>(), r.at("lossPct").get<double>(),
+                     (long long)r.at("drops").get<int64_t>());
+            line += buf;
+        }
+    }
     if (ch.contains("record") && ch.at("record").at("state") != "off") {
         const json& r = ch.at("record");
         snprintf(buf, sizeof(buf), " | rec %s %.0fs %.1fMB drop %llu", r.at("state").get<std::string>().c_str(),

@@ -49,9 +49,17 @@
                 <Label Grid.Row="1" Content="ポート" VerticalAlignment="Center" />
                 <TextBox x:Name="PortBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Width="120" HorizontalAlignment="Left" />
                 <Label Grid.Row="2" Content="latency (ms)" VerticalAlignment="Center" />
-                <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
-                    <TextBox x:Name="LatencyBox" Margin="0,3" Width="120" />
-                    <TextBlock Text="  送出側と大きい方が使われる" Style="{StaticResource DimText}" VerticalAlignment="Center" FontSize="12" />
+                <StackPanel Grid.Row="2" Grid.Column="1">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBox x:Name="LatencyBox" Margin="0,3" Width="120" />
+                        <TextBlock Text="  送出側と大きい方が使われる" Style="{StaticResource DimText}" VerticalAlignment="Center" FontSize="12" />
+                    </StackPanel>
+                    <!-- 受信状況から出した推奨値 (受信中だけ) -->
+                    <DockPanel x:Name="LatencyAdvicePanel" Margin="0,2,0,4">
+                        <Button x:Name="ApplyLatencyButton" DockPanel.Dock="Right" Content="推奨値にする" Margin="6,0,0,0"
+                                VerticalAlignment="Top" Click="ApplyLatency_Click" />
+                        <TextBlock x:Name="LatencyAdvice" Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap" />
+                    </DockPanel>
                 </StackPanel>
                 <Label Grid.Row="3" Content="パスフレーズ" VerticalAlignment="Center" />
                 <PasswordBox x:Name="PassphraseBox" Grid.Row="3" Grid.Column="1" Margin="0,3" />

@@ -225,6 +225,12 @@ public:
             s.srt_lost = srt.lost_total;
             s.srt_retrans = srt.retrans_total;
             s.srt_dropped = srt.dropped_total;
+            s.srt_rec_latency_ms = srt.advice.latency_ms;
+            s.srt_rec_multiplier = srt.advice.multiplier;
+            s.srt_rec_rtt_ms = srt.advice.rtt_ms;
+            s.srt_rec_loss_pct = srt.advice.loss_pct;
+            s.srt_rec_drops = srt.advice.drops;
+            s.srt_rec_window_sec = srt.advice.window_sec;
             s.tcp_rtt_ms = double(m_.tcp_rtt_us.load()) / 1000;
             s.tcp_retrans_bytes = m_.tcp_retrans_bytes.load();
             s.audio_peak_l_db = dbfs(peak_l);

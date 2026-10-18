@@ -31,6 +31,16 @@ public partial class ChannelSettingsWindow : Window
         HostBox.Text = s.Str("host", "0.0.0.0");
         PortBox.Text = s.Int("port").ToString();
         LatencyBox.Text = s.Int("latencyMs", 120).ToString();
+        if (channel.SrtRecommendation.Length > 0)
+        {
+            LatencyAdvice.Text = "推奨: " + channel.SrtRecommendation;
+            ApplyLatencyButton.IsEnabled = channel.SrtRecommendedLatencyMs > 0;
+        }
+        else
+        {
+            LatencyAdvice.Text = "受信中に、受信状況 (RTT とロス率) から推奨値を出します";
+            ApplyLatencyButton.Visibility = Visibility.Collapsed;
+        }
         PassphraseHint.Text = s.Bool("hasPassphrase") ? "設定済み (空欄なら変更しない)" : "未設定";
         Select(PbkeylenBox, s.Int("pbkeylen").ToString());
         StreamIdBox.Text = s.Str("streamId");
@@ -146,6 +156,11 @@ public partial class ChannelSettingsWindow : Window
     }
 
     private void GenerateKey_Click(object sender, RoutedEventArgs e) => KeyBox.Text = NewKey();
+
+    private void ApplyLatency_Click(object sender, RoutedEventArgs e)
+    {
+        if (_channel.SrtRecommendedLatencyMs > 0) LatencyBox.Text = _channel.SrtRecommendedLatencyMs.ToString();
+    }
 
     private void CopyUrl_Click(object sender, RoutedEventArgs e) => Clipboard.SetText(PushUrlBox.Text);
 

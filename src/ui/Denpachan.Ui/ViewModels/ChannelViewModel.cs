@@ -335,8 +335,9 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         {
             var res = video.Int("width") > 0 ? $"{video.Int("width")}x{video.Int("height")} " : "";
             VideoLine = $"{bitrate:0.0} Mbps   {video.Num("outputFps"):0} fps   遅延 {delay:0} ms   {res}{video.Str("codec")}";
+            var recommended = srt.At("recommend").Int("latencyMs");
             TransportLine = srt != null
-                ? $"SRT latency {srt.Int("latencyMs")} ms   RTT {rtt:0.0} ms   ロス {srt.Num("lost"):0}   ドロップ {srt.Num("dropped"):0}"
+                ? $"SRT latency {srt.Int("latencyMs")} ms{(recommended > 0 ? $" (推奨 {recommended})" : "")}   RTT {rtt:0.0} ms   ロス {srt.Num("lost"):0}   ドロップ {srt.Num("dropped"):0}"
                 : tcp != null ? $"TCP RTT {rtt:0.0} ms   再送 {tcp.Num("retransBytes") / 1024:0} KB" : "";
         }
         else
@@ -344,6 +345,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             VideoLine = "";
             TransportLine = "";
         }
+        SrtRecommendedLatencyMs = srt.At("recommend").Int("latencyMs");
+        SrtRecommendation = srt != null ? DescribeSrtRecommendation(srt) : "";
 
         var audioIn = st.At("audioIn");
         var audioOut = st.At("audioOut");
@@ -388,6 +391,37 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         return events;
     }
 
+    /// <summary>SRT の latency の推奨値 (受信中なら 0 より大きい。0 = 計測中 / 受信していない)</summary>
+    public int SrtRecommendedLatencyMs { get; private set; }
+
+    /// <summary>推奨値の説明 (設定画面にも出す)</summary>
+    public string SrtRecommendation { get; private set; } = "";
+
+    /// <summary>
+    /// 受信状況から出した推奨値の説明。worker が直近 60 秒の RTT (最大) とロス率から出している
+    /// (latency ≥ RTT × 倍率、倍率はロス率で 3〜10。取りこぼしがあれば今の 1.5 倍以上)。
+    /// </summary>
+    public static string DescribeSrtRecommendation(JsonNode srt)
+    {
+        var r = srt.At("recommend");
+        var recommended = r.Int("latencyMs");
+        if (recommended <= 0) return $"計測中 (受信 {r.Int("windowSec")} 秒。10 秒分の統計が必要)";
+        var effective = srt.Int("latencyMs");
+        var configured = srt.Int("configuredLatencyMs");
+        var text = $"{recommended} ms (RTT {r.Num("rttMs"):0.0} ms × {r.Int("multiplier")}、ロス {r.Num("lossPct"):0.##}%、直近 {r.Int("windowSec")} 秒)";
+        if (r.Num("drops") > 0)
+        {
+            return text + $"。取りこぼし {r.Num("drops"):0}: 今の {effective} ms では足りていません";
+        }
+        if (recommended < effective && effective > configured)
+        {
+            return text + $"。相手側の latency ({effective} ms) が使われています。下げるには相手側も下げてください";
+        }
+        if (recommended < effective) return text + $"。今の {effective} ms から下げられます";
+        if (recommended > effective) return text + $"。今の {effective} ms では足りない可能性があります";
+        return text;
+    }
+
     private static string FormatBytes(double b) =>
         b >= 1024.0 * 1024 * 1024 ? $"{b / (1024.0 * 1024 * 1024):0.00} GB" : $"{b / (1024.0 * 1024):0} MB";
 
@@ -423,6 +457,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             Add("SRT RTT", $"{srt.Num("rttMs"):0.0} ms");
             Add("SRT 受信バッファ", $"{srt.Int("rcvBufMs")} ms");
             Add("SRT ロス / 再送 / ドロップ", $"{srt.Num("lost"):0} / {srt.Num("retrans"):0} / {srt.Num("dropped"):0}");
+            Add("SRT 推奨 latency", DescribeSrtRecommendation(srt));
         }
         if (st.At("tcp") is JsonNode tcp)
         {

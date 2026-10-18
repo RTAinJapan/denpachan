@@ -340,7 +340,11 @@ json Engine::state_locked() {
             if (c.source.protocol == "srt") {
                 j["srt"] = {{"latencyMs", m.srt_latency_ms}, {"rttMs", m.srt_rtt_ms}, {"rcvBufMs", m.srt_rcv_buf_ms},
                             {"recvMbps", m.srt_recv_mbps},   {"lost", m.srt_lost},    {"retrans", m.srt_retrans},
-                            {"dropped", m.srt_dropped}};
+                            {"dropped", m.srt_dropped},      {"configuredLatencyMs", c.source.latency_ms}};
+                // latency の推奨値 (受信状況から。0 = 計測中)
+                j["srt"]["recommend"] = {{"latencyMs", m.srt_rec_latency_ms}, {"multiplier", m.srt_rec_multiplier},
+                                         {"rttMs", m.srt_rec_rtt_ms},         {"lossPct", m.srt_rec_loss_pct},
+                                         {"drops", m.srt_rec_drops},          {"windowSec", m.srt_rec_window_sec}};
             } else if (c.source.mode == "push") {
                 j["tcp"] = {{"rttMs", m.tcp_rtt_ms}, {"retransBytes", m.tcp_retrans_bytes}};
             }
