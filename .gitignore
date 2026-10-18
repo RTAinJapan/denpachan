@@ -1,4 +1,6 @@
 /out/
+bin/
+obj/
 /build/
 /vcpkg_installed/
 .vs/

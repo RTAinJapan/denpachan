@@ -9,6 +9,7 @@ add_executable(denpachan-worker
     flv_ring_ingest.cpp
     decoder.cpp
     playout.cpp
+    preview_writer.cpp
     audio_writer.cpp
     scaler.cpp
     vcam_writer.cpp

@@ -1,0 +1,150 @@
+<Window x:Class="Denpachan.Ui.Views.ChannelSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="チャンネルの設定" Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource BgBrush}"
+        FontFamily="Segoe UI, Yu Gothic UI" FontSize="13">
+    <StackPanel Margin="18">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="150" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Label Content="名前" VerticalAlignment="Center" />
+            <TextBox x:Name="NameBox" Grid.Column="1" Margin="0,3" />
+            <Label Grid.Row="1" Content="入力" VerticalAlignment="Center" />
+            <ComboBox x:Name="InputBox" Grid.Row="1" Grid.Column="1" Margin="0,3" SelectionChanged="InputBox_SelectionChanged">
+                <ComboBoxItem Content="SRT (待ち受け / listener)" Tag="srt:listener" />
+                <ComboBoxItem Content="SRT (接続しに行く / caller)" Tag="srt:caller" />
+                <ComboBoxItem Content="RTMP push (Nginx などから受ける)" Tag="rtmp:push" />
+                <ComboBoxItem Content="RTMP pull (Nginx などから取りに行く)" Tag="rtmp:pull" />
+            </ComboBox>
+        </Grid>
+
+        <!-- SRT -->
+        <GroupBox x:Name="SrtPanel" Header="SRT" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="144" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Label x:Name="HostLabel" Content="待ち受けアドレス" VerticalAlignment="Center" />
+                <TextBox x:Name="HostBox" Grid.Column="1" Margin="0,3" />
+                <Label Grid.Row="1" Content="ポート" VerticalAlignment="Center" />
+                <TextBox x:Name="PortBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Width="120" HorizontalAlignment="Left" />
+                <Label Grid.Row="2" Content="latency (ms)" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                    <TextBox x:Name="LatencyBox" Margin="0,3" Width="120" />
+                    <TextBlock Text="  送出側と大きい方が使われる" Style="{StaticResource DimText}" VerticalAlignment="Center" FontSize="12" />
+                </StackPanel>
+                <Label Grid.Row="3" Content="パスフレーズ" VerticalAlignment="Center" />
+                <PasswordBox x:Name="PassphraseBox" Grid.Row="3" Grid.Column="1" Margin="0,3" />
+                <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal">
+                    <TextBlock x:Name="PassphraseHint" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" />
+                    <CheckBox x:Name="ClearPassphraseBox" Content="パスフレーズを消す" Margin="12,0,0,0" />
+                </StackPanel>
+                <Label Grid.Row="5" Content="鍵長" VerticalAlignment="Center" />
+                <ComboBox x:Name="PbkeylenBox" Grid.Row="5" Grid.Column="1" Margin="0,3" Width="160" HorizontalAlignment="Left">
+                    <ComboBoxItem Content="既定" Tag="0" />
+                    <ComboBoxItem Content="AES-128" Tag="16" />
+                    <ComboBoxItem Content="AES-192" Tag="24" />
+                    <ComboBoxItem Content="AES-256" Tag="32" />
+                </ComboBox>
+                <Label Grid.Row="6" Content="Stream ID (caller)" VerticalAlignment="Center" />
+                <TextBox x:Name="StreamIdBox" Grid.Row="6" Grid.Column="1" Margin="0,3" />
+            </Grid>
+        </GroupBox>
+
+        <!-- RTMP push -->
+        <GroupBox x:Name="PushPanel" Header="RTMP push" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="144" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Label Content="app" VerticalAlignment="Center" />
+                <TextBox x:Name="AppBox" Grid.Column="1" Margin="0,3" TextChanged="PushUrl_Changed" />
+                <Label Grid.Row="1" Content="ストリームキー" VerticalAlignment="Center" />
+                <DockPanel Grid.Row="1" Grid.Column="1">
+                    <Button DockPanel.Dock="Right" Content="生成" Margin="6,0,0,0" Click="GenerateKey_Click" />
+                    <TextBox x:Name="KeyBox" Margin="0,3" TextChanged="PushUrl_Changed" FontFamily="Consolas" />
+                </DockPanel>
+                <Label Grid.Row="2" Content="送出側に設定する URL" VerticalAlignment="Center" />
+                <DockPanel Grid.Row="2" Grid.Column="1">
+                    <Button DockPanel.Dock="Right" Content="コピー" Margin="6,0,0,0" Click="CopyUrl_Click" />
+                    <TextBox x:Name="PushUrlBox" Margin="0,3" IsReadOnly="True" FontFamily="Consolas" />
+                </DockPanel>
+                <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+                           Text="Nginx の例: application live { live on; push この URL; push_reconnect 1s; }" />
+            </Grid>
+        </GroupBox>
+
+        <!-- RTMP pull -->
+        <GroupBox x:Name="PullPanel" Header="RTMP pull" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="144" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Label Content="URL" VerticalAlignment="Center" />
+                <TextBox x:Name="UrlBox" Grid.Column="1" Margin="0,3" FontFamily="Consolas" />
+            </Grid>
+        </GroupBox>
+
+        <!-- 共通 -->
+        <GroupBox Header="出力" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="144" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Label Content="再生バッファ (ms)" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <TextBox x:Name="BufferBox" Margin="0,3" Width="120" />
+                    <TextBlock Text="  0 = 最小遅延。カクつくなら 16 程度" Style="{StaticResource DimText}" VerticalAlignment="Center" FontSize="12" />
+                </StackPanel>
+                <Label Grid.Row="1" Content="音声の出力モード" VerticalAlignment="Center" />
+                <ComboBox x:Name="AudioModeBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Width="280" HorizontalAlignment="Left">
+                    <ComboBoxItem Content="共有 (他のアプリと同時に使える)" Tag="shared" />
+                    <ComboBoxItem Content="排他 (低遅延。通知音が混ざらない)" Tag="exclusive" />
+                </ComboBox>
+                <Label Grid.Row="2" Content="音声オフセット (ms)" VerticalAlignment="Center" />
+                <TextBox x:Name="OffsetBox" Grid.Row="2" Grid.Column="1" Margin="0,3" Width="120" HorizontalAlignment="Left" />
+                <CheckBox x:Name="FadeBox" Grid.Row="3" Grid.Column="1" Content="受信の開始・途絶の瞬間に短いフェードをかける (ノイズ防止)" />
+            </Grid>
+        </GroupBox>
+
+        <TextBlock x:Name="ErrorText" Foreground="#FFF07178" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
+        <TextBlock Text="受信の設定を変えると、このチャンネルは一度切断して再接続します。" Style="{StaticResource DimText}" FontSize="12"
+                   Margin="0,10,0,0" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="キャンセル" IsCancel="True" MinWidth="90" />
+            <Button x:Name="SaveButton" Content="保存" IsDefault="True" MinWidth="90" Style="{StaticResource PrimaryButton}" Click="Save_Click" Margin="0" />
+        </StackPanel>
+    </StackPanel>
+</Window>

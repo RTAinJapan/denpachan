@@ -232,6 +232,12 @@ json Engine::handle(const std::string& method, const json& params) {
         return {{"ok", true}};
     }
 
+    if (method == "shutdown") {
+        // UI の「終了」: 応答を返してから main ループが止める
+        shutdown_request_ = params.value("keepWorkers", false) ? 2 : 1;
+        return {{"ok", true}};
+    }
+
     throw std::runtime_error("unknown method: " + method);
 }
 

@@ -11,8 +11,8 @@ namespace denpachan::worker {
 using namespace std::chrono_literals;
 
 Playout::Playout(PlayoutOptions options, PlayoutClock& clock, FrameQueue& queue, VcamWriter* writer,
-                 ChannelMetrics& metrics)
-    : options_(options), clock_(clock), queue_(queue), writer_(writer), metrics_(metrics) {
+                 PreviewWriter* preview, ChannelMetrics& metrics)
+    : options_(options), clock_(clock), queue_(queue), writer_(writer), preview_(preview), metrics_(metrics) {
     timer_.reset(CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS));
     if (!timer_) timer_.reset(CreateWaitableTimerW(nullptr, FALSE, nullptr));
 }
@@ -85,6 +85,7 @@ void Playout::run() {
                 spdlog::info("playout: stalled, holding last frame");
             }
             if (writer_) writer_->refresh(held.get());
+            if (preview_) preview_->refresh(held.get());
             continue;
         }
 
@@ -134,6 +135,7 @@ void Playout::run() {
         if (stopped) break;
 
         if (writer_) writer_->write(f->frame.get());
+        if (preview_) preview_->submit(f->frame.get());  // 縮小は別スレッド
         last_output_qpc = qpc_now();
         ++metrics_.frames_presented;
         metrics_.delay_us = qpc_to_us(last_output_qpc - f->arrival_qpc);

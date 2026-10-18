@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -31,6 +32,8 @@ public:
     nlohmann::json state();
     // stop_workers = false なら worker は動かしたまま終わる (engine を入れ替えるとき用)
     void shutdown(bool stop_workers);
+    // IPC で終了を求められたか (0: なし / 1: worker も止める / 2: worker は残す)
+    int shutdown_request() const { return shutdown_request_; }
 
 private:
     std::wstring worker_args(const ChannelConfig& ch) const;
@@ -53,6 +56,7 @@ private:
     SharedMapping vcam_mappings_[vcam::kNumCams];
     vcam::Header* vcam_headers_[vcam::kNumCams] = {};
     int64_t last_audio_retry_qpc_ = 0;
+    std::atomic<int> shutdown_request_{0};
 };
 
 }  // namespace denpachan::engine

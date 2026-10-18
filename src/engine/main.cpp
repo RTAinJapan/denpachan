@@ -158,14 +158,19 @@ int wmain(int argc, wchar_t** argv) {
 
     // 200ms ごとに監視、1 秒ごとに状態を全クライアントへ通知
     int ticks = 0;
+    bool keep_workers = opts->keep_workers;
     while (WaitForSingleObject(g_stop_event.get(), 200) == WAIT_TIMEOUT) {
+        if (const int req = engine.shutdown_request(); req != 0) {
+            keep_workers = req == 2;
+            break;
+        }
         engine.tick();
         if (++ticks % 5 == 0) ipc.broadcast({{"event", "state"}, {"data", engine.state()}});
     }
 
-    spdlog::info("engine stopping{}", opts->keep_workers ? " (workers keep running)" : "");
+    spdlog::info("engine stopping{}", keep_workers ? " (workers keep running)" : "");
     ipc.stop();
-    engine.shutdown(!opts->keep_workers);
+    engine.shutdown(!keep_workers);
     timeEndPeriod(1);
     CoUninitialize();
     spdlog::info("engine stopped");

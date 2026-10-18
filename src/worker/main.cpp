@@ -342,7 +342,9 @@ int main(int argc, char** argv) {
     }
     Decoder decoder(input_format, bytes, frames, audio.get(), metrics, opts->hw);
     if (opts->input == "url") decoder.set_url(opts->url);
-    Playout playout(opts->playout, clock, frames, writer.get(), metrics);
+    PreviewWriter preview;
+    preview.open(opts->ch);
+    Playout playout(opts->playout, clock, frames, writer.get(), &preview, metrics);
 
     spdlog::info("worker start: ch {} ({}) -> cam {}", opts->ch, opts->input, opts->cam);
     playout.start();

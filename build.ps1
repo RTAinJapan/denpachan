@@ -50,6 +50,11 @@ try {
     if ($LASTEXITCODE) { throw 'configure failed' }
     cmake --build --preset $Config
     if ($LASTEXITCODE) { throw 'build failed' }
+
+    # UI (C# / WPF)。engine と同じフォルダに出す (UI は隣の denpachan-engine.exe を起動する)
+    $cfgName = if ($Config -eq 'release') { 'Release' } else { 'Debug' }
+    dotnet build src/ui/Denpachan.Ui/Denpachan.Ui.csproj -c $cfgName -o "out/build/bin/$cfgName" --nologo -v minimal
+    if ($LASTEXITCODE) { throw 'UI build failed' }
 } finally {
     Pop-Location
 }
