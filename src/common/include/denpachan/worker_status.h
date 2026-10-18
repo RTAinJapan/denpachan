@@ -21,6 +21,9 @@ inline constexpr uint32_t kMagic = 0x53575044;  // "DPWS"
 inline constexpr uint32_t kLayoutVersion = 2;
 inline constexpr size_t kMappingBytes = 16384;
 
+// worker の終了コード: FFmpeg の DLL が無い / 版が合わない (engine は再起動を繰り返さず、FFmpeg を探し直す)
+inline constexpr unsigned long kExitFfmpegUnavailable = 0x0FF0;
+
 enum class VideoState : uint32_t { Waiting = 0, Live = 1, Hold = 2 };
 
 // 1 秒ごとのスナップショット (POD)

@@ -59,7 +59,7 @@ flowchart LR
 | 項目 | 決定 |
 |------|------|
 | 録画の既定モード | パススルー。再エンコードは設定で選択 |
-| x264 の同梱 | しない。FFmpeg は LGPL ビルド。CPU エンコードはユーザーが用意した外部 ffmpeg を使う (§8.4、M6 で追加) |
+| x264 の同梱 | しない。**FFmpeg 自体も同梱しない** (利用者が FFmpeg 9.x の shared 版を用意する。docs/dependencies.md)。CPU エンコードは利用者の ffmpeg.exe を使う (§8.4、M6 で追加) |
 | 入力の上限 | 4K60 まで。ただし 1080p60 を受けるときに 4K 対応ぶんの負荷が増えない作りにする (§5.3)。実機はハイスペック PC 想定 |
 | 音声チャンネル | 各ソースはステレオのみ |
 | RTMP の待受 | 1935 番 1 本 + ストリームキーでチャンネル振り分け。初期から対応 (§3.3) |
@@ -133,7 +133,7 @@ flowchart LR
 | ビルド (C++) | CMake + vcpkg (manifest mode) | 依存管理の再現性 |
 | SRT | libsrt を直接使用 | FFmpeg の `srt://` プロトコルでは `srt_bstats` (RTT, ロス, 再送, 受信バッファ量) が取れないため。受信データは独自 AVIOContext で libavformat に渡す |
 | RTMP サーバ | 自前実装 (§3.3) | 1 ポートでキー振り分けをするため。FFmpeg の listen モードは 1 接続 1 ポートでこれができない |
-| デマックス / デコード / エンコード / Mux / RTMP pull | FFmpeg 9.x (vcpkg、libav*、LGPL ビルド) | 実績。Enhanced RTMP (HEVC/AV1) も対応 |
+| デマックス / デコード / エンコード / Mux / RTMP pull | FFmpeg 9.x (libav*)。**同梱せず、利用者の shared 版の DLL を遅延ロード**。ビルドには vcpkg のヘッダと import lib だけを使う | 実績。Enhanced RTMP (HEVC/AV1) も対応 |
 | HW デコード | D3D11VA (FFmpeg hwaccel)、失敗時はソフトウェアに自動フォールバック | GPU ベンダ非依存。4K HEVC も GPU で処理 |
 | 映像変換 | D3D11 Video Processor (GPU 上でスケーリング / NV12 化してから CPU へ転送)、フォールバックで libswscale | CPU 負荷と GPU→CPU 転送量の削減 |
 | 録画エンコード | NVENC / QSV (FFmpeg 経由)。CPU は外部 ffmpeg.exe (x264 / x265 / SVT-AV1) | x264 は同梱しない (GPL 回避) |
@@ -520,7 +520,7 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
                                                   エラー出力 → worker のログ (最後の 1 行を UI のエラー表示に)
 ```
 
-- ffmpeg.exe の場所は全体設定 `ffmpegPath`。空欄なら denpachan と同じフォルダ、次に PATH から探す。全体設定画面の「確認」で、見つかった ffmpeg のバージョンと libx264 / libx265 / libsvtav1 の有無を表示する。
+- ffmpeg.exe の場所は全体設定 `ffmpegPath`。空欄なら denpachan と同じフォルダ、次に PATH から探す。FFmpeg の shared 版 (§13、docs/dependencies.md) の `bin` には DLL と一緒に ffmpeg.exe も入っているので、PATH に通してあれば設定は要らない (x264 / x265 は gpl 版のみ)。全体設定画面の「確認」で、見つかった ffmpeg のバージョンと libx264 / libx265 / libsvtav1 の有無を表示する。
 - 生の映像ではなく圧縮されたままのパケットを流すので、4K でもパイプの負荷は小さい (ffmpeg 側でデコードし直す)。
 - ファイルの区切り・再接続時の継続・ファイル名は §8.2 / §8.3 と同じ仕組み (区切るたびに ffmpeg を起動し直す)。
 - ファイルを閉じるときは標準入力を閉じるだけで待たない。ffmpeg は残りをエンコードして書き終え、自分で終わる。worker が落ちたときも、標準入力が閉じるので同じように書き終える (ファイルは壊れない)。
@@ -563,6 +563,7 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
 - プレビューのオン・オフはチャンネルごとに `%APPDATA%\denpachan\ui.json` に覚える。
 - 試験用に `--screenshot PATH [--delay SEC] [--select N] [--settings N]` で画面を PNG に保存して終了できる (`tools/testsrc/ui_test.sh`)。
 - 録画 (M6): タイルの「● 録画」ボタンでオン・オフ (受信は止めない)。タイルに録画の状態 (録画中の経過時間とサイズ、映像待ち、エラー)、詳細パネルにファイル名・サイズ・捨てた数・エラー。チャンネル設定の「録画」タブに保存先 (参照ボタン)、ファイル名テンプレート (展開例をその場で表示)、置き換え文字、形式、区切り、空き容量の下限、方式 (パススルー / GPU / CPU) とエンコードの設定。全体設定に CPU エンコード用の ffmpeg.exe。
+- FFmpeg (同梱しない) が見つからないときは、画面の上部に赤い帯で案内を出し、有効なチャンネルの状態は「FFmpeg がありません」にする。
 - CPU / GPU 使用率の表示は今後。
 
 ---
@@ -668,8 +669,11 @@ denpachan/
 ├─ vcpkg.json
 ├─ Denpachan.sln             # C# UI
 ├─ build.ps1                 # C++ と C# をまとめてビルド
+├─ cmake/                    # FFmpeg の遅延ロードと DLL の除去、ライセンス文のコピー
 ├─ docs/
-│  └─ design.md
+│  ├─ design.md
+│  ├─ dependencies.md        # 利用者が用意するもの / 同梱するもの / ビルドに使うもの
+│  └─ third_party_notices.md # 配布物の licenses/README.md になる
 ├─ schema/                   # IPC メッセージ・設定ファイルの JSON Schema
 ├─ src/
 │  ├─ common/                # 共有メモリ定義, IPC, ログ, 設定, SPSC リングバッファ (C++)
@@ -713,4 +717,6 @@ denpachan/
 | SRT の待受ポート | チャンネルごとに別ポート。streamid での振り分けはしない |
 | RTMP の認証 | ストリームキーのみ (送信元 IP の許可リストは設けない) |
 | 4K の同時受信数 | 実機で GPU のデコード能力を確認する (M7 の耐久試験で計測) |
-| 録画の CPU エンコード | ユーザーが CPU / GPU を選べるようにする。CPU は x264 / x265 を同梱せず、外部の ffmpeg.exe を子プロセスで起動する (§8.4)。内蔵の OpenH264 / SVT-AV1 は入れない (画質と HEVC 非対応のため) |
+| 録画の CPU エンコード | ユーザーが CPU / GPU を選べるようにする。CPU は x264 / x265 を同梱せず、外部の ffmpeg.exe を子プロセスで起動する (§8.4)。内蔵の OpenH264 / SVT-AV1 は入れない (画質と HEVC 非対応のため)。FFmpeg の DLL をプロセス内で使う案より、エンコーダが落ちても受信を巻き込まない外部プロセスを選んだ |
+| FFmpeg の同梱 | しない。利用者が FFmpeg 9.x の shared 版を用意し、`bin` を PATH に通すか denpachan の横に置く。worker と engine は DLL を遅延ロードし、使う前に有無と版 (同じ major、minor は同じか新しい) を確かめる。無ければ engine と画面は動き、「FFmpeg が見つかりません」を出して受信は起動しない (10 秒ごとに探し直し、見つかれば自動で始める)。依存関係の一覧は docs/dependencies.md |
+| 同梱するライブラリ | SRT (MPL-2.0、ソースの入手先を表示)、OpenSSL (Apache-2.0)、spdlog / fmt / nlohmann-json (MIT)。ライセンス文を `licenses/` に入れる |

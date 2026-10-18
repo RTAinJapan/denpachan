@@ -23,6 +23,7 @@
 #include "audio_writer.h"
 #include "byte_queue.h"
 #include "denpachan/crash_dump.h"
+#include "denpachan/ffmpeg_runtime.h"
 #include "denpachan/worker_status.h"
 #include "decoder.h"
 #include "playout_clock.h"
@@ -287,6 +288,14 @@ int main(int argc, char** argv) {
     }
     setup_logging(*opts);
     install_crash_dump(local_app_dir(L"dumps"), L"worker-ch" + std::to_wstring(opts->ch));
+
+    // FFmpeg は同梱しない (遅延ロード)。最初に使う前に、DLL があって版が合うか確かめる
+    if (const auto ff = ffmpeg_runtime::check_all(); !ff.ok) {
+        spdlog::critical("{}", ff.message);
+        return int(worker_status::kExitFfmpegUnavailable);
+    }
+    spdlog::info("FFmpeg: avcodec {}.{}, avformat {}.{}", avcodec_version() >> 16, (avcodec_version() >> 8) & 0xff,
+                 avformat_version() >> 16, (avformat_version() >> 8) & 0xff);
 
     // 配信中にスリープ・省電力で止まらないようにする (設計書 §4)
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);

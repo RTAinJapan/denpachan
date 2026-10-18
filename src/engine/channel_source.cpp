@@ -1,5 +1,7 @@
 #include "channel_source.h"
 
+#include "engine.h"  // ffmpeg_available
+
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -39,17 +41,26 @@ ChannelSource::ChannelSource(const RouteOptions& options, uint32_t device_rate, 
       passthrough_(device_rate == kSampleRate) {
     stats_.passthrough = passthrough_;
     mute_ = options.mute;
-    if (!passthrough_) {
-        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
-        swr_alloc_set_opts2(&swr_, &stereo, AV_SAMPLE_FMT_FLT, int(device_rate), &stereo, AV_SAMPLE_FMT_FLT,
-                            int(kSampleRate), 0, nullptr);
-        if (swr_ && swr_init(swr_) < 0) swr_free(&swr_);
-    }
+    ensure_swr();
 }
 
 ChannelSource::~ChannelSource() {
     if (header_) header_->output_delay_qpc.store(0);
-    swr_free(&swr_);
+    if (swr_) swr_free(&swr_);  // FFmpeg が無いときに呼ばない (遅延ロード)
+}
+
+bool ChannelSource::ensure_swr() {
+    if (passthrough_ || swr_) return true;
+    // 48 kHz 以外のデバイスはリサンプルが要る。FFmpeg (同梱しない) が無ければ出せない。1 秒ごとに試す
+    const int64_t now = qpc_now();
+    if (last_swr_attempt_ != 0 && now - last_swr_attempt_ < qpc_from_ms(1000)) return false;
+    last_swr_attempt_ = now;
+    if (!ffmpeg_available()) return false;
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    swr_alloc_set_opts2(&swr_, &stereo, AV_SAMPLE_FMT_FLT, int(device_rate_), &stereo, AV_SAMPLE_FMT_FLT,
+                        int(kSampleRate), 0, nullptr);
+    if (swr_ && swr_init(swr_) < 0) swr_free(&swr_);
+    return swr_ != nullptr;
 }
 
 bool ChannelSource::ensure_open() {
@@ -133,7 +144,7 @@ int ChannelSource::pull_resampled(float* dst, int frames) {
 }
 
 void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64_t base_delay_qpc) {
-    if ((!passthrough_ && !swr_) || !ensure_open()) {
+    if (!ensure_swr() || !ensure_open()) {
         stats_.playing = false;
         return;
     }

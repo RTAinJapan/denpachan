@@ -1,4 +1,3 @@
-find_package(FFMPEG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -26,3 +25,6 @@ target_link_libraries(denpachan-engine PRIVATE
     crypt32
     dbghelp
 )
+# engine が FFmpeg を使うのは 48 kHz 以外の音声デバイスへのリサンプルだけ。FFmpeg が無くても engine は動き、
+# worker を起動する前に DLL の有無と版を確かめる (ffmpeg_runtime.h)
+denpachan_delayload_ffmpeg(denpachan-engine libavcodec libavformat libavutil libswresample libswscale)

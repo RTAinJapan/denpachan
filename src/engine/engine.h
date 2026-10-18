@@ -42,6 +42,8 @@ private:
     void apply_rtmp_locked();
     void save_locked();
     nlohmann::json state_locked();
+    // FFmpeg (同梱しない) の有無を確かめ直す。見つかったら止めていたチャンネルを起動する
+    void check_ffmpeg_locked();
 
     std::mutex mutex_;
     const std::wstring config_path_;
@@ -57,6 +59,12 @@ private:
     vcam::Header* vcam_headers_[vcam::kNumCams] = {};
     int64_t last_audio_retry_qpc_ = 0;
     std::atomic<int> shutdown_request_{0};
+    bool ffmpeg_ok_ = false;
+    std::string ffmpeg_message_;  // 見つからないときの説明
+    int64_t last_ffmpeg_check_qpc_ = 0;
 };
+
+// FFmpeg の DLL を使えるか (音声のリサンプルが確かめてから使う)
+bool ffmpeg_available();
 
 }  // namespace denpachan::engine

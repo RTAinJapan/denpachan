@@ -296,6 +296,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         (StatusKind, StatusText) = workerState switch
         {
             "stopped" => ("stopped", "停止"),
+            "unavailable" => ("restarting", "FFmpeg がありません"),
             "restarting" => ("restarting", "再起動中"),
             _ when video == null => ("starting", "起動中"),
             _ when videoState == "live" => ("live", "受信中"),

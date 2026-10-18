@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cwctype>
+#include <utility>
 
 #include "audio_devices.h"
 
@@ -209,6 +210,14 @@ void WorkerProcess::poll() {
         GetExitCodeProcess(process_.get(), &code);
         process_.reset();
         pid_ = 0;
+        if (code == worker_status::kExitFfmpegUnavailable) {
+            // 再起動しても同じなので、間を空ける (engine が FFmpeg を探し直す)
+            ffmpeg_unavailable_ = true;
+            last_event_ = "FFmpeg を読み込めません";
+            next_restart_qpc_ = now + qpc_from_ms(10'000);
+            spdlog::warn("[{}]worker cannot load FFmpeg; retrying in 10 s", label_);
+            return;
+        }
         char buf[64];
         snprintf(buf, sizeof(buf), "worker exited (code 0x%lX)", code);
         schedule_restart_locked(buf);
@@ -236,6 +245,11 @@ void WorkerProcess::set_record_config(const std::string& json) {
             worker_status::write_record_config(st, json);
         }
     }
+}
+
+bool WorkerProcess::take_ffmpeg_unavailable() {
+    std::lock_guard lk(mutex_);
+    return std::exchange(ffmpeg_unavailable_, false);
 }
 
 WorkerSnapshot WorkerProcess::snapshot() {

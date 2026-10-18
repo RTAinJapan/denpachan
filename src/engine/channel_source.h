@@ -75,6 +75,7 @@ public:
 
 private:
     bool ensure_open();
+    bool ensure_swr();
     void start_at(uint64_t pos, uint64_t epoch);
     void copy_from_ring(float* dst, uint64_t pos, int frames) const;
     // デバイスのレートで最大 frames 出す (足りなければ少なく返す)
@@ -93,6 +94,7 @@ private:
     int64_t last_open_attempt_ = 0;
 
     SwrContext* swr_ = nullptr;
+    int64_t last_swr_attempt_ = 0;
     std::vector<float> in_buf_;
     std::vector<float> fifo_;  // リサンプル後 (デバイスのレート、ステレオ)
     size_t fifo_frames_ = 0;

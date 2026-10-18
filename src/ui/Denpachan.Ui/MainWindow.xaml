@@ -150,6 +150,12 @@
             </MenuItem>
         </Menu>
 
+        <!-- FFmpeg (同梱しない) が見つからないときの案内 -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource ErrorBrush}" Padding="12,6"
+                Visibility="{Binding FfmpegMissing, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding FfmpegMessage}" TextWrapping="Wrap" Foreground="White" />
+        </Border>
+
         <!-- 状態バー -->
         <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="10,4">
             <DockPanel>

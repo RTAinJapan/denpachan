@@ -80,6 +80,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _rtmpText = "";
     public string RtmpText { get => _rtmpText; private set => SetProperty(ref _rtmpText, value); }
 
+    private bool _ffmpegMissing;
+    public bool FfmpegMissing { get => _ffmpegMissing; private set => SetProperty(ref _ffmpegMissing, value); }
+
+    private string _ffmpegMessage = "";
+    public string FfmpegMessage { get => _ffmpegMessage; private set => SetProperty(ref _ffmpegMessage, value); }
+
     // ---- engine とのやりとり ----
 
     private void OnConnectionChanged(bool connected)
@@ -106,6 +112,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 foreach (var e in ch.ApplyState(st!)) Log($"{ch.Name}: {e}", e.Contains("切れ") || e.Contains("途絶") || e.Contains("再起動"));
             }
         }
+        var ffmpeg = state.At("ffmpeg");
+        var missing = ffmpeg != null && !ffmpeg.Bool("ok", true);
+        if (missing != FfmpegMissing)
+        {
+            Log(missing ? ffmpeg.Str("message") : "FFmpeg が見つかりました", missing);
+            FfmpegMissing = missing;
+        }
+        FfmpegMessage = missing ? ffmpeg.Str("message") + " (見つかると自動で受信を始めます)" : "";
         var rtmp = state.At("rtmpServer");
         var rtmpState = rtmp.Str("state", "stopped");
         RtmpText = rtmpState == "stopped" ? "RTMP サーバ: 停止" : $"RTMP サーバ: {(rtmpState == "running" ? "動作中" : "再起動中")} (:{rtmp.Int("port")})";

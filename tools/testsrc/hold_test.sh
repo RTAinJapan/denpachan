@@ -8,6 +8,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/tools/testsrc/dev_env.sh"
 BIN="$ROOT/out/build/bin/Release"
 OUT="$ROOT/out/check"
 PORT=9001

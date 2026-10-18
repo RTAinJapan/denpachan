@@ -25,9 +25,17 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+find_package(FFMPEG REQUIRED)  # ヘッダと import lib だけ使う (DLL は同梱しない)
+include(cmake/FfmpegRuntime.cmake)
+
 add_subdirectory(src/common)
 add_subdirectory(src/vcam)
 add_subdirectory(src/worker)
 add_subdirectory(src/engine)
 add_subdirectory(src/rtmpd)
 add_subdirectory(src/tools)
+
+denpachan_strip_ffmpeg_dlls(denpachan-worker denpachan-engine)
+
+include(cmake/ThirdPartyNotices.cmake)
+denpachan_copy_licenses(libsrt openssl spdlog fmt nlohmann-json)

@@ -1,4 +1,3 @@
-find_package(FFMPEG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_path(SRT_INCLUDE_DIR srt/srt.h REQUIRED)
@@ -30,3 +29,4 @@ target_link_libraries(denpachan-worker PRIVATE
     avrt
     dbghelp
 )
+denpachan_delayload_ffmpeg(denpachan-worker libavcodec libavformat libavutil libswresample libswscale)

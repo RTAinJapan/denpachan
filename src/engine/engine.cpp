@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "audio_devices.h"
+#include "denpachan/ffmpeg_runtime.h"
 
 using nlohmann::json;
 
@@ -13,6 +14,9 @@ namespace denpachan::engine {
 namespace {
 
 constexpr int64_t kAudioRetryMs = 5000;
+constexpr int64_t kFfmpegRetryMs = 10'000;  // FFmpeg が無いとき、探し直す間隔
+
+std::atomic<bool> g_ffmpeg_available{false};
 
 std::wstring num(int v) { return std::to_wstring(v); }
 
@@ -41,6 +45,24 @@ int channel_param(const json& params) {
 }
 
 }  // namespace
+
+bool ffmpeg_available() { return g_ffmpeg_available.load(); }
+
+void Engine::check_ffmpeg_locked() {
+    last_ffmpeg_check_qpc_ = qpc_now();
+    const auto result = ffmpeg_runtime::check_all();
+    const bool was_ok = ffmpeg_ok_;
+    const std::string old_message = ffmpeg_message_;
+    ffmpeg_ok_ = result.ok;
+    ffmpeg_message_ = result.message;
+    g_ffmpeg_available = result.ok;
+    if (result.ok && !was_ok) {
+        spdlog::info("FFmpeg found (avcodec {}.{})", avcodec_version() >> 16, (avcodec_version() >> 8) & 0xff);
+        for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
+    } else if (!result.ok && result.message != old_message) {
+        spdlog::error("{}", result.message);
+    }
+}
 
 Engine::Engine(std::wstring config_path, std::wstring worker_exe, std::wstring log_dir)
     : config_path_(std::move(config_path)), worker_exe_(std::move(worker_exe)), log_dir_(std::move(log_dir)) {
@@ -77,9 +99,13 @@ void Engine::init() {
     routes_ = rtmp_routes::open_shared(routes_mapping_);
     if (!routes_) spdlog::error("cannot open RTMP routes shared memory");
 
-    // 前回動いていたチャンネルを再開する (同じ設定で動いている worker / rtmpd は引き継ぐ)
+    // 前回動いていたチャンネルを再開する (同じ設定で動いている worker / rtmpd は引き継ぐ)。
+    // FFmpeg が無ければ worker は起動しない (見つかった時点で起動する)
     apply_rtmp_locked();
-    for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
+    check_ffmpeg_locked();
+    if (!ffmpeg_ok_) {
+        for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
+    }
     audio_.apply(config_);
 }
 
@@ -110,7 +136,20 @@ void Engine::apply_rtmp_locked() {
 void Engine::tick() {
     std::lock_guard lk(mutex_);
     rtmpd_->poll();
-    for (auto& w : workers_) w->poll();
+    bool worker_missing_ffmpeg = false;
+    for (auto& w : workers_) {
+        w->poll();
+        worker_missing_ffmpeg |= w->take_ffmpeg_unavailable();
+    }
+    // FFmpeg が無ければ時々探し直す (入れたら engine を再起動しなくても動き出す)。
+    // worker が見つけられなかったとき (動いている間に消された等) も確かめ直し、無ければチャンネルを止めて待つ。
+    // engine からは見えるのに worker が読めないときは、worker 側の 10 秒ごとの再起動に任せる
+    if (worker_missing_ffmpeg || (!ffmpeg_ok_ && qpc_now() - last_ffmpeg_check_qpc_ > qpc_from_ms(kFfmpegRetryMs))) {
+        check_ffmpeg_locked();
+        if (!ffmpeg_ok_) {
+            for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
+        }
+    }
     if (audio_.has_missing() && qpc_now() - last_audio_retry_qpc_ > qpc_from_ms(kAudioRetryMs)) {
         last_audio_retry_qpc_ = qpc_now();
         audio_.apply(config_);
@@ -159,7 +198,7 @@ void Engine::apply_channel_locked(int ch) {
     record["name"] = c.name;
     record["ffmpegPath"] = config_.general.ffmpeg_path;
     w.set_record_config(record.dump());
-    if (c.enabled) {
+    if (c.enabled && ffmpeg_ok_) {
         w.start(worker_args(c));  // 同じ設定で動いていれば何もしない
     } else {
         w.stop();
@@ -274,7 +313,7 @@ json Engine::state_locked() {
                  ? json{{"protocol", "rtmp"}, {"mode", c.source.mode}, {"app", c.source.app}}
                  : json{{"protocol", "srt"}, {"mode", c.source.mode}, {"host", c.source.host}, {"port", c.source.port}}},
             {"worker",
-             {{"state", worker_state_name(w.state)},
+             {{"state", c.enabled && !ffmpeg_ok_ ? "unavailable" : worker_state_name(w.state)},
               {"pid", w.pid},
               {"restarts", w.restarts},
               {"uptimeSec", w.uptime_sec},
@@ -327,7 +366,10 @@ json Engine::state_locked() {
                  {"uptimeSec", r.uptime_sec},
                  {"lastEvent", r.last_event},
                  {"port", config_.general.rtmp_port}};
-    return {{"channels", channels}, {"rtmpServer", rtmp}, {"audioDevices", audio_.devices_status()}};
+    return {{"channels", channels},
+            {"rtmpServer", rtmp},
+            {"audioDevices", audio_.devices_status()},
+            {"ffmpeg", {{"ok", ffmpeg_ok_}, {"message", ffmpeg_message_}}}};
 }
 
 }  // namespace denpachan::engine

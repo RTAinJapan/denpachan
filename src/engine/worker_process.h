@@ -47,6 +47,8 @@ public:
     void set_record_config(const std::string& json);
 
     WorkerSnapshot snapshot();
+    // worker が「FFmpeg が無い」で終わったか (読んだら戻す)
+    bool take_ffmpeg_unavailable();
 
 private:
     bool spawn_locked();
@@ -72,6 +74,7 @@ private:
     int failures_ = 0;
     uint64_t restarts_ = 0;
     std::string last_event_;
+    bool ffmpeg_unavailable_ = false;
 
     SharedMapping status_mapping_;
     worker_status::Header* status_ = nullptr;
