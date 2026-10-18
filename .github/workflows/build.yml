@@ -1,0 +1,104 @@
+# denpachan のビルド (docs/dependencies.md §3)。
+#
+# - C++: vcpkg (baseline と同じコミット) + CMake プリセット。vcpkg のバイナリはキャッシュする
+# - FFmpeg: cmake/FetchFfmpeg.cmake が固定の URL と SHA256 で取る (ヘッダと import lib だけ使う)。取ったものはキャッシュする
+# - UI: .NET 10
+# - 配布物 (FFmpeg の DLL を含まない) と PDB を artifact にする
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_COMMIT: bf19794383e8fb95eba5aa553235bc8ec2271688  # vcpkg.json の builtin-baseline と同じ
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache\archives
+      VCPKG_DOWNLOADS: ${{ github.workspace }}\vcpkg-cache\downloads
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout vcpkg
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_COMMIT }}
+          path: vcpkg
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE, $env:VCPKG_DOWNLOADS | Out-Null
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-cache/archives
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-
+
+      - name: Cache FFmpeg (build only)
+        uses: actions/cache@v4
+        with:
+          path: out/deps
+          key: ffmpeg-${{ hashFiles('cmake/FetchFfmpeg.cmake') }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Check the output
+        shell: pwsh
+        run: |
+          $bin = 'out/build/bin/Release'
+          # FFmpeg は同梱しない
+          $ffmpeg = Get-ChildItem $bin -Filter *.dll | Where-Object { $_.Name -match '^(avcodec|avformat|avutil|avfilter|avdevice|swresample|swscale|postproc)-\d+\.dll$' }
+          if ($ffmpeg) { throw "FFmpeg DLLs must not be in the output: $($ffmpeg.Name -join ', ')" }
+          foreach ($f in 'denpachan.exe', 'denpachan-engine.exe', 'denpachan-worker.exe', 'denpachan-rtmpd.exe',
+                         'denpachan-vcam.dll', 'srt.dll', 'licenses/denpachan.txt', 'licenses/libsrt.txt', 'licenses/README.md') {
+            if (-not (Test-Path "$bin/$f")) { throw "missing: $f" }
+          }
+          # FFmpeg が無ければ worker は専用の終了コード (0x0FF0) で終わる (遅延ロードと確認が効いている)
+          $p = Start-Process "$bin/denpachan-worker.exe" -ArgumentList '--ch', '4', '--cam', '0', '--port', '9104', '--log-file', "$env:RUNNER_TEMP/worker.log" -PassThru -Wait -NoNewWindow
+          if ($p.ExitCode -ne 0x0FF0) { Get-Content "$env:RUNNER_TEMP/worker.log"; throw "worker without FFmpeg exited with $($p.ExitCode)" }
+          # engine は FFmpeg が無くても起動して動き続ける
+          $engine = Start-Process "$bin/denpachan-engine.exe" -ArgumentList '--config', "$env:RUNNER_TEMP/config.json", '--log-file', "$env:RUNNER_TEMP/engine.log" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 5
+          if ($engine.HasExited) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw "engine exited with $($engine.ExitCode)" }
+          Stop-Process -Id $engine.Id -Force
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'FFmpeg 9.x' -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
+          Write-Host 'OK: no FFmpeg DLLs in the output; worker and engine handle missing FFmpeg'
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          $bin = 'out/build/bin/Release'
+          New-Item -ItemType Directory -Force dist/denpachan, dist/symbols | Out-Null
+          Copy-Item -Recurse "$bin/*" dist/denpachan -Exclude *.pdb, *.ilk, *.exp, *.lib
+          Copy-Item "$bin/*.pdb" dist/symbols
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: denpachan-win64
+          path: dist/denpachan
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: denpachan-win64-symbols
+          path: dist/symbols

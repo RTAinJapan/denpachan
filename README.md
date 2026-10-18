@@ -18,7 +18,9 @@ SRT / RTMP で受けた映像と音声 (最大 4 チャンネル) を、OBS な�
 ```
 
 Visual Studio 2026 (C++ によるデスクトップ開発)、.NET 10 SDK、vcpkg (`VCPKG_ROOT`) が必要。出力は `out/build/bin/Release`。
-FFmpeg の DLL は出力に入らないので、開発中は `out/build/vcpkg_installed/x64-windows/bin` を PATH に足して動かす。
+ビルドに使う FFmpeg のヘッダは、初回の configure で FFmpeg 9.0.2 の shared 版を `out/deps/` に取ってくる (配布物には入れない)。
+FFmpeg の DLL は出力に入らないので、開発中は `out/deps/ffmpeg-9.0.2-full_build-shared/bin` を PATH に足して動かす。
+GitHub Actions でも同じようにビルドし、配布物を artifact にする (`.github/workflows/build.yml`)。
 
 ## ライセンス
 

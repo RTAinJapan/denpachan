@@ -12,7 +12,7 @@ add_executable(denpachan-engine
     device_output.cpp
     channel_source.cpp
 )
-target_include_directories(denpachan-engine PRIVATE ${FFMPEG_INCLUDE_DIRS})
+target_include_directories(denpachan-engine SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(denpachan-engine PRIVATE ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(denpachan-engine PRIVATE
     denpachan_common

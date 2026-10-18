@@ -49,8 +49,12 @@ START=$(date +%H:%M)
 "$BIN/denpachan-engine.exe" --config "$CFG" --log-file "$LOG" >/dev/null 2>&1 &
 sleep 2
 
-step "1. 録画の設定 (保存先、テンプレートに / と :、途切れ 3 秒で区切る)"
-"$CTL" set 1 "{\"record\":{\"dir\":\"$(cygpath -w "$REC" | sed 's/\\/\\\\/g')\",\"template\":\"{ch}/{name} {YYYY}-{MM}-{DD} {hh}:{mm}:{ss} {codec} {res}\",\"invalidCharReplacement\":\"-\",\"gapTimeoutSec\":3}}" |
+# 映像がこの秒数来なければファイルを区切る。送出の ffmpeg (配布版は DLL が多い) の起動と SRT の接続にかかる時間より十分長くする
+GAP=5
+AFTER=$((GAP + 2))  # 送出が終わってからファイルが閉じるまで待つ時間
+
+step "1. 録画の設定 (保存先、テンプレートに / と :、途切れ ${GAP} 秒で区切る)"
+"$CTL" set 1 "{\"record\":{\"dir\":\"$(cygpath -w "$REC" | sed 's/\\/\\\\/g')\",\"template\":\"{ch}/{name} {YYYY}-{MM}-{DD} {hh}:{mm}:{ss} {codec} {res}\",\"invalidCharReplacement\":\"-\",\"gapTimeoutSec\":$GAP}}" |
     grep -E '"(dir|template|gapTimeoutSec)"'
 "$CTL" start 1
 sleep 2
@@ -65,18 +69,18 @@ summary
 [ "$(worker_pid)" = "$PID" ] && echo "OK: worker kept running (pid $PID)" || echo "FAIL: worker restarted"
 wait "$SENDER"
 
-step "3. 2 秒切れて (区切り時間より短い) 再接続 → 同じファイルに続けて書く"
-sleep 2
+step "3. 1 秒切れて (区切り時間より短い) 再接続 → 同じファイルに続けて書く"
+sleep 1
 send 6
 summary
-sleep 5
+sleep "$AFTER"
 echo "files after the gap:"
 rec_files
 [ "$(rec_files | wc -l)" = "1" ] && echo "OK: one file for both connections" || echo "FAIL: file was split"
 
-step "4. 3 秒以上途切れたあとの受信 → 新しいファイル"
+step "4. ${GAP} 秒以上途切れたあとの受信 → 新しいファイル"
 send 5
-sleep 5
+sleep "$AFTER"
 rec_files
 [ "$(rec_files | wc -l)" = "2" ] && echo "OK: split into a new file" || echo "FAIL: expected 2 files"
 
@@ -87,7 +91,7 @@ SENDER=$!
 sleep 4
 summary
 wait "$SENDER"
-sleep 5
+sleep "$AFTER"
 [ "$(worker_pid)" = "$PID" ] && echo "OK: worker kept running (pid $PID)" || echo "FAIL: worker restarted"
 
 step "5b. 使えないエンコーダ (AMF) → エラー表示、受信は続く、ログは 10 秒に 1 回"
@@ -108,13 +112,13 @@ sleep 4
 summary
 tasklist //FI "IMAGENAME eq ffmpeg.exe" //FO CSV //NH | grep -c ffmpeg | sed 's/^/ffmpeg processes (sender + encoder): /'
 wait "$SENDER"
-sleep 5
+sleep "$AFTER"
 [ "$(worker_pid)" = "$PID" ] && echo "OK: worker kept running (pid $PID)" || echo "FAIL: worker restarted"
 
 step "5d. CPU エンコード (x265, 固定 QP 28) → 5 秒受信"
 "$CTL" set 1 '{"record":{"encode":{"video":{"codec":"hevc","rc":"cqp","qp":28}}}}' >/dev/null
 send 5
-sleep 5
+sleep "$AFTER"
 
 step "5e. ffmpeg が見つからない → エラー表示、受信は続く"
 "$CTL" set-general '{"ffmpegPath":"C:\\nowhere\\ffmpeg.exe"}' >/dev/null
@@ -129,7 +133,7 @@ sleep 4
 step "6. MPEG-TS / パススルー に切り替え → 4 秒受信"
 "$CTL" set 1 '{"record":{"mode":"passthrough","container":"ts"}}' >/dev/null
 send 4
-sleep 5
+sleep "$AFTER"
 
 step "7. 録画オフ"
 "$CTL" record 1 off

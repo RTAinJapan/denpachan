@@ -56,19 +56,32 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 
 | もの | 版 | 備考 |
 |------|----|------|
-| Visual Studio 2026 (MSVC v14.5、C++ によるデスクトップ開発) | | |
+| Visual Studio (MSVC、C++ によるデスクトップ開発) | 2026 (開発機)。CI は GitHub の windows-latest に入っている版 | |
 | CMake / Ninja | CMake 3.25 以上 | Visual Studio に付属のもの |
-| vcpkg | baseline `bf19794383e8fb95eba5aa553235bc8ec2271688` | `vcpkg.json` |
+| vcpkg | baseline `bf19794383e8fb95eba5aa553235bc8ec2271688` | `vcpkg.json` (libsrt、spdlog、nlohmann-json。FFmpeg は入れない) |
 | .NET 10 SDK | | 画面 |
-| FFmpeg (vcpkg) | 9.0.2 | **ヘッダと import lib だけ**を使う。DLL はビルド後に出力から消す (`cmake/FfmpegRuntime.cmake`)。NVENC (ffnvcodec のヘッダ、MIT) と QSV (libvpl、MIT) を有効にしている |
+| FFmpeg の shared 版 (gyan.dev) | 9.0.2 | **ヘッダと .def だけ**を使う (§3.1)。配布物には入れない |
 
+### 3.1 FFmpeg (ビルド用)
+
+- `cmake/FetchFfmpeg.cmake` が、利用者に案内するのと同じ配布物 [ffmpeg-9.0.2-full_build-shared.zip](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2) (gyan.dev の GitHub ミラー、約 95 MB) を固定の URL と SHA256 で取り、`out/deps/` に展開する。
+  別の場所に展開済みのものを使うときは `-DDENPACHAN_FFMPEG_DIR=<フォルダ>`。
+- 使うのは `include/` のヘッダと、`lib/*.def` から MSVC の `lib.exe` で作り直した import lib (`out/build/ffmpeg-implib/`)。
+  配布物の `.lib` は MinGW のツールで作られていて、MSVC の `/DELAYLOAD` が効かない (通常の読み込みになって、FFmpeg が無いと起動できなくなる) ので使わない。
 - FFmpeg の DLL は遅延ロード (`/DELAYLOAD`) にしてあり、worker と engine は使う前に有無と版を確かめる (`src/common/include/denpachan/ffmpeg_runtime.h`)。
-  FFmpeg のヘッダを新しい major に上げたら、`ffmpeg_runtime.h` の `kSeries` / `kAvcodecMajor` を変える (変えないとビルドが止まる)。
-- 開発中に動かすとき: `out/build/vcpkg_installed/x64-windows/bin` (vcpkg がビルドした FFmpeg 9.0.2 の DLL) を PATH に足す。
+  FFmpeg を新しい major に上げたら、`FetchFfmpeg.cmake` の版と SHA256、`ffmpeg_runtime.h` の `kSeries` / `kAvcodecMajor` を変える (変えないとビルドが止まる)。
+- ビルド出力に FFmpeg の DLL があれば消す (`cmake/FfmpegRuntime.cmake`。配布物に紛れ込まないように)。
+- 開発中に動かすとき: `out/deps/ffmpeg-9.0.2-full_build-shared/bin` を PATH に足す (利用者と同じ配布版の DLL と ffmpeg.exe)。
   試験スクリプトは `tools/testsrc/dev_env.sh` でこれを行う。FFmpeg が無いときの動作は `tools/testsrc/ffmpeg_missing_test.sh` で確かめる。
 
-### 3.1 今後の検討
+### 3.2 CI (GitHub Actions)
 
-- CI (GitHub Actions) でビルドするとき、FFmpeg をソースからビルドする代わりに、配布されている shared 版の `include/` と `lib/` を落として使えば速い。
-  そうするなら `vcpkg.json` から ffmpeg を外す。どちらにしても配布物には入れない。
+`.github/workflows/build.yml`。push と pull request でビルドする。
+
+- vcpkg を baseline と同じコミットで取り、`build.ps1` でビルドする。vcpkg のバイナリと、取った FFmpeg は Actions のキャッシュに入れる。
+- ビルド後に確かめること: 出力に FFmpeg の DLL が無い、必要なファイルとライセンス文がある、FFmpeg が無い状態で worker は専用の終了コード (0x0FF0) で終わり、engine は起動して「FFmpeg が見つかりません」をログに出す。
+- artifact: `denpachan-win64` (配布物。FFmpeg を含まない) と `denpachan-win64-symbols` (PDB)。
+
+### 3.3 今後の検討
+
 - インストーラ (M7) では VC++ 再頒布可能パッケージと .NET ランタイムの扱いを決める。FFmpeg はインストーラでも同梱せず、入手先を案内する。

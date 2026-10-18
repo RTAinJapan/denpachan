@@ -133,7 +133,7 @@ flowchart LR
 | ビルド (C++) | CMake + vcpkg (manifest mode) | 依存管理の再現性 |
 | SRT | libsrt を直接使用 | FFmpeg の `srt://` プロトコルでは `srt_bstats` (RTT, ロス, 再送, 受信バッファ量) が取れないため。受信データは独自 AVIOContext で libavformat に渡す |
 | RTMP サーバ | 自前実装 (§3.3) | 1 ポートでキー振り分けをするため。FFmpeg の listen モードは 1 接続 1 ポートでこれができない |
-| デマックス / デコード / エンコード / Mux / RTMP pull | FFmpeg 9.x (libav*)。**同梱せず、利用者の shared 版の DLL を遅延ロード**。ビルドには vcpkg のヘッダと import lib だけを使う | 実績。Enhanced RTMP (HEVC/AV1) も対応 |
+| デマックス / デコード / エンコード / Mux / RTMP pull | FFmpeg 9.x (libav*)。**同梱せず、利用者の shared 版の DLL を遅延ロード**。ビルドには同じ配布物 (gyan.dev の 9.0.2 shared 版) のヘッダと .def だけを使う (docs/dependencies.md §3.1) | 実績。Enhanced RTMP (HEVC/AV1) も対応 |
 | HW デコード | D3D11VA (FFmpeg hwaccel)、失敗時はソフトウェアに自動フォールバック | GPU ベンダ非依存。4K HEVC も GPU で処理 |
 | 映像変換 | D3D11 Video Processor (GPU 上でスケーリング / NV12 化してから CPU へ転送)、フォールバックで libswscale | CPU 負荷と GPU→CPU 転送量の削減 |
 | 録画エンコード | NVENC / QSV (FFmpeg 経由)。CPU は外部 ffmpeg.exe (x264 / x265 / SVT-AV1) | x264 は同梱しない (GPL 回避) |
@@ -669,6 +669,7 @@ denpachan/
 ├─ vcpkg.json
 ├─ Denpachan.sln             # C# UI
 ├─ build.ps1                 # C++ と C# をまとめてビルド
+├─ .github/workflows/        # GitHub Actions (build.yml: ビルドと配布物の artifact)
 ├─ cmake/                    # FFmpeg の遅延ロードと DLL の除去、ライセンス文のコピー
 ├─ docs/
 │  ├─ design.md

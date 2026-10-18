@@ -15,8 +15,8 @@ OUT="$ROOT/out/check"
 CFG="$OUT/ffmpeg-missing-config.json"
 LOG="$OUT/ffmpeg-missing-engine.log"
 CTL="$BIN/denpachan-ctl.exe"
-FFMPEG_DEV_BIN="$ROOT/out/build/vcpkg_installed/x64-windows/bin"
-DLLS="avcodec-63.dll avformat-63.dll avutil-61.dll swresample-7.dll swscale-10.dll libvpl.dll"
+FFMPEG_DEV_BIN="$ROOT/out/deps/ffmpeg-9.0.2-full_build-shared/bin"
+DLLS="avcodec-63.dll avformat-63.dll avutil-61.dll swresample-7.dll swscale-10.dll"
 mkdir -p "$OUT"
 taskkill //IM denpachan-engine.exe //F >/dev/null 2>&1
 taskkill //IM denpachan-worker.exe //F >/dev/null 2>&1

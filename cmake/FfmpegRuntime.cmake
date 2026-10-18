@@ -4,8 +4,9 @@
 # - denpachan_ffmpeg_dll(<var> <lib>): libavcodec などの DLL 名 (例: avcodec-63.dll) をヘッダの版から求める
 # - denpachan_delayload_ffmpeg(<target> <lib>...): DLL を遅延ロードにする。
 #   FFmpeg が無くても起動でき、使う前に ffmpeg_runtime.h で有無と版を確かめる
-# - denpachan_strip_ffmpeg_dlls(<target>...): vcpkg が出力フォルダにコピーした FFmpeg の DLL を消す
-#   (開発中に試すときは out/build/vcpkg_installed/x64-windows/bin を PATH に足す)
+# - denpachan_strip_ffmpeg_dlls(<target>...): 出力フォルダに FFmpeg の DLL があれば消す (配布物に紛れ込まないように。
+#   以前 vcpkg の FFmpeg を使っていたときのビルド出力にも残っている)。
+#   開発中に試すときは FetchFfmpeg.cmake が取ってきた FFmpeg の bin を PATH に足す (tools/testsrc/dev_env.sh)
 
 function(denpachan_ffmpeg_dll out lib)
     # libavutil だけ版の定義が version.h にある
@@ -36,7 +37,7 @@ function(denpachan_delayload_ffmpeg target)
 endfunction()
 
 function(denpachan_strip_ffmpeg_dlls)
-    set(names libvpl.dll)  # vcpkg の FFmpeg (QSV) が使う。ユーザーの FFmpeg には組み込まれている
+    set(names libvpl.dll)  # 以前の vcpkg の FFmpeg (QSV) が使っていたもの
     foreach(lib libavcodec libavformat libavutil libswresample libswscale)
         denpachan_ffmpeg_dll(dll ${lib})
         list(APPEND names ${dll})
