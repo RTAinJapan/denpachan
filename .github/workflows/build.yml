@@ -27,10 +27,10 @@ jobs:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache\archives
       VCPKG_DOWNLOADS: ${{ github.workspace }}\vcpkg-cache\downloads
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Checkout vcpkg
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_COMMIT }}
@@ -43,19 +43,19 @@ jobs:
           New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE, $env:VCPKG_DOWNLOADS | Out-Null
 
       - name: Cache vcpkg binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: vcpkg-cache/archives
           key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-
 
       - name: Cache FFmpeg (build only)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: out/deps
           key: ffmpeg-${{ hashFiles('cmake/FetchFfmpeg.cmake') }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
 
@@ -93,12 +93,12 @@ jobs:
           Copy-Item -Recurse "$bin/*" dist/denpachan -Exclude *.pdb, *.ilk, *.exp, *.lib
           Copy-Item "$bin/*.pdb" dist/symbols
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: denpachan-win64
           path: dist/denpachan
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: denpachan-win64-symbols
           path: dist/symbols

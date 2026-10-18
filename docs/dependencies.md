@@ -56,7 +56,7 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 
 | もの | 版 | 備考 |
 |------|----|------|
-| Visual Studio (MSVC、C++ によるデスクトップ開発) | 2026 (開発機)。CI は GitHub の windows-latest に入っている版 | |
+| Visual Studio (MSVC、C++ によるデスクトップ開発) | 2026 (MSVC 14.5x)。CI の windows-latest にも入っている | |
 | CMake / Ninja | CMake 3.25 以上 | Visual Studio に付属のもの |
 | vcpkg | baseline `bf19794383e8fb95eba5aa553235bc8ec2271688` | `vcpkg.json` (libsrt、spdlog、nlohmann-json。FFmpeg は入れない) |
 | .NET 10 SDK | | 画面 |
