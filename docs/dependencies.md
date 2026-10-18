@@ -8,7 +8,7 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 | もの | 必須 | 用途・入手先 |
 |------|------|-------------|
 | Windows 10 / 11 (x64) | 必須 | |
-| Microsoft Visual C++ 再頒布可能パッケージ (x64, 2015-2022 以降) | 必須 | engine / worker / rtmpd / ctl が使う (仮想カメラの DLL は CRT を静的リンクしているので不要)。多くの PC には入っている (インストーラを作るときに同梱を検討する) |
+| Microsoft Visual C++ 再頒布可能パッケージ (x64、最新版) | 必須 | engine / worker / rtmpd / ctl が使う (仮想カメラの DLL は CRT を静的リンクしているので不要)。VS 2026 でビルドしているので、古い版では動かないことがある。https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist |
 | .NET 10 デスクトップ ランタイム | 必須 | 画面 (denpachan.exe) |
 | **FFmpeg 9.x の shared 版** | 必須 | 受信した映像・音声のデコード、録画、48 kHz 以外の音声デバイスへのリサンプル。下記 §1.1 |
 | GPU のドライバ | 推奨 | ハードウェアデコード、録画の GPU エンコード (NVIDIA: NVDEC / NVENC、Intel: QSV、AMD: AMF) |
@@ -82,6 +82,10 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 - ビルド後に確かめること: 出力に FFmpeg の DLL が無い、必要なファイルとライセンス文がある、FFmpeg が無い状態で worker は専用の終了コード (0x0FF0) で終わり、engine は起動して「FFmpeg が見つかりません」をログに出す。
 - artifact: `denpachan-win64` (配布物。FFmpeg を含まない) と `denpachan-win64-symbols` (PDB)。
 
-### 3.3 今後の検討
+### 3.3 配布の形
 
-- インストーラ (M7) では VC++ 再頒布可能パッケージと .NET ランタイムの扱いを決める。FFmpeg はインストーラでも同梱せず、入手先を案内する。
+- 配布は zip (`tools/package.ps1` が `out/dist/denpachan-<版>-win64.zip` を作る。CI でも同じものを artifact にする)。展開すればインストールせずに使える。
+  - 中身: 実行ファイルと同梱の DLL、`licenses/`、README.md、docs/ (設計・依存関係・ライセンス)。PDB は別の zip。開発用の audio_probe.exe は入れない。FFmpeg が入っていたら作るのを止める。
+  - 仮想カメラは画面が起動時にこのユーザーに登録する (設計書 §5.1)。
+- .NET 10 デスクトップ ランタイム、VC++ 再頒布可能パッケージ、FFmpeg 9.x shared は同梱せず、README に入手先を書く。
+- 展開した zip での動作は `tools/testsrc/package_test.sh` で確かめる (仮想カメラの登録と、DirectShow で映像が取れること)。

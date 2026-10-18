@@ -3,7 +3,7 @@
 # - C++: vcpkg (baseline と同じコミット) + CMake プリセット。vcpkg のバイナリはキャッシュする
 # - FFmpeg: cmake/FetchFfmpeg.cmake が固定の URL と SHA256 で取る (ヘッダと import lib だけ使う)。取ったものはキャッシュする
 # - UI: .NET 10
-# - 配布物 (FFmpeg の DLL を含まない) と PDB を artifact にする
+# - 配布用の zip (展開すればすぐ使える。FFmpeg は含まない) と PDB の zip を artifact にする (tools/package.ps1)
 name: build
 
 on:
@@ -85,20 +85,23 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'FFmpeg 9.x' -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
           Write-Host 'OK: no FFmpeg DLLs in the output; worker and engine handle missing FFmpeg'
 
-      - name: Collect artifacts
+      - name: Package
+        id: package
         shell: pwsh
         run: |
-          $bin = 'out/build/bin/Release'
-          New-Item -ItemType Directory -Force dist/denpachan, dist/symbols | Out-Null
-          Copy-Item -Recurse "$bin/*" dist/denpachan -Exclude *.pdb, *.ilk, *.exp, *.lib
-          Copy-Item "$bin/*.pdb" dist/symbols
+          ./tools/package.ps1
+          $zip = Get-ChildItem out/dist -Filter '*-win64.zip' | Select-Object -First 1
+          $symbols = Get-ChildItem out/dist -Filter '*-win64-symbols.zip' | Select-Object -First 1
+          "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
+          "symbols=$($symbols.FullName)" >> $env:GITHUB_OUTPUT
+
+      # zip をそのまま (二重に圧縮せずに) 上げる。artifact の名前はファイル名になる
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.package.outputs.zip }}
+          archive: false
 
       - uses: actions/upload-artifact@v7
         with:
-          name: denpachan-win64
-          path: dist/denpachan
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: denpachan-win64-symbols
-          path: dist/symbols
+          path: ${{ steps.package.outputs.symbols }}
+          archive: false

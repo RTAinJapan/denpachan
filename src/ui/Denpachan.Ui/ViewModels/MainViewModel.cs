@@ -43,12 +43,42 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         GeneralSettingsCommand = new RelayCommand(OpenGeneralSettings, () => Connected && GeneralConfig != null);
         ShutdownCommand = new RelayCommand(() => _ = ShutdownAsync(), () => Connected);
         SelectCommand = new RelayCommand(p => { if (p is ChannelViewModel ch) Selected = ch; });
+        UnregisterVcamCommand = new RelayCommand(UnregisterVcam);
     }
 
     public void Start()
     {
+        EnsureVcamRegistered();
         _client.Start();
         _previewTimer.Start();
+    }
+
+    // ---- 仮想カメラの登録 (zip を展開してすぐ使えるように、このユーザーに自動で登録する) ----
+
+    private void EnsureVcamRegistered()
+    {
+        if (VcamRegistration.IsRegistered()) return;
+        var error = VcamRegistration.RegisterForUser();
+        if (error == null && VcamRegistration.IsRegistered())
+        {
+            Log("仮想カメラ (denpachan Cam 1〜4) をこのユーザーに登録しました。OBS では「映像キャプチャデバイス」から選べます");
+        }
+        else
+        {
+            Log($"仮想カメラを登録できませんでした: {error ?? "登録を確認できません"}", true);
+        }
+    }
+
+    private void UnregisterVcam()
+    {
+        var answer = MessageBox.Show(Application.Current.MainWindow,
+            "このユーザーの仮想カメラ (denpachan Cam 1〜4) の登録を解除します。\n" +
+            "denpachan のフォルダを消す前に使います。次に denpachan を起動すると登録し直されます。\n" +
+            "OBS などで使っている間は、解除すると映らなくなります。よろしいですか?",
+            "denpachan", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.OK) return;
+        var error = VcamRegistration.UnregisterForUser();
+        Log(error == null ? "仮想カメラの登録を解除しました (このユーザー)" : $"仮想カメラの登録を解除できませんでした: {error}", error != null);
     }
 
     public ObservableCollection<ChannelViewModel> Channels { get; } = [];
@@ -60,6 +90,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand GeneralSettingsCommand { get; }
     public ICommand ShutdownCommand { get; }
     public ICommand SelectCommand { get; }
+    public ICommand UnregisterVcamCommand { get; }
 
     private ChannelViewModel? _selected;
     public ChannelViewModel? Selected
