@@ -43,6 +43,7 @@ struct Options {
     PlayoutOptions playout;
     bool hw = true;
     bool audio = true;
+    bool av_sync = true;
     std::string log_file;
 };
 
@@ -62,6 +63,7 @@ void print_usage() {
         "  --stall-ms MS       time without video before state becomes Hold [2000]\n"
         "  --no-hw             disable hardware decoding\n"
         "  --no-audio          do not output audio\n"
+        "  --no-av-sync        output audio and video each with minimum delay (A/V may drift apart)\n"
         "  --log-file PATH     also log to a rotating file\n"
         "\n"
         "usage: denpachan-worker --reset-cam N\n"
@@ -110,6 +112,7 @@ std::optional<Options> parse_args(int argc, char** argv) {
         else if (a == "--stall-ms") ok = int_value(o.playout.stall_ms);
         else if (a == "--no-hw") o.hw = false;
         else if (a == "--no-audio") o.audio = false;
+        else if (a == "--no-av-sync") o.av_sync = false;
         else if (a == "--log-file") ok = str_value(o.log_file);
         else ok = false;
 
@@ -252,7 +255,7 @@ int main(int argc, char** argv) {
     PlayoutClock clock(opts->playout.buffer_ms);
     std::unique_ptr<AudioWriter> audio;
     if (opts->audio) {
-        audio = std::make_unique<AudioWriter>(clock, metrics);
+        audio = std::make_unique<AudioWriter>(clock, metrics, opts->av_sync);
         if (!audio->open(opts->ch)) return 1;
     }
 

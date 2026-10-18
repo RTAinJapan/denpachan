@@ -50,17 +50,12 @@ void Playout::run() {
     DWORD task_index = 0;
     HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Playback", &task_index);
 
-    const int64_t buffer = clock_.buffer_qpc();
     const int64_t stall = qpc_from_ms(options_.stall_ms);
 
     uint64_t last_session = 0;
     int64_t last_pts_us = 0;
     int64_t last_arrival_qpc = 0;
     int64_t frame_us = 16'667;
-
-    uint64_t clock_generation = 0;
-    int64_t window_start = 0;
-    int64_t window_min_slack = LLONG_MAX;
 
     bool live = false;
     int64_t last_output_qpc = 0;
@@ -107,32 +102,26 @@ void Playout::run() {
         last_session = f->session;
         last_pts_us = f->pts_us;
 
+        // 余裕を報告すると、時計が遅延を目標に保つよう時間軸を動かすことがある (設計書 §3.5)
+        const int64_t first_target = clock_.due(f->session, f->pts_us, f->arrival_qpc);
+        clock_.report_video(first_target - f->arrival_qpc, frame_us);
         int64_t target = clock_.due(f->session, f->pts_us, f->arrival_qpc);
-        if (const uint64_t g = clock_.generation(); g != clock_generation) {
-            clock_generation = g;
-            window_start = now;
-            window_min_slack = LLONG_MAX;
-        }
-
-        // 遅延を再生バッファの値に保つ
-        window_min_slack = std::min(window_min_slack, target - f->arrival_qpc);
-        if (now - window_start >= qpc_from_ms(1000)) {
-            const int64_t error = window_min_slack - buffer;  // 正: 遅延が大きすぎる / 負: 小さすぎる
-            const int64_t step = std::abs(error) > qpc_from_us(frame_us * 3)
-                                     ? error
-                                     : std::clamp(error, -qpc_from_ms(1), qpc_from_ms(1));
-            clock_.shift(step);
-            target -= step;
-            window_start = now;
-            window_min_slack = LLONG_MAX;
-        }
 
         // 遅れたフレームは、後ろに新しいフレームが待っていれば捨てる
         if (now - target > qpc_from_us(frame_us) && queue_.size() > 0) {
             ++metrics_.frames_dropped_late;
             continue;
         }
-        if (target > now && !wait_until(target)) break;
+        // 待っている間に音声側の都合で時間軸が遅らされることがあるので、待ち終わったら確かめ直す
+        bool stopped = false;
+        while (target > qpc_now()) {
+            if (!wait_until(target)) {
+                stopped = true;
+                break;
+            }
+            target = clock_.due(f->session, f->pts_us, f->arrival_qpc);
+        }
+        if (stopped) break;
 
         if (writer_) writer_->write(f->frame.get());
         last_output_qpc = qpc_now();

@@ -116,6 +116,24 @@ int64_t AudioWriter::update_clock(int64_t pts_us, int64_t arrival_qpc) {
     return due;
 }
 
+int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
+    // 映像と同じ時計 C(pts) に鳴るよう、engine の出力遅延を差し引いた時刻に engine へ渡す
+    const int64_t output_delay = header_->output_delay_qpc.load(std::memory_order_relaxed);
+    auto handoff = [&] { return video_clock_.due(session, pts_us, arrival_qpc) - output_delay; };
+
+    // 接続直後のまとめ届きの間は時計に報告しない (到着が実際より遅く見えるため)
+    if (!published_ && arrival_qpc < settle_end_qpc_) return handoff();
+
+    // 余裕を報告する。足りなければ (音声が遅れて届いた) 時計が遅らされ、映像も待つ。
+    video_clock_.report_audio(handoff() - arrival_qpc);
+    // 時計の最初の調整が済んでから鳴らし始める (鳴り始めてから時間軸が大きく動かないように)
+    if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
+        published_ = true;
+        spdlog::info("audio: synced to video (output delay {:.1f} ms)", double(qpc_to_us(output_delay)) / 1000);
+    }
+    return handoff();
+}
+
 void AudioWriter::write(uint64_t session, int64_t pts_us, int64_t arrival_qpc, const float* data, int frames) {
     if (!header_ || frames <= 0) return;
     header_->writer_heartbeat_qpc.store(qpc_now(), std::memory_order_relaxed);
@@ -160,13 +178,15 @@ void AudioWriter::write(uint64_t session, int64_t pts_us, int64_t arrival_qpc, c
 
     const uint64_t start = header_->write_pos.load(std::memory_order_relaxed);
     append(data, frames);
-    const int64_t due = update_clock(pts_us, arrival_qpc);
+    const int64_t due = av_sync_ ? update_synced(session, pts_us, arrival_qpc) : update_clock(pts_us, arrival_qpc);
     if (published_) write_time_map(header_, start, due);
     metrics_.audio_frames += uint64_t(frames);
 
-    // 到着から鳴らすべき時刻までの余裕 (= worker 内での音声の遅延) と、映像との時刻のずれ
+    // 到着から engine に渡すまでの余裕 (= worker 内での音声の遅延) と、
+    // 実際に鳴る時刻と同じ時刻の映像を出す時刻のずれ (正: 音声が遅い)
+    const int64_t output_delay = header_->output_delay_qpc.load(std::memory_order_relaxed);
     metrics_.audio_delay_us = qpc_to_us(due - arrival_qpc);
-    metrics_.av_offset_us = qpc_to_us(due - video_clock_.due(session, pts_us, arrival_qpc));
+    metrics_.av_offset_us = qpc_to_us(due + output_delay - video_clock_.due(session, pts_us, arrival_qpc));
 
     next_pts_us_ = pts_us + us_from_frames(frames);
     have_next_ = true;

@@ -7,7 +7,8 @@
 # - 途絶・再開の境目がフェードになっていること
 # - 再接続の前後で音声の遅延が変わらないこと (engine のログ)
 #
-#   tools/testsrc/audio_test.sh [shared|exclusive]
+#   tools/testsrc/audio_test.sh [shared|exclusive] [default|lowmux]
+#     lowmux: 送出側で音声をまとめずに多重化する (-pes_payload_size 0 -muxdelay 0)
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -15,6 +16,8 @@ BIN="$ROOT/out/build/bin/Release"
 OUT="$ROOT/out/check"
 PORT=9001
 MODE="${1:-shared}"
+MUX_ARGS=()
+if [ "${2:-default}" = "lowmux" ]; then MUX_ARGS=(-pes_payload_size 0 -muxdelay 0 -muxpreload 0); fi
 mkdir -p "$OUT"
 ENGINE_LOG="$OUT/audio_engine.log"
 WORKER_LOG="$OUT/audio_worker.log"
@@ -32,7 +35,7 @@ send() {
     ffmpeg -hide_banner -loglevel error -re -f lavfi -i "testsrc2=size=1280x720:rate=60" \
         -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
         -c:v libx264 -preset veryfast -tune zerolatency -b:v 4M -g 120 -bf 0 -pix_fmt yuv420p \
-        -c:a aac -b:a 192k -t "$1" -f mpegts "srt://127.0.0.1:$PORT?mode=caller&latency=120000&pkt_size=1316" \
+        -c:a aac -b:a 192k -t "$1" "${MUX_ARGS[@]}" -f mpegts "srt://127.0.0.1:$PORT?mode=caller&latency=120000&pkt_size=1316" \
         >/dev/null 2>&1
 }
 

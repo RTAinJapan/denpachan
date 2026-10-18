@@ -47,7 +47,10 @@ ChannelSource::ChannelSource(const RouteOptions& options, uint32_t device_rate, 
     }
 }
 
-ChannelSource::~ChannelSource() { swr_free(&swr_); }
+ChannelSource::~ChannelSource() {
+    if (header_) header_->output_delay_qpc.store(0);
+    swr_free(&swr_);
+}
 
 bool ChannelSource::ensure_open() {
     if (header_) return true;
@@ -141,6 +144,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
     const uint64_t write_pos = header_->write_pos.load(std::memory_order_acquire);
     const uint64_t epoch = header_->epoch.load(std::memory_order_acquire);
     const int64_t delay = base_delay_qpc + qpc_from_ms(options_.offset_ms);
+    header_->output_delay_qpc.store(delay, std::memory_order_relaxed);  // worker の A/V 同期に使う
 
     const double src_per_out = double(kSampleRate) / device_rate_;
     const double need = frames * src_per_out;
