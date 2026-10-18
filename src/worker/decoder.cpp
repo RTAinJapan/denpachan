@@ -328,28 +328,42 @@ void Decoder::run_session(uint64_t session) {
         cleanup();
         return;
     }
-    const int vidx = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    if (vidx < 0) {
-        spdlog::warn("decoder: no video stream");
-        cleanup();
-        return;
-    }
-    const AVStream* stream = fmt->streams[vidx];
-    if (!open_decoder(stream)) {
-        cleanup();
-        return;
-    }
+    if (url_mode) io_deadline_qpc_ = qpc_now() + qpc_from_ms(kReadTimeoutMs);
+
+    // FLV (RTMP) は最初のパケットが来たときにストリームを作るので、映像が音声より遅れて届くと
+    // (nginx-rtmp は映像を次のキーフレームから送る)、解析の時間内に音声しか見つからない。
+    // そのときは切らずに読み続け、映像のストリームが現れた時点でデコーダを開く (下のループ)。
+    // FLV は映像の設定 (SPS/PPS) を最初の映像パケットの前に読み込むので、最初のキーフレームから使える。
+    int vidx = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    const AVStream* stream = nullptr;
     int aidx = -1;
-    if (audio_ || recorder_) {
-        aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, vidx, nullptr, 0);
-        if (aidx < 0) {
-            spdlog::warn("decoder: no audio stream");
-        } else if (!open_audio_decoder(fmt->streams[aidx])) {
-            aidx = -1;
+    const AVStream* audio_stream = nullptr;
+    auto start_video = [&](int index) {
+        vidx = index;
+        stream = fmt->streams[vidx];
+        if (!open_decoder(stream)) return false;
+        if (audio_ || recorder_) {
+            aidx = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, vidx, nullptr, 0);
+            if (aidx < 0) {
+                spdlog::warn("decoder: no audio stream");
+            } else if (!open_audio_decoder(fmt->streams[aidx])) {
+                aidx = -1;
+            }
         }
+        audio_stream = aidx >= 0 ? fmt->streams[aidx] : nullptr;
+        if (recorder_) recorder_->begin_session(session, stream, audio_stream);
+        return true;
+    };
+    const int64_t video_deadline = qpc_now() + qpc_from_ms(kOpenTimeoutMs);
+    if (vidx >= 0) {
+        if (!start_video(vidx)) {
+            cleanup();
+            return;
+        }
+    } else {
+        spdlog::info("decoder: waiting for the video stream (only {} so far)",
+                     fmt->nb_streams > 0 ? "audio" : "nothing");
     }
-    const AVStream* audio_stream = aidx >= 0 ? fmt->streams[aidx] : nullptr;
-    if (recorder_) recorder_->begin_session(session, stream, audio_stream);
 
     PacketPtr pkt(av_packet_alloc());
     FramePtr frame(av_frame_alloc());
@@ -372,12 +386,30 @@ void Decoder::run_session(uint64_t session) {
         return r;
     };
 
-    while (!stop_ && codec_) {
+    while (!stop_ && (codec_ || vidx < 0)) {
         err = av_read_frame(fmt, pkt.get());  // ネットワーク待ちでブロックしうる
-        if (err < 0) break;                   // セッション終了 (EOF) / 停止
+        if (err < 0) {                        // セッション終了 (EOF) / 停止
+            if (url_mode && !stop_) spdlog::info("decoder: read ended: {}", av_error_string(err));
+            break;
+        }
         if (url_mode) {
             io_deadline_qpc_ = qpc_now() + qpc_from_ms(kReadTimeoutMs);
             metrics_.bytes_in += uint64_t(pkt->size);  // URL を直接読むときは受信量をここで数える
+        }
+        if (vidx < 0) {
+            // 映像を待っている: 映像のストリームが現れたらデコーダを開く。それまでの音声は捨てる (映像と一緒に始める)
+            const AVCodecParameters* par = fmt->streams[pkt->stream_index]->codecpar;
+            if (par->codec_type == AVMEDIA_TYPE_VIDEO && par->codec_id != AV_CODEC_ID_NONE) {
+                spdlog::info("decoder: video stream appeared");
+                if (!start_video(pkt->stream_index)) break;
+            } else {
+                av_packet_unref(pkt.get());
+                if (qpc_now() > video_deadline) {
+                    spdlog::warn("decoder: no video stream");
+                    break;
+                }
+                continue;
+            }
         }
         // ここから先のデコード処理 (ブロックしないはず) で固まったら engine が検出する
         DecoderBusy busy(metrics_);
