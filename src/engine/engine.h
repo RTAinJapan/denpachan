@@ -10,6 +10,7 @@
 
 #include "audio_router.h"
 #include "config.h"
+#include "denpachan/rtmp_routes.h"
 #include "denpachan/vcam_shm.h"
 #include "denpachan/win_util.h"
 #include "worker_process.h"
@@ -34,6 +35,8 @@ public:
 private:
     std::wstring worker_args(const ChannelConfig& ch) const;
     void apply_channel_locked(int ch);
+    // RTMP の振り分け表を書き、push のチャンネルがあれば rtmpd を動かす
+    void apply_rtmp_locked();
     void save_locked();
     nlohmann::json state_locked();
 
@@ -43,6 +46,9 @@ private:
     const std::wstring log_dir_;
     Config config_;
     std::array<std::unique_ptr<WorkerProcess>, kChannelCount> workers_;
+    std::unique_ptr<WorkerProcess> rtmpd_;
+    SharedMapping routes_mapping_;
+    rtmp_routes::Header* routes_ = nullptr;
     AudioRouter audio_;
     SharedMapping vcam_mappings_[vcam::kNumCams];
     vcam::Header* vcam_headers_[vcam::kNumCams] = {};

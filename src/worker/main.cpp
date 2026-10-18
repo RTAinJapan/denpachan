@@ -27,6 +27,7 @@
 #include "decoder.h"
 #include "playout_clock.h"
 #include "denpachan/win_util.h"
+#include "flv_ring_ingest.h"
 #include "frame_queue.h"
 #include "metrics.h"
 #include "playout.h"
@@ -41,6 +42,8 @@ namespace {
 struct Options {
     int ch = 1;
     int cam = 1;  // 0 = vcam に出さない
+    std::string input = "srt";  // srt / rtmp-push / url
+    std::string url;            // input = url のとき (rtmp:// など)
     SrtOptions srt;
     PlayoutOptions playout;
     bool hw = true;
@@ -54,6 +57,8 @@ void print_usage() {
         "usage: denpachan-worker [options]\n"
         "  --ch N              channel number (log label)         [1]\n"
         "  --cam N             virtual camera 1-4, 0 = none       [1]\n"
+        "  --input I           srt | rtmp-push (from rtmpd) | url  [srt]\n"
+        "  --url URL           input = url: e.g. rtmp://host/app/key (RTMP pull)\n"
         "  --srt-mode M        listener | caller                  [listener]\n"
         "  --host H            listener: bind address / caller: remote host [0.0.0.0]\n"
         "  --port P            SRT port (required)\n"
@@ -103,6 +108,8 @@ std::optional<Options> parse_args(int argc, char** argv) {
         bool ok = true;
         if (a == "--ch") ok = int_value(o.ch);
         else if (a == "--cam") ok = int_value(o.cam);
+        else if (a == "--input") ok = str_value(o.input);
+        else if (a == "--url") ok = str_value(o.url);
         else if (a == "--srt-mode") ok = str_value(o.srt.mode);
         else if (a == "--host") ok = str_value(o.srt.host);
         else if (a == "--port") ok = int_value(o.srt.port);
@@ -124,8 +131,12 @@ std::optional<Options> parse_args(int argc, char** argv) {
             return std::nullopt;
         }
     }
-    if (o.srt.port <= 0 || o.cam < 0 || o.cam > vcam::kNumCams ||
-        (o.srt.mode != "listener" && o.srt.mode != "caller")) {
+    if (o.cam < 0 || o.cam > vcam::kNumCams) return std::nullopt;
+    if (o.input == "srt") {
+        if (o.srt.port <= 0 || (o.srt.mode != "listener" && o.srt.mode != "caller")) return std::nullopt;
+    } else if (o.input == "url") {
+        if (o.url.empty()) return std::nullopt;
+    } else if (o.input != "rtmp-push") {
         return std::nullopt;
     }
     return o;
@@ -212,6 +223,8 @@ public:
             s.srt_lost = srt.lost_total;
             s.srt_retrans = srt.retrans_total;
             s.srt_dropped = srt.dropped_total;
+            s.tcp_rtt_ms = double(m_.tcp_rtt_us.load()) / 1000;
+            s.tcp_retrans_bytes = m_.tcp_retrans_bytes.load();
             s.audio_peak_l_db = dbfs(peak_l);
             s.audio_peak_r_db = dbfs(peak_r);
             s.audio_delay_ms = double(m_.audio_delay_us.load()) / 1000;
@@ -317,14 +330,24 @@ int main(int argc, char** argv) {
         if (!audio->open(opts->ch)) return 1;
     }
 
-    SrtIngest ingest(opts->srt, bytes, metrics);
-    Decoder decoder("mpegts", bytes, frames, audio.get(), metrics, opts->hw);
+    // 入力: SRT (MPEG-TS) / rtmpd からの FLV / URL を直接 (RTMP pull)
+    std::unique_ptr<SrtIngest> srt_ingest;
+    std::unique_ptr<FlvRingIngest> flv_ingest;
+    const char* input_format = "mpegts";
+    if (opts->input == "srt") {
+        srt_ingest = std::make_unique<SrtIngest>(opts->srt, bytes, metrics);
+    } else if (opts->input == "rtmp-push") {
+        flv_ingest = std::make_unique<FlvRingIngest>(opts->ch, bytes, metrics);
+        input_format = "flv";
+    }
+    Decoder decoder(input_format, bytes, frames, audio.get(), metrics, opts->hw);
+    if (opts->input == "url") decoder.set_url(opts->url);
     Playout playout(opts->playout, clock, frames, writer.get(), metrics);
 
-    spdlog::info("worker start: ch {} -> cam {}", opts->ch, opts->cam);
+    spdlog::info("worker start: ch {} ({}) -> cam {}", opts->ch, opts->input, opts->cam);
     playout.start();
     decoder.start();
-    if (!ingest.start()) {
+    if ((srt_ingest && !srt_ingest->start()) || (flv_ingest && !flv_ingest->start())) {
         bytes.stop();
         frames.stop();
         decoder.stop();
@@ -337,7 +360,8 @@ int main(int argc, char** argv) {
     while (WaitForMultipleObjects(2, stop_handles, FALSE, 1000) == WAIT_TIMEOUT) reporter.report();
 
     spdlog::info("worker stopping");
-    ingest.stop();
+    if (srt_ingest) srt_ingest->stop();
+    if (flv_ingest) flv_ingest->stop();
     bytes.stop();
     decoder.stop();
     frames.stop();

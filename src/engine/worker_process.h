@@ -31,7 +31,8 @@ struct WorkerSnapshot {
 
 class WorkerProcess {
 public:
-    WorkerProcess(int ch, std::wstring exe);
+    // ch: worker_status のスロット (チャンネル番号。rtmpd は 0) / label: ログに出す名前 (省略時 "chN")
+    WorkerProcess(int ch, std::wstring exe, std::string label = "");
     ~WorkerProcess();
     WorkerProcess(const WorkerProcess&) = delete;
     WorkerProcess& operator=(const WorkerProcess&) = delete;
@@ -55,6 +56,7 @@ private:
 
     const int ch_;
     const std::wstring exe_;
+    const std::string label_;
     std::mutex mutex_;
 
     bool wanted_ = false;

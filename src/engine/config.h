@@ -3,6 +3,8 @@
 //
 // - 保存は一時ファイルに書いてから差し替える (書き込み中に落ちても壊れない)。
 // - SRT のパスフレーズは DPAPI で暗号化して保存する。IPC では返さない (設定済みかどうかだけ返す)。
+// - RTMP のストリームキーと pull の URL も DPAPI で暗号化して保存する。キーは送出側 (Nginx) に
+//   設定してもらう必要があるので IPC では返す (パイプは同じユーザーしか開けない)。
 
 #include <nlohmann/json.hpp>
 
@@ -15,14 +17,20 @@ namespace denpachan::engine {
 inline constexpr int kChannelCount = 4;
 
 struct SourceConfig {
-    std::string protocol = "srt";
-    std::string mode = "listener";  // listener / caller
+    std::string protocol = "srt";   // srt / rtmp
+    std::string mode = "listener";  // srt: listener / caller、rtmp: push / pull
+    // SRT
     std::string host = "0.0.0.0";
     int port = 0;
     int latency_ms = 120;
     std::string passphrase;
     int pbkeylen = 0;
     std::string streamid;
+    // RTMP push (rtmpd が受ける): rtmp://<この PC>:<rtmpPort>/<app>/<key>
+    std::string app = "live";
+    std::string key;
+    // RTMP pull (こちらから取りに行く)
+    std::string url;
 };
 
 struct AudioRouteConfig {
@@ -49,6 +57,10 @@ struct GeneralConfig {
     int stall_ms = 2000;
     int audio_margin_ms = 10;
     bool av_sync = true;
+    // RTMP サーバ (rtmpd)。RTMP push のチャンネルが 1 つでも動いていれば起動する
+    std::string rtmp_bind = "0.0.0.0";
+    int rtmp_port = 1935;
+    int rtmp_idle_timeout_ms = 5000;
 };
 
 struct Config {

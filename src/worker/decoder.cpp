@@ -10,6 +10,8 @@ namespace {
 
 constexpr int kIoBufferSize = 64 * 1024;
 constexpr int kMaxConsecutiveErrors = 60;  // これを超えたら HW デコードをやめる
+constexpr int64_t kOpenTimeoutMs = 10'000;  // URL を開く・ストリームを解析するまでの上限
+constexpr int64_t kReadTimeoutMs = 5'000;   // URL からこれだけ届かなければ切って繋ぎ直す
 
 int64_t frame_duration_us(const AVStream* st) {
     AVRational rate = st->avg_frame_rate.num ? st->avg_frame_rate : st->r_frame_rate;
@@ -62,7 +64,39 @@ int Decoder::read_packet(void* opaque, uint8_t* buf, int size) {
     return n > 0 ? n : AVERROR_EOF;
 }
 
-int Decoder::interrupt_cb(void* opaque) { return static_cast<Decoder*>(opaque)->stop_ ? 1 : 0; }
+int Decoder::interrupt_cb(void* opaque) {
+    auto* self = static_cast<Decoder*>(opaque);
+    if (!self->url_.empty()) {
+        // URL を直接読んでいる間はこのスレッドが受信スレッドを兼ねる (ブロック中も頻繁に呼ばれる)
+        self->metrics_.heartbeat_ingest();
+        const int64_t deadline = self->io_deadline_qpc_.load();
+        if (deadline != 0 && qpc_now() > deadline) return 1;  // 届かなくなった
+    }
+    return self->stop_ ? 1 : 0;
+}
+
+void Decoder::set_url(std::string url) {
+    url_ = std::move(url);
+    // ログやメトリクスにストリームキー (URL の最後の部分) を出さない
+    const size_t slash = url_.find_last_of('/');
+    display_url_ = slash != std::string::npos && slash + 1 < url_.size() ? url_.substr(0, slash + 1) + "***" : url_;
+}
+
+void Decoder::run_url_loop() {
+    uint64_t session = 0;
+    int backoff_ms = 500;
+    while (!stop_) {
+        const int64_t started = qpc_now();
+        run_session(++session);
+        if (stop_) break;
+        if (qpc_now() - started > qpc_from_ms(10'000)) backoff_ms = 500;
+        for (int waited = 0; waited < backoff_ms && !stop_; waited += 100) {
+            metrics_.heartbeat_ingest();
+            Sleep(100);
+        }
+        backoff_ms = std::min(backoff_ms * 2, 5000);
+    }
+}
 
 AVPixelFormat Decoder::get_format(AVCodecContext* ctx, const AVPixelFormat* formats) {
     for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
@@ -77,6 +111,10 @@ AVPixelFormat Decoder::get_format(AVCodecContext* ctx, const AVPixelFormat* form
 }
 
 void Decoder::run() {
+    if (!url_.empty()) {
+        run_url_loop();
+        return;
+    }
     uint64_t last = 0;
     while (!stop_) {
         const uint64_t session = input_.wait_session(last);
@@ -227,16 +265,23 @@ void Decoder::decode_audio(const AVPacket* pkt, const AVStream* stream, uint64_t
 void Decoder::run_session(uint64_t session) {
     session_ = session;
     last_pts_us_ = AV_NOPTS_VALUE;
+    const bool url_mode = !url_.empty();
 
-    auto* io_buffer = static_cast<uint8_t*>(av_malloc(kIoBufferSize));
-    AVIOContext* pb = avio_alloc_context(io_buffer, kIoBufferSize, 0, this, &Decoder::read_packet, nullptr, nullptr);
+    AVIOContext* pb = nullptr;
     AVFormatContext* fmt = avformat_alloc_context();
-    if (!io_buffer || !pb || !fmt) {
-        spdlog::error("decoder: out of memory");
-        return;
+    if (!fmt) return;
+    if (!url_mode) {
+        // ByteQueue から読む (SRT / RTMP push)
+        auto* io_buffer = static_cast<uint8_t*>(av_malloc(kIoBufferSize));
+        pb = avio_alloc_context(io_buffer, kIoBufferSize, 0, this, &Decoder::read_packet, nullptr, nullptr);
+        if (!io_buffer || !pb) {
+            spdlog::error("decoder: out of memory");
+            avformat_free_context(fmt);
+            return;
+        }
+        fmt->pb = pb;
+        fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
     }
-    fmt->pb = pb;
-    fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
     fmt->interrupt_callback = AVIOInterruptCB{&Decoder::interrupt_cb, this};
     fmt->probesize = 2 * 1024 * 1024;
     fmt->max_analyze_duration = 2 * AV_TIME_BASE;
@@ -247,14 +292,33 @@ void Decoder::run_session(uint64_t session) {
         avformat_close_input(&fmt);  // 失敗時は open_input が解放済みで nullptr
         if (pb) av_freep(&pb->buffer);
         avio_context_free(&pb);
+        if (url_mode && metrics_.connected) {
+            metrics_.connected = false;
+            spdlog::info("decoder: {} disconnected", display_url_);
+        }
     };
 
-    const AVInputFormat* ifmt = av_find_input_format(input_format_.c_str());
-    int err = avformat_open_input(&fmt, nullptr, ifmt, nullptr);
+    int err;
+    if (url_mode) {
+        // RTMP pull など: URL を直接開く。届かなくなったら interrupt_cb が打ち切る。
+        io_deadline_qpc_ = qpc_now() + qpc_from_ms(kOpenTimeoutMs);
+        err = avformat_open_input(&fmt, url_.c_str(), nullptr, nullptr);
+    } else {
+        err = avformat_open_input(&fmt, nullptr, av_find_input_format(input_format_.c_str()), nullptr);
+    }
     if (err < 0) {
         if (!stop_) spdlog::warn("decoder: open input failed: {}", av_error_string(err));
         cleanup();
         return;
+    }
+    if (url_mode) {
+        metrics_.connected = true;
+        ++metrics_.connections;
+        std::lock_guard lk(metrics_.mutex);
+        metrics_.peer = display_url_;
+        metrics_.last_error.clear();
+        spdlog::info("decoder: connected to {}", display_url_);
+        io_deadline_qpc_ = qpc_now() + qpc_from_ms(kOpenTimeoutMs);
     }
     err = avformat_find_stream_info(fmt, nullptr);
     if (err < 0) {
@@ -308,6 +372,10 @@ void Decoder::run_session(uint64_t session) {
     while (!stop_ && codec_) {
         err = av_read_frame(fmt, pkt.get());  // ネットワーク待ちでブロックしうる
         if (err < 0) break;                   // セッション終了 (EOF) / 停止
+        if (url_mode) {
+            io_deadline_qpc_ = qpc_now() + qpc_from_ms(kReadTimeoutMs);
+            metrics_.bytes_in += uint64_t(pkt->size);  // URL を直接読むときは受信量をここで数える
+        }
         // ここから先のデコード処理 (ブロックしないはず) で固まったら engine が検出する
         DecoderBusy busy(metrics_);
         if (pkt->stream_index == aidx) {

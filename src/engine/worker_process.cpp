@@ -63,7 +63,8 @@ std::wstring quote_arg(const std::wstring& arg) {
     return out;
 }
 
-WorkerProcess::WorkerProcess(int ch, std::wstring exe) : ch_(ch), exe_(std::move(exe)) {}
+WorkerProcess::WorkerProcess(int ch, std::wstring exe, std::string label)
+    : ch_(ch), exe_(std::move(exe)), label_(label.empty() ? "ch" + std::to_string(ch) : std::move(label)) {}
 
 WorkerProcess::~WorkerProcess() = default;  // worker は止めない (engine が落ちても映像を止めないため)
 
@@ -86,7 +87,7 @@ bool WorkerProcess::try_adopt_locked() {
     process_ = std::move(process);
     pid_ = pid;
     started_qpc_ = st->started_qpc.load();
-    spdlog::info("ch{}: adopted running worker (pid {})", ch_, pid);
+    spdlog::info("[{}]adopted running worker (pid {})", label_, pid);
     return true;
 }
 
@@ -100,7 +101,7 @@ void WorkerProcess::kill_orphan_locked() {
     if (!h) return;
     UniqueHandle process(h);
     if (!running(h) || lower(image_path(h)) != lower(exe_)) return;
-    spdlog::info("ch{}: stopping leftover worker (pid {})", ch_, pid);
+    spdlog::info("[{}]stopping leftover worker (pid {})", label_, pid);
     if (HANDLE ev = OpenEventW(EVENT_MODIFY_STATE, FALSE, worker_status::stop_event_name(ch_).c_str())) {
         SetEvent(ev);
         CloseHandle(ev);
@@ -126,7 +127,7 @@ bool WorkerProcess::spawn_locked() {
     process_.reset(pi.hProcess);
     pid_ = pi.dwProcessId;
     started_qpc_ = qpc_now();
-    spdlog::info("ch{}: worker started (pid {})", ch_, pid_);
+    spdlog::info("[{}]worker started (pid {})", label_, pid_);
     return true;
 }
 
@@ -138,7 +139,7 @@ void WorkerProcess::schedule_restart_locked(const std::string& event) {
     next_restart_qpc_ = now + qpc_from_ms(delay);
     ++restarts_;
     last_event_ = event;
-    spdlog::warn("ch{}: {}; restarting in {} ms", ch_, event, delay);
+    spdlog::warn("[{}]{}; restarting in {} ms", label_, event, delay);
 }
 
 void WorkerProcess::terminate_locked(const char* reason) {
@@ -156,7 +157,7 @@ void WorkerProcess::start(const std::wstring& args) {
     wanted_ = true;
     if (running(process_.get())) {
         if (hash == hash_) return;  // 同じ設定で動いている
-        spdlog::info("ch{}: settings changed, restarting worker", ch_);
+        spdlog::info("[{}]settings changed, restarting worker", label_);
         if (HANDLE ev = OpenEventW(EVENT_MODIFY_STATE, FALSE, worker_status::stop_event_name(ch_).c_str())) {
             SetEvent(ev);
             CloseHandle(ev);
@@ -185,13 +186,13 @@ void WorkerProcess::stop() {
         CloseHandle(ev);
     }
     if (WaitForSingleObject(process_.get(), DWORD(kStopTimeoutMs)) != WAIT_OBJECT_0) {
-        spdlog::warn("ch{}: worker did not stop in time, terminating", ch_);
+        spdlog::warn("[{}]worker did not stop in time, terminating", label_);
         TerminateProcess(process_.get(), 1);
         WaitForSingleObject(process_.get(), 2000);
     }
     process_.reset();
     pid_ = 0;
-    spdlog::info("ch{}: worker stopped", ch_);
+    spdlog::info("[{}]worker stopped", label_);
 }
 
 void WorkerProcess::poll() {

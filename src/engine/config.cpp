@@ -4,6 +4,7 @@
 #include <dpapi.h>
 #include <wincrypt.h>
 
+#include <cctype>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -85,15 +86,22 @@ json to_json(const ChannelConfig& c, JsonForm form) {
         {"port", c.source.port},         {"latencyMs", c.source.latency_ms}, {"pbkeylen", c.source.pbkeylen},
         {"streamId", c.source.streamid},
     };
+    source["app"] = c.source.app;
     switch (form) {
     case JsonForm::File:
         source["passphraseProtected"] = protect(c.source.passphrase);
+        source["keyProtected"] = protect(c.source.key);
+        source["urlProtected"] = protect(c.source.url);
         break;
     case JsonForm::Ipc:
         source["hasPassphrase"] = !c.source.passphrase.empty();
+        source["key"] = c.source.key;
+        source["url"] = c.source.url;
         break;
     case JsonForm::Internal:
         source["passphrase"] = c.source.passphrase;
+        source["key"] = c.source.key;
+        source["url"] = c.source.url;
         break;
     }
     json j = {
@@ -116,7 +124,10 @@ json to_json(const ChannelConfig& c, JsonForm form) {
 }
 
 json to_json(const GeneralConfig& g) {
-    return {{"stallMs", g.stall_ms}, {"audioMarginMs", g.audio_margin_ms}, {"avSync", g.av_sync}};
+    return {{"stallMs", g.stall_ms},
+            {"audioMarginMs", g.audio_margin_ms},
+            {"avSync", g.av_sync},
+            {"rtmpServer", {{"bind", g.rtmp_bind}, {"port", g.rtmp_port}, {"idleTimeoutMs", g.rtmp_idle_timeout_ms}}}};
 }
 
 json to_json(const Config& c, JsonForm form) {
@@ -143,11 +154,16 @@ ChannelConfig channel_from_json(const json& j, int id) {
         c.source.latency_ms = get_or(s, "latencyMs", def.source.latency_ms);
         c.source.pbkeylen = get_or(s, "pbkeylen", def.source.pbkeylen);
         c.source.streamid = get_or(s, "streamId", def.source.streamid);
-        if (s.contains("passphrase")) {
-            c.source.passphrase = get_or<std::string>(s, "passphrase", "");
-        } else if (s.contains("passphraseProtected")) {
-            c.source.passphrase = unprotect(get_or<std::string>(s, "passphraseProtected", ""));
-        }
+        c.source.app = get_or(s, "app", def.source.app);
+        // 平文 (IPC / 内部) と暗号化 (保存ファイル) のどちらでも読む
+        auto secret = [&](const char* plain, const char* protected_key) {
+            if (s.contains(plain)) return get_or<std::string>(s, plain, "");
+            if (s.contains(protected_key)) return unprotect(get_or<std::string>(s, protected_key, ""));
+            return std::string();
+        };
+        c.source.passphrase = secret("passphrase", "passphraseProtected");
+        c.source.key = secret("key", "keyProtected");
+        c.source.url = secret("url", "urlProtected");
     }
     if (j.contains("audio")) {
         const auto& a = j.at("audio");
@@ -167,6 +183,12 @@ GeneralConfig general_from_json(const json& j) {
     g.stall_ms = get_or(j, "stallMs", def.stall_ms);
     g.audio_margin_ms = get_or(j, "audioMarginMs", def.audio_margin_ms);
     g.av_sync = get_or(j, "avSync", def.av_sync);
+    if (j.contains("rtmpServer")) {
+        const auto& r = j.at("rtmpServer");
+        g.rtmp_bind = get_or(r, "bind", def.rtmp_bind);
+        g.rtmp_port = get_or(r, "port", def.rtmp_port);
+        g.rtmp_idle_timeout_ms = get_or(r, "idleTimeoutMs", def.rtmp_idle_timeout_ms);
+    }
     return g;
 }
 
@@ -187,12 +209,45 @@ std::optional<std::string> validate(const Config& c) {
     if (!in(c.general.stall_ms, 100, 60'000)) return "stallMs must be 100-60000";
     if (!in(c.general.audio_margin_ms, 0, 500)) return "audioMarginMs must be 0-500";
 
+    if (!in(c.general.rtmp_port, 1, 65535)) return "rtmpServer.port must be 1-65535";
+    if (!in(c.general.rtmp_idle_timeout_ms, 1000, 60'000)) return "rtmpServer.idleTimeoutMs must be 1000-60000";
+
+    auto valid_name = [](const std::string& s, size_t max) {
+        if (s.empty() || s.size() > max) return false;
+        for (char ch : s) {
+            if (!(isalnum(static_cast<unsigned char>(ch)) || ch == '-' || ch == '_' || ch == '.')) return false;
+        }
+        return true;
+    };
+
     std::set<int> vcams;
     std::set<std::pair<std::string, int>> listen_ports;
+    std::set<std::pair<std::string, std::string>> rtmp_keys;
     for (const auto& ch : c.channels) {
         const std::string p = "ch" + std::to_string(ch.id) + ": ";
         const auto& s = ch.source;
-        if (s.protocol != "srt") return p + "protocol must be srt (rtmp is not supported yet)";
+        if (!in(ch.vcam, 0, 4)) return p + "vcam must be 0-4";
+        if (ch.vcam != 0 && !vcams.insert(ch.vcam).second) return p + "vcam " + std::to_string(ch.vcam) + " is already used";
+        if (!in(ch.playout_buffer_ms, 0, 2000)) return p + "playoutBufferMs must be 0-2000";
+        if (!in(ch.audio.start_channel, 1, 64)) return p + "audio.startChannel must be 1-64";
+        if (ch.audio.mode != "shared" && ch.audio.mode != "exclusive") return p + "audio.mode must be shared or exclusive";
+        if (!in(ch.audio.offset_ms, -1000, 1000)) return p + "audio.offsetMs must be -1000-1000";
+
+        if (s.protocol == "rtmp") {
+            if (s.mode == "push") {
+                if (!valid_name(s.app, 63)) return p + "source.app must be 1-63 characters of [A-Za-z0-9-_.]";
+                if (!valid_name(s.key, 127)) return p + "source.key must be 1-127 characters of [A-Za-z0-9-_.]";
+                if (!rtmp_keys.insert({s.app, s.key}).second) return p + "the same app/key is used by another channel";
+            } else if (s.mode == "pull") {
+                if (s.url.rfind("rtmp://", 0) != 0 && s.url.rfind("rtmps://", 0) != 0) {
+                    return p + "source.url must start with rtmp:// or rtmps://";
+                }
+            } else {
+                return p + "source.mode must be push or pull for rtmp";
+            }
+            continue;
+        }
+        if (s.protocol != "srt") return p + "source.protocol must be srt or rtmp";
         if (s.mode != "listener" && s.mode != "caller") return p + "source.mode must be listener or caller";
         if (!in(s.port, 1, 65535)) return p + "source.port must be 1-65535";
         if (s.mode == "caller" && (s.host.empty() || s.host == "0.0.0.0")) return p + "source.host is required for caller";
@@ -203,15 +258,9 @@ std::optional<std::string> validate(const Config& c) {
         if (s.pbkeylen != 0 && s.pbkeylen != 16 && s.pbkeylen != 24 && s.pbkeylen != 32) {
             return p + "source.pbkeylen must be 0, 16, 24 or 32";
         }
-        if (!in(ch.playout_buffer_ms, 0, 2000)) return p + "playoutBufferMs must be 0-2000";
-        if (!in(ch.vcam, 0, 4)) return p + "vcam must be 0-4";
-        if (ch.vcam != 0 && !vcams.insert(ch.vcam).second) return p + "vcam " + std::to_string(ch.vcam) + " is already used";
         if (s.mode == "listener" && !listen_ports.insert({s.host, s.port}).second) {
             return p + "port " + std::to_string(s.port) + " is already used";
         }
-        if (!in(ch.audio.start_channel, 1, 64)) return p + "audio.startChannel must be 1-64";
-        if (ch.audio.mode != "shared" && ch.audio.mode != "exclusive") return p + "audio.mode must be shared or exclusive";
-        if (!in(ch.audio.offset_ms, -1000, 1000)) return p + "audio.offsetMs must be -1000-1000";
     }
     return std::nullopt;
 }

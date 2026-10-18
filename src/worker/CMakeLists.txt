@@ -6,6 +6,7 @@ find_library(SRT_LIBRARY NAMES srt srt_static REQUIRED)
 add_executable(denpachan-worker
     main.cpp
     srt_ingest.cpp
+    flv_ring_ingest.cpp
     decoder.cpp
     playout.cpp
     audio_writer.cpp

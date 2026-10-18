@@ -28,6 +28,8 @@ struct ChannelMetrics {
     std::atomic<uint32_t> connections{0};
     std::atomic<uint64_t> bytes_in{0};
     std::atomic<uint64_t> overflow_bytes{0};  // デコーダが詰まって捨てた受信データ
+    std::atomic<int32_t> tcp_rtt_us{0};       // RTMP push (rtmpd が測った TCP の RTT)
+    std::atomic<uint64_t> tcp_retrans_bytes{0};
 
     // decode
     std::atomic<uint64_t> frames_decoded{0};

@@ -45,6 +45,8 @@ int channel_param(const json& params) {
 Engine::Engine(std::wstring config_path, std::wstring worker_exe, std::wstring log_dir)
     : config_path_(std::move(config_path)), worker_exe_(std::move(worker_exe)), log_dir_(std::move(log_dir)) {
     for (int i = 0; i < kChannelCount; ++i) workers_[size_t(i)] = std::make_unique<WorkerProcess>(i + 1, worker_exe_);
+    const std::wstring dir = worker_exe_.substr(0, worker_exe_.find_last_of(L"\\/"));
+    rtmpd_ = std::make_unique<WorkerProcess>(0, dir + L"\\denpachan-rtmpd.exe", "rtmpd");
 }
 
 Engine::~Engine() = default;
@@ -72,13 +74,42 @@ void Engine::init() {
         if (!vcam_headers_[cam - 1]) spdlog::warn("vcam {}: cannot open shared memory", cam);
     }
 
-    // 前回動いていたチャンネルを再開する (同じ設定で動いている worker は引き継ぐ)
+    routes_ = rtmp_routes::open_shared(routes_mapping_);
+    if (!routes_) spdlog::error("cannot open RTMP routes shared memory");
+
+    // 前回動いていたチャンネルを再開する (同じ設定で動いている worker / rtmpd は引き継ぐ)
+    apply_rtmp_locked();
     for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
     audio_.apply(config_);
 }
 
+void Engine::apply_rtmp_locked() {
+    rtmp_routes::Route routes[rtmp_routes::kMaxRoutes] = {};
+    bool any_push = false;
+    for (const auto& c : config_.channels) {
+        auto& r = routes[c.id - 1];
+        r.ch = uint32_t(c.id);
+        if (!c.enabled || c.source.protocol != "rtmp" || c.source.mode != "push") continue;
+        r.enabled = 1;
+        strncpy_s(r.app, c.source.app.c_str(), _TRUNCATE);
+        strncpy_s(r.key, c.source.key.c_str(), _TRUNCATE);
+        any_push = true;
+    }
+    if (routes_) rtmp_routes::write_routes(routes_, routes);
+
+    if (any_push) {
+        const auto& g = config_.general;
+        rtmpd_->start(L"--port " + num(g.rtmp_port) + L" --bind " + quote_arg(from_utf8(g.rtmp_bind)) +
+                      L" --idle-timeout-ms " + num(g.rtmp_idle_timeout_ms) + L" --log-file " +
+                      quote_arg(log_dir_ + L"\\rtmpd.log"));
+    } else {
+        rtmpd_->stop();
+    }
+}
+
 void Engine::tick() {
     std::lock_guard lk(mutex_);
+    rtmpd_->poll();
     for (auto& w : workers_) w->poll();
     if (audio_.has_missing() && qpc_now() - last_audio_retry_qpc_ > qpc_from_ms(kAudioRetryMs)) {
         last_audio_retry_qpc_ = qpc_now();
@@ -90,6 +121,7 @@ void Engine::shutdown(bool stop_workers) {
     std::lock_guard lk(mutex_);
     if (stop_workers) {
         for (auto& w : workers_) w->stop();
+        rtmpd_->stop();
     }
 }
 
@@ -100,13 +132,19 @@ void Engine::save_locked() {
 
 std::wstring Engine::worker_args(const ChannelConfig& ch) const {
     const auto& s = ch.source;
-    std::wstring a = L"--ch " + num(ch.id) + L" --cam " + num(ch.vcam) + L" --srt-mode " + from_utf8(s.mode) +
-                     L" --host " + quote_arg(from_utf8(s.host)) + L" --port " + num(s.port) + L" --latency " +
-                     num(s.latency_ms) + L" --buffer " + num(ch.playout_buffer_ms) + L" --stall-ms " +
-                     num(config_.general.stall_ms);
-    if (!s.passphrase.empty()) a += L" --passphrase " + quote_arg(from_utf8(s.passphrase));
-    if (s.pbkeylen != 0) a += L" --pbkeylen " + num(s.pbkeylen);
-    if (!s.streamid.empty()) a += L" --streamid " + quote_arg(from_utf8(s.streamid));
+    std::wstring a = L"--ch " + num(ch.id) + L" --cam " + num(ch.vcam) + L" --buffer " + num(ch.playout_buffer_ms) +
+                     L" --stall-ms " + num(config_.general.stall_ms);
+    if (s.protocol == "rtmp" && s.mode == "push") {
+        a += L" --input rtmp-push";  // rtmpd がこのチャンネルの FLV リングに書く
+    } else if (s.protocol == "rtmp") {
+        a += L" --input url --url " + quote_arg(from_utf8(s.url));
+    } else {
+        a += L" --input srt --srt-mode " + from_utf8(s.mode) + L" --host " + quote_arg(from_utf8(s.host)) +
+             L" --port " + num(s.port) + L" --latency " + num(s.latency_ms);
+        if (!s.passphrase.empty()) a += L" --passphrase " + quote_arg(from_utf8(s.passphrase));
+        if (s.pbkeylen != 0) a += L" --pbkeylen " + num(s.pbkeylen);
+        if (!s.streamid.empty()) a += L" --streamid " + quote_arg(from_utf8(s.streamid));
+    }
     if (!config_.general.av_sync) a += L" --no-av-sync";
     a += L" --log-file " + quote_arg(log_dir_ + L"\\ch" + num(ch.id) + L".log");
     if (!ch.debug_args.empty()) a += L" " + from_utf8(ch.debug_args);
@@ -142,6 +180,7 @@ json Engine::handle(const std::string& method, const json& params) {
         const int ch = channel_param(params);
         config_.channels[size_t(ch - 1)].enabled = method == "startChannel";
         save_locked();
+        apply_rtmp_locked();
         apply_channel_locked(ch);
         audio_.apply(config_);
         return {{"ok", true}};
@@ -157,6 +196,7 @@ json Engine::handle(const std::string& method, const json& params) {
         if (auto err = validate(candidate)) throw std::runtime_error(*err);
         config_ = candidate;
         save_locked();
+        apply_rtmp_locked();
         apply_channel_locked(ch);  // worker に渡す設定が変わっていれば再起動される
         audio_.apply(config_);
         return to_json(config_.channels[size_t(ch - 1)], JsonForm::Ipc);
@@ -170,6 +210,7 @@ json Engine::handle(const std::string& method, const json& params) {
         if (auto err = validate(candidate)) throw std::runtime_error(*err);
         config_ = candidate;
         save_locked();
+        apply_rtmp_locked();
         for (const auto& c : config_.channels) apply_channel_locked(c.id);
         audio_.apply(config_);
         return to_json(config_.general);
@@ -208,7 +249,10 @@ json Engine::state_locked() {
             {"name", c.name},
             {"enabled", c.enabled},
             {"vcam", c.vcam},
-            {"source", {{"protocol", c.source.protocol}, {"mode", c.source.mode}, {"host", c.source.host}, {"port", c.source.port}}},
+            {"source",
+             c.source.protocol == "rtmp"
+                 ? json{{"protocol", "rtmp"}, {"mode", c.source.mode}, {"app", c.source.app}}
+                 : json{{"protocol", "srt"}, {"mode", c.source.mode}, {"host", c.source.host}, {"port", c.source.port}}},
             {"worker",
              {{"state", worker_state_name(w.state)},
               {"pid", w.pid},
@@ -234,9 +278,13 @@ json Engine::state_locked() {
                           {"droppedQueue", m.dropped_queue},
                           {"decodeErrors", m.decode_errors},
                           {"lastError", m.last_error}};
-            j["srt"] = {{"latencyMs", m.srt_latency_ms}, {"rttMs", m.srt_rtt_ms},   {"rcvBufMs", m.srt_rcv_buf_ms},
-                        {"recvMbps", m.srt_recv_mbps},   {"lost", m.srt_lost},      {"retrans", m.srt_retrans},
-                        {"dropped", m.srt_dropped}};
+            if (c.source.protocol == "srt") {
+                j["srt"] = {{"latencyMs", m.srt_latency_ms}, {"rttMs", m.srt_rtt_ms}, {"rcvBufMs", m.srt_rcv_buf_ms},
+                            {"recvMbps", m.srt_recv_mbps},   {"lost", m.srt_lost},    {"retrans", m.srt_retrans},
+                            {"dropped", m.srt_dropped}};
+            } else if (c.source.mode == "push") {
+                j["tcp"] = {{"rttMs", m.tcp_rtt_ms}, {"retransBytes", m.tcp_retrans_bytes}};
+            }
             j["audioIn"] = {{"peakDb", {m.audio_peak_l_db, m.audio_peak_r_db}},
                             {"delayMs", m.audio_delay_ms},
                             {"avOffsetMs", m.av_offset_ms},
@@ -245,7 +293,14 @@ json Engine::state_locked() {
         j["audioOut"] = audio_.channel_status(c.id);
         channels.push_back(j);
     }
-    return {{"channels", channels}, {"audioDevices", audio_.devices_status()}};
+    const WorkerSnapshot r = rtmpd_->snapshot();
+    json rtmp = {{"state", worker_state_name(r.state)},
+                 {"pid", r.pid},
+                 {"restarts", r.restarts},
+                 {"uptimeSec", r.uptime_sec},
+                 {"lastEvent", r.last_event},
+                 {"port", config_.general.rtmp_port}};
+    return {{"channels", channels}, {"rtmpServer", rtmp}, {"audioDevices", audio_.devices_status()}};
 }
 
 }  // namespace denpachan::engine

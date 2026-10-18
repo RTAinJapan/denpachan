@@ -29,11 +29,15 @@ public:
             ChannelMetrics& metrics, bool allow_hw);
     ~Decoder();
 
+    // URL (rtmp:// など) を直接読む。切れたら間隔を空けて繋ぎ直す。start() の前に呼ぶ。
+    void set_url(std::string url);
+
     void start();
     void stop();
 
 private:
     void run();
+    void run_url_loop();
     void run_session(uint64_t session);
     bool open_decoder(const AVStream* stream);
     void handle_frame(AVFrame* frame, const AVStream* stream, uint64_t session);
@@ -65,6 +69,10 @@ private:
     int consecutive_errors_ = 0;
 
     uint64_t session_ = 0;  // read_packet が読むセッション
+
+    std::string url_;          // 空 = ByteQueue から読む
+    std::string display_url_;  // ストリームキーを伏せたもの (ログ・メトリクス用)
+    std::atomic<int64_t> io_deadline_qpc_{0};
     int64_t last_pts_us_ = AV_NOPTS_VALUE;
 
     std::thread thread_;

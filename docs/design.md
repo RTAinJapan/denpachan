@@ -205,19 +205,22 @@ application live {
 
 | 項目 | 内容 |
 |------|------|
-| 対応範囲 | RTMP ハンドシェイク (simple / complex)、チャンク層、AMF0 コマンド (`connect` / `releaseStream` / `FCPublish` / `createStream` / `publish` / `deleteStream`)、FLV タグ (Enhanced RTMP の HEVC / AV1 含む) |
-| 振り分け | チャンネルごとに `app` とストリームキーを設定。一致しないキーの publish は拒否 (キーが合言葉の役割を兼ねる) |
+| 対応範囲 | RTMP ハンドシェイク (単純ハンドシェイク。S1 の版数欄を 0 にすると、complex ハンドシェイクを送ってくる FFmpeg / nginx-rtmp / OBS も受け入れる)、チャンク層 (拡張タイムスタンプ、Set Chunk Size、Abort、Ack、Ping)、AMF0 コマンド (`connect` / `releaseStream` / `FCPublish` / `createStream` / `publish` / `FCUnpublish` / `deleteStream`)、FLV タグはそのまま通す (Enhanced RTMP の HEVC / AV1 も FFmpeg 側が対応) |
+| 振り分け | チャンネルごとに `app` とストリームキーを設定。一致しないキーの publish は `NetStream.Publish.BadName` で拒否 (キーが合言葉の役割を兼ねる。キーはログに出さない)。振り分け表は engine が共有メモリ `Local\denpachan_rtmp_routes` に書き、rtmpd は publish のたびと 1 秒ごとに読む (チャンネルの追加・停止で rtmpd を再起動しない) |
 | 同一キーの二重 publish | **後から来た接続を優先し、古い接続を切る**。ネットワーク瞬断で古い TCP 接続が半開きのまま残っても、送出側の再接続ですぐ復帰できるようにするため |
-| チャンネルの Start / Stop | Stop 中のチャンネルのキーは拒否する。1935 番は RTMP の push 受けチャンネルが 1 つでも Start していれば開く |
-| ワーカーへの受け渡し | publish が確立したら、FLV ヘッダ + FLV タグ (タイムスタンプ付き) を `Local\denpachan_flv_{ch}` の SPSC リングに書く。ワーカーはそれを libavformat の FLV デマクサに AVIO で渡す (SRT の TS と同じ形で扱える) |
-| 統計 | 受信バイト数、接続元、`SIO_TCP_INFO` による TCP の RTT / 再送数、メッセージ間隔からのジッタ。チャンネル単位でワーカーへ渡す |
-| 堅牢性 | メディアは解析しないのでクラッシュ要因は少ないが、チャンク層・AMF パーサは境界チェックを徹底し、ファジング (libFuzzer) の対象にする |
+| チャンネルの Start / Stop | Stop 中のチャンネルのキーは拒否し、publish 中なら切る。rtmpd は RTMP push のチャンネルが 1 つでも Start していれば engine が起動する |
+| ワーカーへの受け渡し | publish が確立したら、FLV ヘッダ + FLV タグを `Local\denpachan_flv_{ch}` のリング (8 MB) に書く (`@setDataFrame` は外して onMetaData から始まるスクリプトタグにする)。ワーカーはそれを libavformat の FLV デマクサに AVIO で渡す (SRT の TS と同じ形で扱える) |
+| worker の再起動・追い越し | worker は publish の途中から読み始めるとき (再起動、追い越された) リングに再同期を頼む。rtmpd は最新のメタデータと音声・映像のコーデック設定を保持しておき、次のキーフレームで新しいセッションを始めてそれらを先に書く。**送出側の再接続を待たずに、キーフレーム間隔程度で復帰する** (SRT と違い、受信のソケットが worker の外にあるため) |
+| 統計 | 受信バイト数、接続元、`SIO_TCP_INFO` による TCP の RTT / 再送量 |
+| 堅牢性 | メディアは解析しない。チャンク層・AMF パーサは長さ・入れ子の深さを確かめ、壊れていればそこで読むのをやめる (メッセージ 16 MB、接続 16 本、無通信 5 秒で切断)。ファジング (libFuzzer) は M7 で行う |
 
-> 代替案として、ゲートウェイが publish を確認した時点でソケットを `WSADuplicateSocket` でワーカーに渡す方式もある (ゲートウェイを通るデータコピーがなくなる)。ただしチャンク層の状態の引き継ぎが必要で複雑になるため、第 1 段階はリング経由で実装し、負荷が問題になったら検討する。
+> 代替案として、rtmpd が publish を確認した時点でソケットを `WSADuplicateSocket` でワーカーに渡す方式もある (データコピーがなくなる)。ただしチャンク層の状態の引き継ぎが必要で複雑になり、worker 再起動時の再同期もできなくなるため採用しない。
 
 **3.3.2 Pull: Nginx から取りに行く**
 
-`rtmp://nginx/live/key` をワーカーが FFmpeg の RTMP クライアントで再生する。切断時は指数バックオフで再接続。
+`rtmp://nginx/live/key` をワーカーが FFmpeg の RTMP クライアントで再生する (`--input url`)。5 秒届かなければ切って、0.5 秒から最大 5 秒の間隔で繋ぎ直す。ログやメトリクスでは URL の最後の部分 (キー) を伏せる。
+
+**実測 (ローカル、FFmpeg を送出側に使用)**: push 受信、違うキーの拒否、二重 publish の切り替え (映像は途切れない)、worker の強制終了から約 5 秒で復帰 (送出側は繋いだまま)、rtmpd の強制終了から engine による再起動と送出側の繋ぎ直しで復帰、pull 受信、をすべて確認。Nginx-rtmp からの push は実機で要確認。
 
 ### 3.4 デコード
 
@@ -268,7 +271,7 @@ application live {
 | 障害 | 対策 |
 |------|------|
 | ワーカーのクラッシュ (FFmpeg, ドライバ) | エンジンが子プロセスとして起動・監視し、終了を検知したら再起動する。連続で落ちるときは間隔を 0.5 → 1 → 2 → 5 秒と延ばす (60 秒動けばリセット)。落ちたときはミニダンプを `%LOCALAPPDATA%\denpachan\dumps` に保存する。worker は 0.5 秒で待ち受けを再開するが、映像が戻るまでの時間は送出側 (SRT caller) が切断に気づくまでの時間 (SRT の既定で最大 5 秒、送出側の peer idle timeout) に左右される |
-| RTMP ゲートウェイのクラッシュ | 同上。Nginx 側の `push_reconnect` で自動的に再 push される |
+| RTMP ゲートウェイ (rtmpd) のクラッシュ | worker と同じ仕組みで engine が再起動する。RTMP の publish はすべて切れるが、送出側 (Nginx の `push_reconnect`、OBS の自動再接続) で再 push される。SRT のチャンネルには影響しない |
 | ワーカーのハング | 受信・出力スレッドが共有メモリ上のハートビートを更新し、デコーダはデコード処理に入った時刻を置く (ネットワーク待ちと区別するため)。どれかが 5 秒止まったらエンジンが強制終了 → 再起動 (起動直後 5 秒は猶予)。長い待ち (再接続の間隔など) は 0.5 秒ごとに区切ってハートビートを出す |
 | ストリーム途絶・再接続 | ワーカー内で自動再接続。途絶中は仮想カメラに最後のフレームを出し続ける (時間で NO SIGNAL に切り替えない)。worker が落ちて再起動する間も同じ |
 | RTMP の半開き接続 | 同一キーの新しい publish が来たら古い接続を切る。無通信 N 秒 (既定 5s) でも切断 |
@@ -537,8 +540,10 @@ stateDiagram-v2
 ```json
 {
   "version": 1,
-  "general": { "autostart": true, "restoreState": true, "stallMs": 2000 },
-  "rtmpServer": { "bind": "0.0.0.0", "port": 1935, "idleTimeoutSec": 5 },
+  "general": {
+    "stallMs": 2000, "audioMarginMs": 10, "avSync": true,
+    "rtmpServer": { "bind": "0.0.0.0", "port": 1935, "idleTimeoutMs": 5000 }
+  },
   "audioDevices": [
     { "deviceId": "{0.0.0.00000000}.{...}", "name": "DVS Transmit 1-16 (Dante Virtual Soundcard)", "shareMode": "exclusive", "bufferMs": 10 }
   ],
@@ -577,7 +582,7 @@ stateDiagram-v2
     {
       "id": 2,
       "name": "Game B",
-      "source": { "protocol": "rtmp", "mode": "push", "app": "denpa", "key": "ch2-8f3a1c..." },
+      "source": { "protocol": "rtmp", "mode": "push", "app": "live", "keyProtected": "AQAAANCMnd8B..." },
       "playoutBufferMs": 250
     }
   ]

@@ -52,6 +52,9 @@ struct Metrics {
     int64_t srt_retrans;
     int64_t srt_dropped;
 
+    double tcp_rtt_ms;  // RTMP push
+    uint64_t tcp_retrans_bytes;
+
     double audio_peak_l_db;
     double audio_peak_r_db;
     double audio_delay_ms;
