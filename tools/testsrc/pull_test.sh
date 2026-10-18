@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# 実際のサーバーからの RTMP pull の受信試験。
+# 実際のサーバーからの受信試験 (RTMP pull、または SRT caller)。
 #
-# 試験用の設定 (out/check/pull-config.json) で engine を起動し、ch1 を RTMP pull にして受信する。
+# 試験用の設定 (out/check/pull-config.json) で engine を起動し、ch1 を RTMP pull / SRT caller にして受信する。
+# URL が srt://ホスト:ポート なら SRT caller (latency 120 ms、パスフレーズなし)、それ以外は RTMP pull。
 # 状態を 1 秒ごとに表示し、仮想カメラ (DirectShow) から映像が取れるか確かめ、画面を撮る。
 # 音声は "CABLE Input" (VB-Audio Virtual Cable) に出す。
 #
-#   tools/testsrc/pull_test.sh <rtmp-url> [seconds] [playout_buffer_ms]
+#   tools/testsrc/pull_test.sh <url> [seconds] [playout_buffer_ms]
 #     例: tools/testsrc/pull_test.sh rtmp://example.com/app/key 30 60
+#         tools/testsrc/pull_test.sh srt://example.com:5000 30
 set -u
 
 URL="${1:?usage: pull_test.sh <rtmp-url> [seconds] [playout_buffer_ms]}"
@@ -30,8 +32,16 @@ step() { echo; echo "==== $*"; }
 "$BIN/denpachan-engine.exe" --config "$CFG" --log-file "$LOG" >/dev/null 2>&1 &
 sleep 2
 
-step "1. ch1 を RTMP pull にして開始 (再生バッファ ${BUFFER_MS} ms)"
-"$CTL" set 1 "{\"name\":\"pull test\",\"source\":{\"protocol\":\"rtmp\",\"mode\":\"pull\",\"url\":\"$URL\"},\"playoutBufferMs\":$BUFFER_MS,\"audio\":{\"device\":\"CABLE Input\",\"startChannel\":1}}" >/dev/null
+case "$URL" in
+    srt://*)
+        HOSTPORT="${URL#srt://}"
+        HOSTPORT="${HOSTPORT%%[/?]*}"
+        SOURCE="{\"protocol\":\"srt\",\"mode\":\"caller\",\"host\":\"${HOSTPORT%:*}\",\"port\":${HOSTPORT##*:},\"latencyMs\":120}"
+        ;;
+    *) SOURCE="{\"protocol\":\"rtmp\",\"mode\":\"pull\",\"url\":\"$URL\"}" ;;
+esac
+step "1. ch1 を $SOURCE で開始 (再生バッファ ${BUFFER_MS} ms)"
+"$CTL" set 1 "{\"name\":\"pull test\",\"source\":$SOURCE,\"playoutBufferMs\":$BUFFER_MS,\"audio\":{\"device\":\"CABLE Input\",\"startChannel\":1}}" >/dev/null
 "$CTL" start 1
 
 step "2. ${SECONDS_TO_WATCH} 秒間の状態 (1 秒ごと)"
