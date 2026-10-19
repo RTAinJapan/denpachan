@@ -23,6 +23,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly EngineClient _client = new();
     private readonly Dispatcher _dispatcher = Application.Current.Dispatcher;
     private readonly DispatcherTimer _previewTimer;
+    private readonly DispatcherTimer _systemTimer;
+    private readonly SystemStats _systemStats = new();
+    private bool _systemSampling;
     private long _lastRtmpRestarts = -1;
 
     public MainViewModel()
@@ -38,6 +41,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             foreach (var ch in Channels) ch.PollPreview();
         }, _dispatcher);
+
+        // PC の様子 (CPU、メモリ、録画先の空き) は 2 秒ごと。読むだけなので軽いが、録画先がネットワーク
+        // ドライブだと待たされることがあるので UI スレッドでは読まない
+        _systemTimer = new DispatcherTimer(TimeSpan.FromSeconds(2), DispatcherPriority.Background, (_, _) => _ = SampleSystemAsync(), _dispatcher);
 
         RefreshDevicesCommand = new RelayCommand(() => _ = LoadDevicesAsync(), () => Connected);
         GeneralSettingsCommand = new RelayCommand(OpenGeneralSettings, () => Connected && GeneralConfig != null);
@@ -110,6 +117,55 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private string _rtmpText = "";
     public string RtmpText { get => _rtmpText; private set => SetProperty(ref _rtmpText, value); }
+
+    private string _systemText = "";
+    /// <summary>CPU 使用率、メモリの空き、録画先ドライブの空き</summary>
+    public string SystemText { get => _systemText; private set => SetProperty(ref _systemText, value); }
+
+    private string _systemKind = "ok";
+    /// <summary>ok / warn / error (CPU が高い、メモリや録画先の空きが少ない)</summary>
+    public string SystemKind { get => _systemKind; private set => SetProperty(ref _systemKind, value); }
+
+    private async Task SampleSystemAsync()
+    {
+        if (_systemSampling) return;  // 前回がまだ終わっていない (ネットワークドライブ待ち)
+        _systemSampling = true;
+        try
+        {
+            // 録画先: 録画がオンのチャンネルのフォルダ (空 = Videos\denpachan)。無ければシステムドライブ
+            var drives = Channels.Where(c => c.Config != null && c.Config.At("record").Bool("enabled"))
+                .Select(c => (Dir: c.Config!.At("record").Str("dir") is { Length: > 0 } d ? d : DefaultRecordDir,
+                              MinFreeGb: (double)c.Config!.At("record").Int("minFreeGb", 5)))
+                .ToList();
+            if (drives.Count == 0) drives.Add((Environment.GetFolderPath(Environment.SpecialFolder.Windows), 5.0));
+            var s = await Task.Run(() => _systemStats.Sample(drives));
+            var kind = "ok";
+            void Raise(string k) { if (k == "error" || (k == "warn" && kind == "ok")) kind = k; }
+            if (s.CpuPercent >= 90) Raise("warn");
+            if (s.MemoryFreeGb < 1) Raise("error"); else if (s.MemoryFreeGb < 2) Raise("warn");
+            var disks = new List<string>();
+            foreach (var d in s.Drives)
+            {
+                if (d.FreeGb < d.MinFreeGb) Raise("error"); else if (d.FreeGb < d.MinFreeGb * 2) Raise("warn");
+                disks.Add($"{d.Root.TrimEnd('\\')} {FormatGb(d.FreeGb)}");
+            }
+            SystemText = $"CPU {s.CpuPercent:0}%   メモリ 空き {FormatGb(s.MemoryFreeGb)}   ディスク {string.Join(", ", disks)}";
+            SystemKind = kind;
+        }
+        catch
+        {
+            SystemText = "";
+        }
+        finally
+        {
+            _systemSampling = false;
+        }
+    }
+
+    private static string DefaultRecordDir =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Videos", "denpachan");
+
+    private static string FormatGb(double gb) => gb >= 1000 ? $"{gb / 1024:0.00} TB" : $"{gb:0} GB";
 
     private bool _ffmpegMissing;
     public bool FfmpegMissing { get => _ffmpegMissing; private set => SetProperty(ref _ffmpegMissing, value); }
@@ -337,6 +393,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _previewTimer.Stop();
+        _systemTimer.Stop();
         _client.Dispose();
         foreach (var ch in Channels) ch.Dispose();
     }

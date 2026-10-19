@@ -9,6 +9,19 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
 
+        <!-- 劣化の表示: ok / warn (黄) / error (赤)。TransportKind・AudioKind・SystemKind で使う -->
+        <Style x:Key="WarnText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource DimTextBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="warn">
+                    <Setter Property="Foreground" Value="#FFF0B44C" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="error">
+                    <Setter Property="Foreground" Value="#FFFF5C5C" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <!-- 操作ロック中は使えなくする (タイルのボタンとプルダウン) -->
         <Style x:Key="LockablePanel" TargetType="WrapPanel">
             <Style.Triggers>
@@ -59,6 +72,12 @@
                         <Border DockPanel.Dock="Right" Style="{StaticResource StatusPill}" VerticalAlignment="Center">
                             <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" FontSize="12" />
                         </Border>
+                        <!-- HW デコードが使えず CPU でデコードしている (HW のときは出さない) -->
+                        <Border DockPanel.Dock="Right" CornerRadius="10" Padding="8,2" Margin="0,0,6,0" VerticalAlignment="Center"
+                                Background="{StaticResource HoldBrush}" ToolTip="GPU でデコードできず CPU でデコードしています (CPU 負荷が上がります)"
+                                Visibility="{Binding SoftwareDecode, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="SW デコード" FontWeight="SemiBold" FontSize="12" />
+                        </Border>
                         <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding SourceSummary}" Style="{StaticResource DimText}" Margin="10,0,0,0"
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
@@ -95,13 +114,21 @@
                     <!-- メトリクス -->
                     <StackPanel Grid.Row="2" Margin="0,6,0,0">
                         <TextBlock Text="{Binding VideoLine}" FontFamily="Consolas, Segoe UI" />
-                        <TextBlock Text="{Binding TransportLine}" FontFamily="Consolas, Segoe UI" Style="{StaticResource DimText}" />
+                        <TextBlock Text="{Binding TransportLine}" FontFamily="Consolas, Segoe UI" Style="{StaticResource WarnText}" Tag="{Binding TransportKind}"
+                                   ToolTip="黄: 推奨 latency に足りない / TCP の再送あり。赤: 直近 1 分に取りこぼしあり" />
                         <Grid Margin="0,3,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="{Binding AudioLine}" FontFamily="Consolas, Segoe UI" Margin="0,0,10,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding AudioLine}" FontFamily="Consolas, Segoe UI" Margin="0,0,10,0" VerticalAlignment="Center"
+                                       Tag="{Binding AudioKind}" ToolTip="黄: 直近 1 分に音切れ・合わせ直しあり。赤: 音声デバイスを開けない">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource WarnText}">
+                                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <c:LevelMeter Db="{Binding PeakL}" Height="5" Margin="0,0,0,2" />
                                 <c:LevelMeter Db="{Binding PeakR}" Height="5" />
@@ -178,11 +205,13 @@
             <TextBlock Text="{Binding FfmpegMessage}" TextWrapping="Wrap" Foreground="White" />
         </Border>
 
-        <!-- 状態バー -->
+        <!-- 状態バー: engine との接続、PC の様子 (2 秒ごと)、RTMP サーバ -->
         <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="10,4">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Right" Text="{Binding RtmpText}" Style="{StaticResource DimText}" />
-                <TextBlock Text="{Binding ConnectionText}" Style="{StaticResource DimText}" />
+                <TextBlock DockPanel.Dock="Left" Text="{Binding ConnectionText}" Style="{StaticResource DimText}" Margin="0,0,24,0" />
+                <TextBlock Text="{Binding SystemText}" Style="{StaticResource WarnText}" Tag="{Binding SystemKind}" HorizontalAlignment="Center"
+                           ToolTip="CPU 使用率、メモリの空き、録画先ドライブの空き (録画がオンのチャンネルの保存先。無ければシステムドライブ)。黄: CPU 90% 以上 / 空きが下限の 2 倍未満。赤: 空きが下限 (録画設定の空き容量の下限、メモリは 1 GB) 未満" />
             </DockPanel>
         </Border>
 

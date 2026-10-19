@@ -94,6 +94,27 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private string _audioLine = "";
     public string AudioLine { get => _audioLine; private set => SetProperty(ref _audioLine, value); }
 
+    // ---- 映像も音も出ているが劣化している状態 (タイルで色を変える) ----
+
+    private bool _softwareDecode;
+    /// <summary>受信中に HW デコードが使えず CPU でデコードしている (HW のときは何も出さない)</summary>
+    public bool SoftwareDecode { get => _softwareDecode; private set => SetProperty(ref _softwareDecode, value); }
+
+    private string _transportKind = "ok";
+    /// <summary>ok / warn (遅延が足りない可能性、再送あり) / error (取りこぼし)</summary>
+    public string TransportKind { get => _transportKind; private set => SetProperty(ref _transportKind, value); }
+
+    private string _audioKind = "ok";
+    /// <summary>ok / warn (直近 1 分に音切れ・合わせ直し・抜け) / error (デバイスを開けない)</summary>
+    public string AudioKind { get => _audioKind; private set => SetProperty(ref _audioKind, value); }
+
+    // 直近 1 分の増分 (累積カウンタから)
+    private static readonly TimeSpan WarnWindow = TimeSpan.FromSeconds(60);
+    private readonly RateTracker _audioDropouts = new(WarnWindow);  // 音切れ + 合わせ直し
+    private readonly RateTracker _audioGaps = new(WarnWindow);      // worker 側の音声の抜け
+    private readonly RateTracker _srtDropped = new(WarnWindow);
+    private readonly RateTracker _tcpRetrans = new(WarnWindow);
+
     private string _lastEvent = "";
     public string LastEvent { get => _lastEvent; private set => SetProperty(ref _lastEvent, value); }
 
@@ -351,11 +372,23 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             TransportLine = srt != null
                 ? $"SRT latency {srt.Int("latencyMs")} ms{(recommended > 0 ? $" (推奨 {recommended})" : "")}   RTT {rtt:0.0} ms   ロス {srt.Num("lost"):0}   ドロップ {srt.Num("dropped"):0}"
                 : tcp != null ? $"TCP RTT {rtt:0.0} ms   再送 {tcp.Num("retransBytes") / 1024:0} KB" : "";
+            // 受信中だけ出す (HW が使えれば何も出さない)
+            SoftwareDecode = videoState is "live" or "hold" && !video.Bool("hwDecode");
+            // 送出側との経路: 取りこぼし (直近 1 分) は赤、推奨 latency に足りない・再送があるなら黄
+            var dropped = srt != null ? _srtDropped.Add(srt.Num("dropped")) : 0;
+            var retrans = tcp != null ? _tcpRetrans.Add(tcp.Num("retransBytes")) : 0;
+            TransportKind = dropped > 0 ? "error"
+                            : (srt != null && recommended > srt.Int("latencyMs")) || retrans > 0 ? "warn"
+                            : "ok";
         }
         else
         {
             VideoLine = "";
             TransportLine = "";
+            SoftwareDecode = false;
+            TransportKind = "ok";
+            _srtDropped.Reset();
+            _tcpRetrans.Reset();
         }
         SrtRecommendedLatencyMs = srt.At("recommend").Int("latencyMs");
         SrtRecommendation = srt != null ? DescribeSrtRecommendation(srt) : "";
@@ -365,13 +398,23 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         var peak = audioOut?.At("peakDb") as JsonArray ?? audioIn?.At("peakDb") as JsonArray;
         PeakL = peak is { Count: 2 } ? PeakOf(peak[0]) : -100;
         PeakR = peak is { Count: 2 } ? PeakOf(peak[1]) : -100;
+        // 直近 1 分の音切れ (デバイスの音切れ + 合わせ直し、worker 側の抜け)
+        var dropouts = audioOut != null && audioOut.At("latencyMs") != null
+            ? _audioDropouts.Add(audioOut.Num("underruns") + audioOut.Num("resyncs"))
+            : 0;
+        var gaps = audioIn != null ? _audioGaps.Add(audioIn.Num("gaps")) : 0;
+        var dropoutNote = dropouts + gaps > 0 ? $"  音切れ {dropouts + gaps:0} 回/分" : "";
         AudioLine = audioOut switch
         {
             null => "音声出力なし",
             _ when audioOut.At("error") != null => $"音声: {audioOut.Str("error")} ({audioOut.Str("device")})",
-            _ when audioOut.Bool("playing") => $"音声 {audioOut.Num("latencyMs"):0} ms" + (Mute ? "  ミュート中" : ""),
+            _ when audioOut.Bool("playing") => $"音声 {audioOut.Num("latencyMs"):0} ms" + (Mute ? "  ミュート中" : "") + dropoutNote,
             _ => audioOut.Bool("open") ? "音声 待機中" : "音声デバイスを開けません",
         };
+        AudioKind = audioOut == null ? "ok"
+                    : audioOut.At("error") != null || (!audioOut.Bool("open") && !audioOut.Bool("playing")) ? "error"
+                    : dropouts + gaps > 0 ? "warn"
+                    : "ok";
 
         var record = st.At("record");
         var recState = record.Str("state", "off");
