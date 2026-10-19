@@ -389,7 +389,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
         if (_lastVideoState != "" && videoState != _lastVideoState && videoState is "live" or "hold")
         {
-            events.Add(videoState == "live" ? "映像を受信しています" : "映像が途絶えました (最後の映像を保持)");
+            events.Add(videoState == "live" ? "映像を受信しています" : "映像が途絶えました (最後のフレームを保持)");
         }
         // 繋がらない理由は変わったときだけ出す (繋ぎ直しのたびには出さない)
         if (UnreachableReason.Length > 0 && UnreachableReason != _lastUnreachableReason) events.Add($"接続できません: {UnreachableReason}");
@@ -508,7 +508,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     {
         var r = srt.At("recommend");
         var recommended = r.Int("latencyMs");
-        if (recommended <= 0) return $"計測中 (受信 {r.Int("windowSec")} 秒。10 秒分の統計が必要)";
+        if (recommended <= 0) return $"計測中 (受信 {r.Int("windowSec")} 秒)";
         var effective = srt.Int("latencyMs");
         var configured = srt.Int("configuredLatencyMs");
         var text = $"{recommended} ms (RTT {r.Num("rttMs"):0.0} ms × {r.Int("multiplier")}、ロス {r.Num("lossPct"):0.##}%、直近 {r.Int("windowSec")} 秒)";
@@ -559,14 +559,14 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             Add("映像", $"{video.Str("codec")} {video.Int("width")}x{video.Int("height")} ({(video.Bool("hwDecode") ? "HW" : "SW")} デコード)");
             Add("ビットレート", $"{video.Num("bitrateMbps"):0.00} Mbps");
             Add("デコード / 出力", $"{video.Num("decodeFps"):0} / {video.Num("outputFps"):0} fps");
-            Add("映像の遅延", $"{video.Num("delayMs"):0} ms (デコード後から仮想カメラまで)");
-            Add("落としたフレーム", $"遅れ {video.Num("droppedLate"):0} / 溢れ {video.Num("droppedQueue"):0}");
+            Add("映像遅延", $"{video.Num("delayMs"):0} ms (デコード後から仮想カメラまで)");
+            Add("ドロップフレーム", $"遅れ {video.Num("droppedLate"):0} / 溢れ {video.Num("droppedQueue"):0}");
             Add("デコードエラー", $"{video.Num("decodeErrors"):0}");
-            if (video.Str("lastError") is { Length: > 0 } err) Add(UnreachableReason.Length > 0 ? "接続できない理由" : "エラー", err);
+            if (video.Str("lastError") is { Length: > 0 } err) Add(UnreachableReason.Length > 0 ? "接続失敗理由" : "エラー", err);
         }
         if (st.At("srt") is JsonNode srt)
         {
-            Add("SRT latency", $"{srt.Int("latencyMs")} ms (送出側との大きい方)");
+            Add("SRT latency", $"{srt.Int("latencyMs")} ms");
             Add("SRT RTT", $"{srt.Num("rttMs"):0.0} ms");
             Add("SRT 受信バッファ", $"{srt.Int("rcvBufMs")} ms");
             Add("SRT ロス / 再送 / ドロップ", $"{srt.Num("lost"):0} / {srt.Num("retrans"):0} / {srt.Num("dropped"):0}");

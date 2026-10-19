@@ -33,7 +33,7 @@ public static class ExternalFfmpeg
         var exe = Find(configured);
         if (exe == null)
         {
-            return new(false, configured.Length > 0 ? $"見つかりません: {configured}" : "ffmpeg.exe が見つかりません (denpachan と同じフォルダにも PATH にもありません)");
+            return new(false, configured.Length > 0 ? $"見つかりません: {configured}" : "ffmpeg.exe が見つかりません");
         }
         try
         {

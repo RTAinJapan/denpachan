@@ -60,7 +60,7 @@
                         <c:LockToggle DockPanel.Dock="Right" IsLocked="{Binding IsLocked}" Margin="6,0,0,0" VerticalAlignment="Center">
                             <c:LockToggle.Style>
                                 <Style TargetType="c:LockToggle">
-                                    <Setter Property="ToolTip" Value="クリックで操作をロック (誤操作の防止)" />
+                                    <Setter Property="ToolTip" Value="クリックで操作をロック" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsLocked}" Value="True">
                                             <Setter Property="ToolTip" Value="操作をロック中。1 秒長押しで解除" />
@@ -74,7 +74,7 @@
                         </Border>
                         <!-- HW デコードが使えず CPU でデコードしている (HW のときは出さない) -->
                         <Border DockPanel.Dock="Right" CornerRadius="10" Padding="8,2" Margin="0,0,6,0" VerticalAlignment="Center"
-                                Background="{StaticResource HoldBrush}" ToolTip="GPU でデコードできず CPU でデコードしています (CPU 負荷が上がります)"
+                                Background="{StaticResource HoldBrush}" ToolTip="GPU でデコードできず CPU でデコードしています"
                                 Visibility="{Binding SoftwareDecode, Converter={StaticResource BoolToVis}}">
                             <TextBlock Text="SW デコード" FontWeight="SemiBold" FontSize="12" />
                         </Border>
@@ -162,12 +162,12 @@
                     <WrapPanel Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
                         <Button Content="{Binding StartStopLabel}" Command="{Binding StartStopCommand}" Style="{StaticResource PrimaryButton}" MinWidth="64" />
                         <ToggleButton Content="● 録画" IsChecked="{Binding RecordEnabled, Mode=OneWay}" Command="{Binding RecordCommand}"
-                                      Style="{StaticResource RecordChip}" ToolTip="録画のオン・オフ (受信は止めない)" />
+                                      Style="{StaticResource RecordChip}" ToolTip="受信した映像をファイルに録画します" />
                         <ToggleButton Content="プレビュー" IsChecked="{Binding PreviewEnabled}" Style="{StaticResource ToggleChip}" />
                         <ToggleButton Content="{Binding MuteLabel}" IsChecked="{Binding Mute, Mode=OneWay}" Command="{Binding MuteCommand}"
-                                      Style="{StaticResource ToggleChip}" />
-                        <Button Content="表示リセット" Command="{Binding ResetCamCommand}"
-                                ToolTip="仮想カメラの表示を NO SIGNAL に戻す (次に受信したら映像に戻る)" />
+                                      Style="{StaticResource ToggleChip}" ToolTip="音声デバイスへの音声出力を0にします" />
+                        <Button Content="プレビューリセット" Command="{Binding ResetCamCommand}"
+                                ToolTip="プレビューの表示を初期化します" />
                         <Button Content="設定…" Command="{Binding SettingsCommand}" />
                     </WrapPanel>
 
@@ -190,11 +190,11 @@
         <!-- メニュー -->
         <Menu DockPanel.Dock="Top" Background="{StaticResource PanelBrush}">
             <MenuItem Header="ファイル(_F)">
-                <MenuItem Header="全体の設定(_G)…" Command="{Binding GeneralSettingsCommand}" />
-                <MenuItem Header="音声デバイスを読み直す(_R)" Command="{Binding RefreshDevicesCommand}" />
-                <MenuItem Header="仮想カメラの登録を解除 (フォルダを消す前に)(_U)…" Command="{Binding UnregisterVcamCommand}" />
+                <MenuItem Header="全体設定(_G)…" Command="{Binding GeneralSettingsCommand}" />
+                <MenuItem Header="音声デバイスの再読込(_R)" Command="{Binding RefreshDevicesCommand}" />
+                <MenuItem Header="仮想カメラの登録解除(_U)…" Command="{Binding UnregisterVcamCommand}" />
                 <Separator />
-                <MenuItem Header="終了 (受信も止める)(_X)" Command="{Binding ShutdownCommand}" />
+                <MenuItem Header="終了(_X)" Command="{Binding ShutdownCommand}" />
             </MenuItem>
         </Menu>
 
@@ -209,8 +209,7 @@
             <DockPanel>
                 <TextBlock DockPanel.Dock="Right" Text="{Binding RtmpText}" Style="{StaticResource DimText}" />
                 <TextBlock DockPanel.Dock="Left" Text="{Binding ConnectionText}" Style="{StaticResource DimText}" Margin="0,0,24,0" />
-                <TextBlock Text="{Binding SystemText}" Style="{StaticResource WarnText}" Tag="{Binding SystemKind}" HorizontalAlignment="Center"
-                           ToolTip="CPU 使用率、メモリの空き、録画先ドライブの空き (録画がオンのチャンネルの保存先。無ければシステムドライブ)。黄: CPU 90% 以上 / 空きが下限の 2 倍未満。赤: 空きが下限 (録画設定の空き容量の下限、メモリは 1 GB) 未満" />
+                <TextBlock Text="{Binding SystemText}" Style="{StaticResource WarnText}" Tag="{Binding SystemKind}" HorizontalAlignment="Center" />
             </DockPanel>
         </Border>
 
@@ -248,7 +247,7 @@
                 DataContext="{Binding Selected}">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Top" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8">
-                    <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" の詳細" />
+                    <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" 詳細" />
                 </TextBlock>
                 <StackPanel DockPanel.Dock="Bottom">
                     <c:LineChart Height="80" Margin="0,8,0,0" Title="ビットレート" Unit="Mbps" Values="{Binding BitrateHistory}"

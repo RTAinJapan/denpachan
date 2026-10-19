@@ -344,10 +344,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var active = Channels.Where(c => c.Enabled).ToList();
         if (active.Count == 0) return true;
         var names = string.Join("、", active.Select(c => c.Name));
-        var recording = active.Any(c => c.RecordKind == "recording") ? "\n録画中のファイルも閉じます。" : "";
         var answer = MessageBox.Show(Application.Current.MainWindow,
             $"受信中のチャンネルがあります ({names})。\n" +
-            $"閉じると受信を止め、仮想カメラと音声の出力も止まります。{recording}\n閉じてよいですか?",
+            $"終了してよろしいですか?",
             "denpachan", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
         return answer == MessageBoxResult.OK;
     }

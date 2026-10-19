@@ -17,21 +17,20 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <CheckBox x:Name="AvSyncBox" Grid.ColumnSpan="2"
-                          Content="映像と音声のタイミングを揃える (音声が遅れて届く送出元では映像が待つ)" />
+                          Content="映像と音声の同期" />
                 <Label Grid.Row="1" Content="音声の余裕 (ms)" VerticalAlignment="Center" />
                 <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
                     <TextBox x:Name="MarginBox" Width="100" Margin="0,3" />
                     <TextBlock Text="  デバイスのバッファに足す" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" />
                 </StackPanel>
-                <Label Grid.Row="2" Content="途絶とみなすまで (ms)" VerticalAlignment="Center" />
+                <Label Grid.Row="2" Content="通信途絶とみなす時間 (ms)" VerticalAlignment="Center" />
                 <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
                     <TextBox x:Name="StallBox" Width="100" Margin="0,3" />
-                    <TextBlock Text="  状態表示用 (映像は最後のフレームを保持)" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" />
                 </StackPanel>
             </Grid>
         </GroupBox>
 
-        <GroupBox Header="RTMP サーバ (push の受け口)" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+        <GroupBox Header="RTMPサーバ待ち受け設定" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
             <Grid Margin="6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="180" />
@@ -51,7 +50,7 @@
             </Grid>
         </GroupBox>
 
-        <GroupBox Header="録画の CPU エンコード (外部 ffmpeg)" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+        <GroupBox Header="FFmpeg" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
             <StackPanel Margin="6">
                 <DockPanel>
                     <Label Content="ffmpeg.exe" Width="90" VerticalAlignment="Center" />
@@ -60,13 +59,13 @@
                     <TextBox x:Name="FfmpegBox" Margin="0,3" />
                 </DockPanel>
                 <TextBlock Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"
-                           Text="x264 / x265 / SVT-AV1 は denpachan に含まれていません。これらを含む ffmpeg を用意してください。空欄なら denpachan と同じフォルダ、次に PATH から探します。" />
+                           Text="録画のCPUエンコードを利用する場合に設定。空欄の場合exeと同フォルダまたはPATHから探索" />
                 <TextBlock x:Name="FfmpegStatus" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
             </StackPanel>
         </GroupBox>
 
         <TextBlock x:Name="ErrorText" Foreground="#FFF07178" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
-        <TextBlock Text="変更すると、動いているチャンネルは一度切断して再接続することがあります。" Style="{StaticResource DimText}"
+        <TextBlock Text="変更すると、各チャンネル一度切断して再接続することがあります。" Style="{StaticResource DimText}"
                    FontSize="12" Margin="0,10,0,0" />
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
             <Button Content="キャンセル" IsCancel="True" MinWidth="90" />

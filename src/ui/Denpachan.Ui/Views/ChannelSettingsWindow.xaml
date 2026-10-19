@@ -23,8 +23,8 @@
             <ComboBox x:Name="InputBox" Grid.Row="1" Grid.Column="1" Margin="0,3" SelectionChanged="InputBox_SelectionChanged">
                 <ComboBoxItem Content="SRT (待ち受け / listener)" Tag="srt:listener" />
                 <ComboBoxItem Content="SRT (接続しに行く / caller)" Tag="srt:caller" />
-                <ComboBoxItem Content="RTMP push (Nginx などから受ける)" Tag="rtmp:push" />
-                <ComboBoxItem Content="RTMP pull (Nginx などから取りに行く)" Tag="rtmp:pull" />
+                <ComboBoxItem Content="RTMP (待ち受け / push)" Tag="rtmp:push" />
+                <ComboBoxItem Content="RTMP (接続しに行く / pull)" Tag="rtmp:pull" />
             </ComboBox>
         </Grid>
 
@@ -140,9 +140,9 @@
                     <TextBlock Text="  0 = 最小遅延。カクつくなら 16 程度" Style="{StaticResource DimText}" VerticalAlignment="Center" FontSize="12" />
                 </StackPanel>
                 <Label Grid.Row="1" Content="音声の出力モード" VerticalAlignment="Center" />
-                <ComboBox x:Name="AudioModeBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Width="280" HorizontalAlignment="Left">
-                    <ComboBoxItem Content="共有 (他のアプリと同時に使える)" Tag="shared" />
-                    <ComboBoxItem Content="排他 (低遅延。通知音が混ざらない)" Tag="exclusive" />
+                <ComboBox x:Name="AudioModeBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Width="120" HorizontalAlignment="Left">
+                    <ComboBoxItem Content="共有" Tag="shared" />
+                    <ComboBoxItem Content="排他" Tag="exclusive" />
                 </ComboBox>
                 <Label Grid.Row="2" Content="音声オフセット (ms)" VerticalAlignment="Center" />
                 <TextBox x:Name="OffsetBox" Grid.Row="2" Grid.Column="1" Margin="0,3" Width="120" HorizontalAlignment="Left" />
@@ -150,7 +150,7 @@
             </Grid>
         </GroupBox>
 
-        <TextBlock Text="受信の設定を変えると、このチャンネルは一度切断して再接続します。" Style="{StaticResource DimText}" FontSize="12"
+        <TextBlock Text="受信の設定を変えると一旦切断されます。" Style="{StaticResource DimText}" FontSize="12"
                    Margin="0,10,0,0" />
         </StackPanel>
         </TabItem>
@@ -161,7 +161,7 @@
                 <CheckBox x:Name="RecordEnabledBox" Content="録画する" />
                 <Grid Margin="0,6,0,0">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="180" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
@@ -183,21 +183,20 @@
                     <Label Grid.Row="1" Content="ファイル名" VerticalAlignment="Center" />
                     <TextBox x:Name="TemplateBox" Grid.Row="1" Grid.Column="1" Margin="0,3" FontFamily="Consolas" TextChanged="Template_Changed" />
                     <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap"
-                               Text="{}{ch} {name} {YYYY} {YY} {MM} {DD} {hh} {mm} {ss} {seq} {codec} {res}  / はフォルダの区切り" />
+                               Text="{}{ch}: チャンネル番号 {name}: チャンネル名 {YYYY}: 西暦(full) {YY}: 西暦(下二桁) {MM}: 月 {DD}: 日 {hh}: 時 {mm}: 分 {ss}: 秒 {seq}: ミリ秒 {codec}: コーデック {res}: 解像度" />
                     <Label Grid.Row="3" Content="例" VerticalAlignment="Center" />
                     <TextBlock x:Name="TemplatePreview" Grid.Row="3" Grid.Column="1" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"
                                VerticalAlignment="Center" />
-                    <Label Grid.Row="4" Content="使えない文字の置き換え" VerticalAlignment="Center" />
+                    <Label Grid.Row="4" Content="禁則文字の置換文字" VerticalAlignment="Center" />
                     <TextBox x:Name="ReplacementBox" Grid.Row="4" Grid.Column="1" Width="60" Margin="0,3" HorizontalAlignment="Left" TextChanged="Template_Changed" />
                     <Label Grid.Row="5" Content="形式" VerticalAlignment="Center" />
-                    <ComboBox x:Name="ContainerBox" Grid.Row="5" Grid.Column="1" Width="280" Margin="0,3" HorizontalAlignment="Left" SelectionChanged="Template_Changed">
-                        <ComboBoxItem Content="MKV (途中で止まっても再生できる)" Tag="mkv" />
+                    <ComboBox x:Name="ContainerBox" Grid.Row="5" Grid.Column="1" Width="120" Margin="0,3" HorizontalAlignment="Left" SelectionChanged="Template_Changed">
+                        <ComboBoxItem Content="MKV (推奨)" Tag="mkv" />
                         <ComboBoxItem Content="MPEG-TS" Tag="ts" />
                     </ComboBox>
-                    <Label Grid.Row="6" Content="途切れで区切る (秒)" VerticalAlignment="Center" />
+                    <Label Grid.Row="6" Content="録画区切る受信停止時間 (秒)" VerticalAlignment="Center"/>
                     <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal">
                         <TextBox x:Name="GapBox" Width="80" Margin="0,3" />
-                        <TextBlock Text="  映像がこの秒数来なければ次は別のファイル" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" />
                     </StackPanel>
                     <Label Grid.Row="7" Content="最大の長さ (分)" VerticalAlignment="Center" />
                     <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal">
@@ -210,13 +209,13 @@
 
                 <GroupBox Header="方式" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
                     <StackPanel Margin="6">
-                        <RadioButton x:Name="PassthroughBox" Content="パススルー (受信したまま保存。負荷ほぼゼロ、画質劣化なし)" GroupName="mode"
+                        <RadioButton x:Name="PassthroughBox" Content="パススルー" GroupName="mode"
                                      Checked="Mode_Changed" Margin="0,2" />
-                        <RadioButton x:Name="EncodeBox" Content="再エンコード (GPU: NVENC / QSV)" GroupName="mode" Checked="Mode_Changed" Margin="0,2" />
-                        <RadioButton x:Name="CpuEncodeBox" Content="再エンコード (CPU: 外部 ffmpeg の x264 / x265 / SVT-AV1)" GroupName="mode"
+                        <RadioButton x:Name="EncodeBox" Content="再エンコード(GPU)" GroupName="mode" Checked="Mode_Changed" Margin="0,2" />
+                        <RadioButton x:Name="CpuEncodeBox" Content="再エンコード(CPU)" GroupName="mode"
                                      Checked="Mode_Changed" Margin="0,2" />
                         <TextBlock x:Name="CpuNote" Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap" Margin="22,0,0,2"
-                                   Text="ffmpeg.exe は全体の設定で指定します (空欄なら同じフォルダ → PATH)。CPU 負荷が高いので、4K では速いプリセットにしてください。" />
+                                   Text="負荷が高いので軽めのプリセットを推奨" />
                         <Grid x:Name="EncodePanel" Margin="0,6,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="144" />
@@ -238,7 +237,7 @@
                                     <ComboBoxItem Content="AV1" Tag="av1" />
                                 </ComboBox>
                                 <ComboBox x:Name="EncoderBox" Width="190" Margin="0,3">
-                                    <ComboBoxItem Content="自動 (NVENC → QSV)" Tag="auto" />
+                                    <ComboBoxItem Content="自動" Tag="auto" />
                                     <ComboBoxItem Content="NVIDIA NVENC" Tag="nvenc" />
                                     <ComboBoxItem Content="Intel QSV" Tag="qsv" />
                                 </ComboBox>
@@ -272,7 +271,7 @@
                         </Grid>
                     </StackPanel>
                 </GroupBox>
-                <TextBlock Text="録画の設定は受信を止めずに反映されます (録画中のファイルは区切られます)。" Style="{StaticResource DimText}"
+                <TextBlock Text="録画中の場合、設定変更時に一旦区切られます。" Style="{StaticResource DimText}"
                            FontSize="12" Margin="0,10,0,0" />
             </StackPanel>
         </TabItem>
