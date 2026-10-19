@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- denpachan のアイコン: アンテナ付きのテレビと電波。denpachan.ico は tools/icon/make_icon.ps1 でここから作る -->
+  <g transform="translate(-8 0)">
+    <g fill="#EF4F87">
+      <!-- 電波 -->
+      <g fill="none" stroke="#EF4F87" stroke-width="10" stroke-linecap="round">
+        <path d="M 180 62 A 24 24 0 0 1 204 86" />
+        <path d="M 180 40 A 46 46 0 0 1 226 86" />
+        <path d="M 180 18 A 68 68 0 0 1 248 86" />
+      </g>
+      <!-- アンテナ -->
+      <g stroke="#EF4F87" stroke-width="7" stroke-linecap="round">
+        <line x1="116" y1="106" x2="76" y2="66" />
+        <line x1="124" y1="106" x2="154" y2="68" />
+      </g>
+      <circle cx="74" cy="64" r="11" />
+      <circle cx="156" cy="66" r="11" />
+      <path d="M 92 118 A 28 28 0 0 1 148 118 Z" />
+      <!-- 脚 -->
+      <path d="M 57 228 L 75 228 L 66 249 L 51 249 Z" />
+      <path d="M 170 228 L 188 228 L 194 249 L 179 249 Z" />
+      <!-- 本体 -->
+      <rect x="36" y="115" width="173" height="118" rx="20" />
+    </g>
+    <!-- 画面 (ブラウン管のふくらみ) -->
+    <path fill="#FFFFFF" d="M 62 131 Q 108 126 154 131 Q 164 133 165 144 Q 168 175 165 206 Q 164 217 154 219
+                            Q 108 224 62 219 Q 52 217 51 206 Q 48 175 51 144 Q 52 133 62 131 Z" />
+    <!-- つまみとスピーカー -->
+    <g fill="#FFFFFF">
+      <circle cx="186" cy="147" r="9.5" />
+      <circle cx="186" cy="173" r="9.5" />
+    </g>
+    <g stroke="#FFFFFF" stroke-width="5" stroke-linecap="round">
+      <line x1="176" y1="195" x2="196" y2="195" />
+      <line x1="176" y1="204" x2="196" y2="204" />
+      <line x1="176" y1="213" x2="196" y2="213" />
+    </g>
+  </g>
+</svg>

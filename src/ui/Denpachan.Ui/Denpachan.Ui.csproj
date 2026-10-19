@@ -12,6 +12,8 @@
     <RootNamespace>Denpachan.Ui</RootNamespace>
     <Version>0.1.0</Version>
     <SatelliteResourceLanguages>ja</SatelliteResourceLanguages>
+    <!-- exe のアイコン。ウィンドウとタスクバーもこれを使う (元は assets/denpachan.svg) -->
+    <ApplicationIcon>..\..\..\assets\denpachan.ico</ApplicationIcon>
     <!-- WPF の Fluent テーマ (ThemeMode) は試験的 API 扱い -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>

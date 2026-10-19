@@ -21,6 +21,7 @@ target_include_directories(denpachan-worker SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS
 target_link_directories(denpachan-worker PRIVATE ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(denpachan-worker PRIVATE
     denpachan_common
+    denpachan_icon
     ${FFMPEG_LIBRARIES}
     ${SRT_LIBRARY}
     spdlog::spdlog

@@ -16,6 +16,7 @@ target_include_directories(denpachan-engine SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS
 target_link_directories(denpachan-engine PRIVATE ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(denpachan-engine PRIVATE
     denpachan_common
+    denpachan_icon
     ${FFMPEG_LIBRARIES}
     spdlog::spdlog
     nlohmann_json::nlohmann_json

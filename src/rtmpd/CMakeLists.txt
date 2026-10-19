@@ -7,4 +7,4 @@ add_executable(denpachan-rtmpd
     rtmp_connection.cpp
     amf0.cpp
 )
-target_link_libraries(denpachan-rtmpd PRIVATE denpachan_common spdlog::spdlog ws2_32 dbghelp)
+target_link_libraries(denpachan-rtmpd PRIVATE denpachan_common denpachan_icon spdlog::spdlog ws2_32 dbghelp)

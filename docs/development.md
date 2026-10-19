@@ -50,3 +50,15 @@ dotnet watch --no-hot-reload run --project src/ui/Denpachan.Ui/Denpachan.Ui.cspr
 - 画面に流し込む状態は `tools/ui_screenshots/cases/*.json` (スクリーンショット試験と同じもの)。
 - XAML はホットリロードが効かないので、ホットリロードを切って毎回起動し直している。
 - C++ のビルドは `build.ps1` (タスク「ビルド (全体)」) で行う。CMake Tools が開いたときに勝手に configure しないよう、`.vscode/settings.json` で止めている (同じ `out/build` を触って `build.ps1` とぶつかるため)。
+
+## アイコン
+
+元は `assets/denpachan.svg`。これを直したら次を実行して `assets/denpachan.ico` を作り直し、両方をコミットする。
+
+```powershell
+./tools/icon/make_icon.ps1
+```
+
+- SVG を Edge (ヘッドレス) で描いて、16〜256 px を 1 つの ico にまとめる。ビルドには ico だけを使う (Edge は要らない)。
+- 縮めた各サイズの PNG は `out/icon/` に残るので、小さいサイズで潰れていないかをそこで見る。
+- 画面 (`denpachan.exe`) は csproj の `ApplicationIcon`、engine / worker / rtmpd / ctl は `src/common/icon.rc.in` で ico を埋め込む。ウィンドウとタスクバーも exe のアイコンを使う。

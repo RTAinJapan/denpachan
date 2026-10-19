@@ -8,4 +8,4 @@ add_executable(audio_probe
 target_link_libraries(audio_probe PRIVATE denpachan_common ole32)
 
 add_executable(denpachan-ctl ctl.cpp)
-target_link_libraries(denpachan-ctl PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(denpachan-ctl PRIVATE denpachan_icon nlohmann_json::nlohmann_json)
