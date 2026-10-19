@@ -10,7 +10,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>denpachan</AssemblyName>
     <RootNamespace>Denpachan.Ui</RootNamespace>
-    <Version>0.1.0</Version>
+    <!-- 版は CMakeLists.txt の project(denpachan ... VERSION x.y.z) だけに書き、ここはそれを読む
+         (C++ と画面、配布の zip、リリースのタグで同じ版にするため。docs/development.md の「リリース」) -->
+    <Version>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\..\CMakeLists.txt')), '(?&lt;=project\(denpachan[^)]*VERSION )[0-9]+\.[0-9]+\.[0-9]+'))</Version>
     <SatelliteResourceLanguages>ja</SatelliteResourceLanguages>
     <!-- exe のアイコン。ウィンドウとタスクバーもこれを使う (元は assets/denpachan.svg) -->
     <ApplicationIcon>..\..\..\assets\denpachan.ico</ApplicationIcon>

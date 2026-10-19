@@ -13,7 +13,36 @@ Visual Studio 2026 (C++ によるデスクトップ開発)、.NET 10 SDK、vcpkg
 - ビルドに使う FFmpeg のヘッダは、初回の configure で FFmpeg 9.0.2 の shared 版を `out/deps/` に取ってくる (配布物には入れない)。
 - FFmpeg の DLL は出力に入らないので、開発中は `out/deps/ffmpeg-9.0.2-full_build-shared/bin` を PATH に足して動かす。
 - 配布用の zip は `tools/package.ps1` で作る (`out/dist/`)。
-- GitHub Actions でも同じようにビルドし、配布用の zip を artifact にする (`.github/workflows/build.yml`)。
+- GitHub Actions でも同じようにビルドし、配布用の zip を artifact にする (`.github/workflows/build.yml`)。push・PR のたびに動く。
+- 好きなブランチを手動でビルドするときは、GitHub の Actions → build → 「Run workflow」でブランチを選ぶ。zip は実行結果の artifact から取れる。
+
+## リリース
+
+版は [セマンティック バージョニング](https://semver.org/lang/ja/) の `X.Y.Z` で数える。
+
+- X (メジャー): 前の版の設定ファイルが読めなくなるなど、入れ替えるだけでは済まない変更
+- Y (マイナー): 機能の追加
+- Z (パッチ): 不具合の修正だけ
+- 試してもらうための版は、後ろにラベルを付ける (`1.2.0-rc.1`、`1.2.0-beta` など)。ラベル付きはプレリリースになる。
+
+版を書くのは `CMakeLists.txt` の `project(denpachan ... VERSION X.Y.Z)` の 1 か所だけ (画面の csproj もここを読む。ラベルはここには書かない)。
+
+手順:
+
+1. `CMakeLists.txt` の版を上げて main にコミットする (PR でよい)。
+2. そのコミットにタグ `vX.Y.Z` (プレリリースなら `vX.Y.Z-rc.1` など) を付けて push する。
+
+   ```bash
+   git tag v1.2.0
+   ```
+
+   ```bash
+   git push origin v1.2.0
+   ```
+
+3. GitHub Actions がタグでビルドし、GitHub Release「denpachan X.Y.Z」を作って `denpachan-X.Y.Z-win64.zip` と PDB の zip を付ける。リリースノートは前のタグからの PR とコミットで GitHub が作るので、必要なら Release の画面で書き足す。
+
+タグの形が違う、またはタグの版が `CMakeLists.txt` と合わないときは、ビルドの最初で失敗し、リリースは作られない。そのときはタグを消して付け直す (`git push origin :refs/tags/v1.2.0` で GitHub のタグを消す)。
 
 ## 試験
 
