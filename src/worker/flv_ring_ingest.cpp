@@ -87,6 +87,14 @@ void FlvRingIngest::run() {
         }
         if (!active) continue;
 
+        if (resync_.exchange(false)) {
+            // デコーダが読み始められなかった (FLV は途中からでは読めない): 次のキーフレームからやり直す
+            spdlog::info("RTMP: requesting resync at the next keyframe (decoder could not start)");
+            close_session();
+            h->resync_request.store(1, std::memory_order_release);
+            continue;
+        }
+
         const uint64_t write_pos = h->write_pos.load(std::memory_order_acquire);
         if (write_pos - read_pos > kCapacity) {
             // 追い越された (デコードが詰まっている)。FLV の区切りを見失うので、次のキーフレームからやり直す。

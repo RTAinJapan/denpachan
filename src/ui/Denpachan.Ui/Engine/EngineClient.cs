@@ -45,6 +45,8 @@ public sealed class EngineClient : IDisposable
         {
             try
             {
+                // engine が居なければ ConnectAsync はタイムアウトまで内部で回り続ける (CPU を使う) ので、先にパイプの有無を見る
+                if (!PipeExists()) throw new TimeoutException();
                 using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await pipe.ConnectAsync(1000, ct);
                 using var reader = new StreamReader(pipe, new UTF8Encoding(false));
@@ -79,6 +81,19 @@ public sealed class EngineClient : IDisposable
             foreach (var p in _pending) p.Value.TrySetException(new EngineException("engine との接続が切れました"));
             _pending.Clear();
             try { await Task.Delay(1000, ct); } catch (OperationCanceledException) { break; }
+        }
+    }
+
+    /// <summary>名前付きパイプが作られているか (開かずに調べる。開くと engine 側に接続が 1 回届く)</summary>
+    private static bool PipeExists()
+    {
+        try
+        {
+            return Directory.EnumerateFiles(@"\\.\pipe\").Any(p => string.Equals(Path.GetFileName(p), PipeName, StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return true;  // 調べられなければ従来どおり接続を試す
         }
     }
 

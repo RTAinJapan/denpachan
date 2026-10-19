@@ -141,6 +141,8 @@ private:
     int64_t last_disk_check_qpc_ = 0;
     bool disk_full_ = false;
     int64_t retry_open_qpc_ = 0;  // ファイルやエンコーダを開けなかったとき、次に試す時刻 (毎フレーム試さない)
+    int open_failures_ = 0;       // 続けて開けなかった回数 (間隔を伸ばす。設定・接続が変われば 0 に)
+    void schedule_retry(int64_t now);
     int64_t last_size_check_qpc_ = 0;
     uint64_t seq_ = 0;
     std::vector<std::unique_ptr<ExternalEncoder>> finishing_;  // 入力を閉じて書き終わりを待っている ffmpeg

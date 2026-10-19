@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 #include "denpachan/win_util.h"
 
 namespace denpachan::worker {
@@ -32,6 +34,7 @@ Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output,
       audio_(audio),
       metrics_(metrics),
       audio_frame_(av_frame_alloc()),
+      allow_hw_(allow_hw),
       hw_enabled_(allow_hw) {
     if (hw_enabled_) {
         AVBufferRef* dev = nullptr;
@@ -123,7 +126,20 @@ void Decoder::run() {
         const uint64_t session = input_.wait_session(last);
         if (session == 0) break;  // 停止
         last = session;
-        run_session(session);
+        // 接続が続いている間は、読めなくなっても (解析の時間内に映像が無い、デコーダを開けない、
+        // 壊れたデータ) 同じ接続で読み直す。次の接続を待つだけだと、送出側が繋ぎ直すまで映像が出ない
+        int64_t backoff_ms = 500;
+        for (;;) {
+            if (run_session(session)) backoff_ms = 500;  // 読めていたなら、間隔は最初から
+            if (stop_ || !input_.session_alive(session)) break;
+            for (int64_t waited = 0; waited < backoff_ms && !stop_ && input_.session_alive(session); waited += 100) Sleep(100);
+            backoff_ms = std::min<int64_t>(backoff_ms * 2, 5000);
+            if (resync_) {
+                resync_();  // 新しいセッションになるので wait_session で待つ
+                break;
+            }
+            spdlog::info("decoder: retrying the current connection");
+        }
     }
 }
 
@@ -267,14 +283,16 @@ void Decoder::decode_audio(const AVPacket* pkt, const AVStream* stream, uint64_t
     }
 }
 
-void Decoder::run_session(uint64_t session) {
+bool Decoder::run_session(uint64_t session) {
     session_ = session;
     last_pts_us_ = AV_NOPTS_VALUE;
+    hw_enabled_ = allow_hw_ && hw_device_ != nullptr;  // 前の接続で HW をやめていても、新しい接続では試し直す
+    consecutive_errors_ = 0;
     const bool url_mode = !url_.empty();
 
     AVIOContext* pb = nullptr;
     AVFormatContext* fmt = avformat_alloc_context();
-    if (!fmt) return;
+    if (!fmt) return false;
     if (!url_mode) {
         // ByteQueue から読む (SRT / RTMP push)
         auto* io_buffer = static_cast<uint8_t*>(av_malloc(kIoBufferSize));
@@ -282,7 +300,7 @@ void Decoder::run_session(uint64_t session) {
         if (!io_buffer || !pb) {
             spdlog::error("decoder: out of memory");
             avformat_free_context(fmt);
-            return;
+            return false;
         }
         fmt->pb = pb;
         fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
@@ -314,7 +332,7 @@ void Decoder::run_session(uint64_t session) {
     if (err < 0) {
         if (!stop_) spdlog::warn("decoder: open input failed: {}", av_error_string(err));
         cleanup();
-        return;
+        return false;
     }
     if (url_mode) {
         metrics_.connected = true;
@@ -329,7 +347,7 @@ void Decoder::run_session(uint64_t session) {
     if (err < 0) {
         if (!stop_) spdlog::warn("decoder: stream info failed: {}", av_error_string(err));
         cleanup();
-        return;
+        return false;
     }
     if (url_mode) io_deadline_qpc_ = qpc_now() + qpc_from_ms(kReadTimeoutMs);
 
@@ -361,7 +379,7 @@ void Decoder::run_session(uint64_t session) {
     if (vidx >= 0) {
         if (!start_video(vidx)) {
             cleanup();
-            return;
+            return false;
         }
     } else {
         spdlog::info("decoder: waiting for the video stream (only {} so far)",
@@ -397,6 +415,7 @@ void Decoder::run_session(uint64_t session) {
         return r;
     };
 
+    bool started = false;  // 映像を 1 枚でもデコーダに渡せた
     while (!stop_ && (codec_ || vidx < 0)) {
         err = av_read_frame(fmt, pkt.get());  // ネットワーク待ちでブロックしうる
         if (err < 0) {                        // セッション終了 (EOF) / 停止
@@ -451,12 +470,14 @@ void Decoder::run_session(uint64_t session) {
             err = avcodec_send_packet(codec_.get(), pkt.get());
         }
         av_packet_unref(pkt.get());
+        started = true;
         if (err < 0) on_error(err);
         if (!codec_) break;
         const int r = drain();
         if (r != AVERROR(EAGAIN) && r != AVERROR_EOF) on_error(r);
     }
     cleanup();
+    return started;
 }
 
 }  // namespace denpachan::worker

@@ -41,6 +41,7 @@ private:
     };
     std::map<std::wstring, Device> devices_;  // デバイス ID ごと
     std::map<int, std::string> missing_;      // チャンネル → 見つからないデバイス名
+    std::map<int, std::string> logged_missing_;  // ログに出した missing_ (変わったときだけ出す)
 };
 
 }  // namespace denpachan::engine

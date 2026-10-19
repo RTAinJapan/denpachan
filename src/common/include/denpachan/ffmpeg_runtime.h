@@ -48,7 +48,9 @@ inline Result check(std::initializer_list<Lib> libs) {
     std::string missing;
     for (const Lib& lib : libs) {
         const std::string dll = dll_name(lib);
-        if (!LoadLibraryW(std::wstring(dll.begin(), dll.end()).c_str())) {  // 読めたものはそのまま残す (後で使う)
+        const std::wstring wdll(dll.begin(), dll.end());
+        // 読めたものはそのまま残す (後で使う)。確かめ直しのたびに参照カウントを増やさない
+        if (!GetModuleHandleW(wdll.c_str()) && !LoadLibraryW(wdll.c_str())) {
             if (!missing.empty()) missing += ", ";
             missing += dll;
         }

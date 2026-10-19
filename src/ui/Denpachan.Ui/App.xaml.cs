@@ -18,14 +18,34 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        MainWindow? window = null;
+        var showingError = false;
+        var lastError = "";
+        var lastErrorAt = DateTime.MinValue;
         DispatcherUnhandledException += (_, args) =>
         {
-            // UI の不具合で配信を止めないよう、落とさずに知らせる (engine / worker は別プロセス)
-            MessageBox.Show(args.Exception.Message, "denpachan", MessageBoxButton.OK, MessageBoxImage.Error);
+            // UI の不具合で配信を止めないよう、落とさずに知らせる (engine / worker は別プロセス)。
+            // 毎秒の状態更新で同じ例外が続くと、ダイアログの中でまた例外が起きてダイアログが積み重なるので、
+            // 表示中・同じ内容が続く間はイベントログに出すだけにする
             args.Handled = true;
+            var message = args.Exception.Message;
+            var repeated = message == lastError && DateTime.Now - lastErrorAt < TimeSpan.FromMinutes(1);
+            lastError = message;
+            lastErrorAt = DateTime.Now;
+            window?.ViewModel.Log($"画面のエラー: {message}", true);
+            if (showingError || repeated) return;
+            showingError = true;
+            try
+            {
+                MessageBox.Show(message, "denpachan", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                showingError = false;
+            }
         };
 
-        var window = new MainWindow();
+        window = new MainWindow();
         string? screenshot = null;
         var delay = 6.0;
         var settingsFor = 0;  // 試験用: このチャンネルの設定画面を撮る (0 = メイン画面)

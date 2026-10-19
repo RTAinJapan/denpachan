@@ -28,8 +28,15 @@ inline int64_t qpc_now() {
     return c.QuadPart;
 }
 
-inline int64_t qpc_from_us(int64_t us) { return us * qpc_freq() / 1'000'000; }
-inline int64_t qpc_to_us(int64_t ticks) { return ticks * 1'000'000 / qpc_freq(); }
+// 整数部と余りを分けて計算する (先に掛けると、10 MHz の QPC では 10.7 日分の差で int64 が溢れる)
+inline int64_t qpc_from_us(int64_t us) {
+    const int64_t f = qpc_freq();
+    return (us / 1'000'000) * f + (us % 1'000'000) * f / 1'000'000;
+}
+inline int64_t qpc_to_us(int64_t ticks) {
+    const int64_t f = qpc_freq();
+    return (ticks / f) * 1'000'000 + (ticks % f) * 1'000'000 / f;
+}
 inline int64_t qpc_from_ms(int64_t ms) { return qpc_from_us(ms * 1000); }
 
 // ---- HANDLE の RAII ----

@@ -79,9 +79,11 @@ void IpcServer::accept_loop() {
         client->pipe = std::move(pipe_guard);
         client->thread = std::thread(&IpcServer::client_loop, this, client);
         std::lock_guard lk(clients_mutex_);
-        // 切れたクライアントを片付ける
+        // 終わったクライアントを片付ける。alive だけを見て join すると、書き込みタイムアウトで
+        // alive を下ろされたが ReadFile で待っているクライアントを待つことになり、
+        // clients_mutex_ を持ったまま止まる (broadcast() も止まる)
         for (auto it = clients_.begin(); it != clients_.end();) {
-            if (!(*it)->alive) {
+            if ((*it)->finished) {
                 if ((*it)->thread.joinable()) (*it)->thread.join();
                 it = clients_.erase(it);
             } else {
@@ -90,6 +92,14 @@ void IpcServer::accept_loop() {
         }
         clients_.push_back(client);
     }
+}
+
+// 書けなくなったクライアントを切る。読み取りスレッドが ReadFile で待っていても、
+// 進行中の I/O を全部取り消して切断すれば client_loop が抜ける
+void IpcServer::drop_client(Client& client) {
+    client.alive = false;
+    CancelIoEx(client.pipe.get(), nullptr);
+    DisconnectNamedPipe(client.pipe.get());
 }
 
 bool IpcServer::write_line(Client& client, const std::string& line) {
@@ -102,18 +112,18 @@ bool IpcServer::write_line(Client& client, const std::string& line) {
     DWORD written = 0;
     if (!WriteFile(client.pipe.get(), data.data(), DWORD(data.size()), nullptr, &ov)) {
         if (GetLastError() != ERROR_IO_PENDING) {
-            client.alive = false;
+            drop_client(client);
             return false;
         }
         if (WaitForSingleObject(event.get(), kWriteTimeoutMs) != WAIT_OBJECT_0) {
             CancelIoEx(client.pipe.get(), &ov);
             GetOverlappedResult(client.pipe.get(), &ov, &written, TRUE);
-            client.alive = false;
+            drop_client(client);
             return false;
         }
     }
     if (!GetOverlappedResult(client.pipe.get(), &ov, &written, FALSE) || written != data.size()) {
-        client.alive = false;
+        drop_client(client);
         return false;
     }
     return true;
@@ -163,6 +173,7 @@ void IpcServer::client_loop(std::shared_ptr<Client> client) {
     }
     client->alive = false;
     DisconnectNamedPipe(client->pipe.get());
+    client->finished = true;
 }
 
 void IpcServer::broadcast(const json& event) {

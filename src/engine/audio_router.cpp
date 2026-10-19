@@ -87,7 +87,10 @@ void AudioRouter::apply(const Config& config) {
             it->second.routes = plan.routes;
         }
     }
-    for (const auto& [ch, name] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, name);
+    if (missing_ != logged_missing_) {  // 5 秒ごとの apply で毎回出さない
+        for (const auto& [ch, name] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, name);
+        logged_missing_ = missing_;
+    }
 }
 
 void AudioRouter::set_mute(int ch, bool mute) {

@@ -190,7 +190,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
         if (!resync_pending_) {
             if (passthrough_) {
                 const double threshold = kSlipThresholdSec * kSampleRate;
-                frames_since_slip_ += frames;
+                frames_since_slip_ = std::min(frames_since_slip_ + frames, kMinSlipIntervalFrames);  // 溢れさせない
                 if (frames_since_slip_ >= kMinSlipIntervalFrames) {
                     if (error_avg_ > threshold) slip = 1;        // 早く鳴っている → 1 サンプル重複
                     else if (error_avg_ < -threshold) slip = -1;  // 遅れている → 1 サンプル間引き

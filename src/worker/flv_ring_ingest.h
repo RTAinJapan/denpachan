@@ -19,6 +19,8 @@ public:
 
     bool start();
     void stop();
+    // 今の publish を区切り直す (次のキーフレームから新しいセッションにする)。他のスレッドから呼べる
+    void request_resync() { resync_.store(true); }
 
 private:
     void run();
@@ -28,6 +30,7 @@ private:
     ChannelMetrics& metrics_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
+    std::atomic<bool> resync_{false};
 };
 
 }  // namespace denpachan::worker

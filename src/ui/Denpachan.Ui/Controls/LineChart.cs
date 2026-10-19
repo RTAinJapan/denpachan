@@ -51,6 +51,7 @@ public sealed class LineChart : FrameworkElement
         for (var i = 1; i < 4; i++) dc.DrawLine(gridPen, new Point(0, h * i / 4), new Point(w, h * i / 4));
 
         var values = Values;
+        if (values != null && Capacity > 0 && values.Count > Capacity) values = values.TakeLast(Capacity).ToArray();  // 直近 Capacity 点だけ
         var max = Max;
         if (values is { Count: > 0 })
         {

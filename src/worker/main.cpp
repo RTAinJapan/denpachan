@@ -368,6 +368,7 @@ int main(int argc, char** argv) {
     }
     Decoder decoder(input_format, bytes, frames, audio.get(), metrics, opts->hw);
     if (opts->input == "url") decoder.set_url(opts->url);
+    if (flv_ingest) decoder.set_resync([&] { flv_ingest->request_resync(); });
     Recorder recorder(opts->ch, metrics);
     decoder.set_recorder(&recorder);
     recorder.start();

@@ -363,8 +363,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         var audioIn = st.At("audioIn");
         var audioOut = st.At("audioOut");
         var peak = audioOut?.At("peakDb") as JsonArray ?? audioIn?.At("peakDb") as JsonArray;
-        PeakL = peak is { Count: 2 } ? peak[0]!.GetValue<double>() : -100;
-        PeakR = peak is { Count: 2 } ? peak[1]!.GetValue<double>() : -100;
+        PeakL = peak is { Count: 2 } ? PeakOf(peak[0]) : -100;
+        PeakR = peak is { Count: 2 } ? PeakOf(peak[1]) : -100;
         AudioLine = audioOut switch
         {
             null => "音声出力なし",
@@ -384,7 +384,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         RecordKind = recState;
         RecordLine = recState switch
         {
-            "recording" => $"● REC {TimeSpan.FromSeconds(record.Num("seconds")):hh\\:mm\\:ss}  {FormatBytes(record.Num("bytes"))}  {Path.GetFileName(record.Str("file"))}",
+            "recording" => $"● REC {FormatDuration(record.Num("seconds"))}  {FormatBytes(record.Num("bytes"))}  {Path.GetFileName(record.Str("file"))}",
             "waiting" => "● 録画待機 (映像を待っています)",
             "error" => $"録画エラー: {record.Str("error")}",
             _ => "",
@@ -432,6 +432,16 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (recommended < effective) return text + $"。今の {effective} ms から下げられます";
         if (recommended > effective) return text + $"。今の {effective} ms では足りない可能性があります";
         return text;
+    }
+
+    /// <summary>経過時間を h:mm:ss で (TimeSpan の "hh" は 24 時間で 0 に戻るので使わない)</summary>
+    private static double PeakOf(JsonNode? v) => v is JsonValue j && j.TryGetValue<double>(out var d) && double.IsFinite(d) ? d : -100;
+
+    private static string FormatDuration(double seconds)
+    {
+        if (!double.IsFinite(seconds) || seconds < 0) seconds = 0;
+        var t = TimeSpan.FromSeconds(seconds);
+        return $"{(long)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}";
     }
 
     private static string FormatBytes(double b) =>
@@ -496,7 +506,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             Add("録画サイズ / 捨てた数", $"{FormatBytes(rec.Num("bytes"))} / {rec.Num("dropped"):0}");
             if (rec.Str("error") is { Length: > 0 } recErr) Add("録画エラー", recErr);
         }
-        Add("worker", $"{worker.Str("state")} pid {worker.Num("pid"):0}  稼働 {TimeSpan.FromSeconds(worker.Num("uptimeSec")):hh\\:mm\\:ss}  再起動 {worker.Num("restarts"):0} 回");
+        Add("worker", $"{worker.Str("state")} pid {worker.Num("pid"):0}  稼働 {FormatDuration(worker.Num("uptimeSec"))}  再起動 {worker.Num("restarts"):0} 回");
         if (worker.Str("lastEvent") is { Length: > 0 } ev) Add("直近の異常", ev);
         return rows;
     }

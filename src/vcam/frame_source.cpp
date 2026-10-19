@@ -87,7 +87,9 @@ bool FrameSource::writer_live() const {
 }
 
 bool FrameSource::copy_latest(uint8_t* dst) {
-    for (int attempt = 0; attempt < 3; ++attempt) {
+    // 書き手に追い越されたら読み直す。回数を少なくすると、高負荷でこのスレッドが止められたときに
+    // フレームがあるのに NO SIGNAL を 1 枚出してしまう
+    for (int attempt = 0; attempt < 8; ++attempt) {
         const uint64_t seq = header_->write_seq.load(std::memory_order_acquire);
         if (seq == 0) return false;
         const int slot = int(seq % kNumSlots);

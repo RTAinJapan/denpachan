@@ -121,6 +121,7 @@ bool WorkerProcess::spawn_locked() {
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(exe_.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
                         &pi)) {
+        started_qpc_ = 0;  // 前のプロセスの起動時刻を「60 秒動いた」と数えない (間隔が 500 ms に張り付く)
         schedule_restart_locked("cannot start worker (error " + std::to_string(GetLastError()) + ")");
         return false;
     }

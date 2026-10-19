@@ -7,6 +7,7 @@
 // 音声は 48kHz / float32 / ステレオに変換して AudioWriter に渡す。
 
 #include <atomic>
+#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -34,6 +35,9 @@ public:
     void set_url(std::string url);
     // 録画に受信パケット / デコード結果を渡す。start() の前に呼ぶ。
     void set_recorder(Recorder* recorder) { recorder_ = recorder; }
+    // 接続は生きているのにストリームを読み始められなかったとき (FLV は途中からでは読めない) に、
+    // 受信側に区切り直し (次のキーフレームから新しいセッション) を頼む。start() の前に呼ぶ。
+    void set_resync(std::function<void()> resync) { resync_ = std::move(resync); }
 
     void start();
     void stop();
@@ -41,7 +45,7 @@ public:
 private:
     void run();
     void run_url_loop();
-    void run_session(uint64_t session);
+    bool run_session(uint64_t session);  // false = 読み始められずに終わった
     bool open_decoder(const AVStream* stream);
     void handle_frame(AVFrame* frame, const AVStream* stream, uint64_t session);
     bool open_audio_decoder(const AVStream* stream);
@@ -58,6 +62,7 @@ private:
     AudioWriter* audio_;  // nullptr = 音声を出さない
     Recorder* recorder_ = nullptr;
     ChannelMetrics& metrics_;
+    std::function<void()> resync_;
 
     CodecContextPtr audio_codec_;
     FramePtr audio_frame_;
@@ -67,7 +72,8 @@ private:
     int swr_in_rate_ = 0;
     std::vector<float> audio_buf_;
 
-    bool hw_enabled_;
+    const bool allow_hw_;
+    bool hw_enabled_;  // このセッションで HW デコードを使うか (キーフレームの失敗が続いたらやめる)
     BufferRefPtr hw_device_;
     CodecContextPtr codec_;
     int consecutive_errors_ = 0;  // キーフレームのデコードが続けて失敗した回数 (成功で 0)

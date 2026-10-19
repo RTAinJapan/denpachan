@@ -39,12 +39,14 @@ private:
         UniqueHandle pipe;
         std::mutex write_mutex;
         std::atomic<bool> alive{true};
+        std::atomic<bool> finished{false};  // client_loop を抜けた (join してよい)
         std::thread thread;
     };
 
     void accept_loop();
     void client_loop(std::shared_ptr<Client> client);
     bool write_line(Client& client, const std::string& line);
+    static void drop_client(Client& client);
     HANDLE create_pipe();
 
     Handler handler_;

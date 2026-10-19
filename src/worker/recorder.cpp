@@ -414,6 +414,7 @@ void Recorder::process(Item& item) {
         config_ = n;
         disk_full_ = false;
         retry_open_qpc_ = 0;
+        open_failures_ = 0;
         need_keyframe_ = true;  // 途中から書き始めるときはキーフレームから
         {
             std::lock_guard lk(metrics_.mutex);
@@ -432,6 +433,7 @@ void Recorder::process(Item& item) {
         }
         info_ = item.info;
         retry_open_qpc_ = 0;
+        open_failures_ = 0;
         break;
     case Item::Kind::VideoPacket: {
         if (!config_.enabled || !uses_packets(config_) || disk_full_ || !info_ || !info_->video) break;
@@ -481,10 +483,19 @@ bool Recorder::try_open_segment(const AVFrame* first_frame) {
     if (retry_open_qpc_ != 0 && now < retry_open_qpc_) return false;
     if (open_segment(first_frame)) {
         retry_open_qpc_ = 0;
+        open_failures_ = 0;
         return true;
     }
-    retry_open_qpc_ = now + qpc_from_ms(10'000);  // 開けなかったら 10 秒後にまた試す (GPU の空き待ちなど)
+    schedule_retry(now);
     return false;
+}
+
+// 開けなかったら間を空けてまた試す (GPU の空き待ちなど)。10 秒から始めて倍々に、最長 5 分。
+// 同じ失敗を 10 秒ごとに繰り返すと、1 日に数千個の空ファイルと ffmpeg の起動になる
+void Recorder::schedule_retry(int64_t now) {
+    ++open_failures_;
+    const int64_t delay_ms = std::min<int64_t>(10'000LL << std::min(open_failures_ - 1, 5), 300'000);
+    retry_open_qpc_ = now + qpc_from_ms(delay_ms);
 }
 
 int64_t Recorder::frame_us() const {
@@ -534,8 +545,13 @@ void Recorder::housekeeping() {
         DWORD code = 0;
         if (segment_->ext->exited(code)) {
             set_error("ffmpeg が終了しました (" + std::to_string(code) + "): " + segment_->ext->last_message());
+            const std::string path8 = segment_->path;
             close_segment("ffmpeg exited");
-            retry_open_qpc_ = now + qpc_from_ms(10'000);
+            if (file_size(path8) == 0) {  // 何も書けていない
+                std::error_code ec;
+                std::filesystem::remove(utf8_path(path8), ec);
+            }
+            schedule_retry(now);
         } else if (now - last_size_check_qpc_ > qpc_from_ms(1000)) {
             last_size_check_qpc_ = now;
             metrics_.rec_bytes = file_size(segment_->path);
@@ -617,6 +633,9 @@ bool Recorder::open_segment(const AVFrame* first_frame) {
         av_dict_free(&opts);
         if (err < 0) {
             set_error("cannot write header: " + av_error_string(err));
+            avio_closep(&seg->oc->pb);
+            std::error_code ec;
+            std::filesystem::remove(path, ec);  // 空のファイルを残さない
             return false;
         }
     }

@@ -72,6 +72,8 @@ DeviceStatus DeviceOutput::status() {
 
 bool DeviceOutput::open() {
     const std::string name = to_utf8(options_.name);
+    // 開けない理由は最初と 1 分ごとに出す (1 秒ごとに試すので、毎回出すとログの履歴が埋まる)
+    const auto fail_level = open_failures_ == 0 || open_failures_ % 60 == 0 ? spdlog::level::err : spdlog::level::debug;
     auto dev = open_audio_device(options_.id);
     if (!dev) return false;
     auto activate = [&]() -> bool {
@@ -127,7 +129,7 @@ bool DeviceOutput::open() {
             }
         }
         if (!found) {
-            spdlog::error("audio [{}]: no exclusive-mode format supported ({} Hz, {} ch)", name, rate_, channels_);
+            spdlog::log(fail_level, "audio [{}]: no exclusive-mode format supported ({} Hz, {} ch)", name, rate_, channels_);
             return false;
         }
         REFERENCE_TIME def_period = 0, min_period = 0;
@@ -150,7 +152,7 @@ bool DeviceOutput::open() {
         } else if (mix->wBitsPerSample == 16) {
             sample_type_ = SampleType::Int16;
         } else {
-            spdlog::error("audio [{}]: unsupported mix format ({} bit)", name, mix->wBitsPerSample);
+            spdlog::log(fail_level, "audio [{}]: unsupported mix format ({} bit)", name, mix->wBitsPerSample);
             return false;
         }
         ComPtr<IAudioClient3> client3;
@@ -169,8 +171,8 @@ bool DeviceOutput::open() {
         }
     }
     if (FAILED(hr)) {
-        spdlog::error("audio [{}]: initialize ({}) failed: 0x{:08x}", name, exclusive_ ? "exclusive" : "shared",
-                      uint32_t(hr));
+        spdlog::log(fail_level, "audio [{}]: initialize ({}) failed: 0x{:08x}", name, exclusive_ ? "exclusive" : "shared",
+                    uint32_t(hr));
         return false;
     }
 
@@ -305,9 +307,11 @@ void DeviceOutput::run() {
     while (!stop_) {
         if (!open()) {
             close();
+            ++open_failures_;
             WaitForSingleObject(stop_event_.get(), 1000);  // デバイスが戻るまで 1 秒ごとに試す
             continue;
         }
+        open_failures_ = 0;
         // 排他モードで、デバイスからの呼び出しが周期どおりに来ているかを見る
         const double expected_calls = double(rate_) / buffer_frames_;
         int64_t check_start = qpc_now();

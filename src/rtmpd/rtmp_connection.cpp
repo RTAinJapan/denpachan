@@ -17,6 +17,7 @@ constexpr uint32_t kMaxChunkSize = 16 * 1024 * 1024;
 constexpr uint32_t kOutChunkSize = 4096;
 constexpr uint32_t kWindowAckSize = 2'500'000;
 constexpr uint32_t kPublishStreamId = 1;
+constexpr size_t kMaxChunkStreams = 64;  // 1 接続あたりのチャンクストリーム数 (送出側は数個しか使わない)
 
 // メッセージ種別
 constexpr uint8_t kSetChunkSize = 1;
@@ -186,6 +187,10 @@ bool Connection::read_chunk() {
         if (!recv_exact(b, 2)) return false;
         csid = 64 + b[0] + (uint32_t(b[1]) << 8);
     }
+    if (streams_.size() >= kMaxChunkStreams && !streams_.contains(csid)) {
+        spdlog::warn("RTMP: {} too many chunk streams", peer_);
+        return false;
+    }
     auto& cs = streams_[csid];
     const bool new_message = cs.payload.empty();
 
@@ -200,7 +205,7 @@ bool Connection::read_chunk() {
     if (fmt <= 1) {
         cs.length = be24(h + 3);
         cs.type = h[6];
-        if (cs.length > kMaxMessageSize) {
+        if (cs.length >= kMaxMessageSize) {  // FLV のタグ長は 24 bit
             spdlog::warn("RTMP: {} message too large ({} bytes)", peer_, cs.length);
             return false;
         }
@@ -251,7 +256,9 @@ bool Connection::handle_message(uint8_t type, uint32_t stream_id, uint32_t times
         }
         return true;
     case kAbort:
-        if (payload.size() >= 4) streams_[be32(payload.data())].payload.clear();
+        if (payload.size() >= 4) {
+            if (auto it = streams_.find(be32(payload.data())); it != streams_.end()) it->second.payload.clear();
+        }
         return true;
     case kWindowAck:
         if (payload.size() >= 4) ack_window_ = be32(payload.data());
@@ -374,6 +381,8 @@ bool Connection::handle_command(const std::vector<AmfValue>& args) {
 void Connection::run() {
     DWORD timeout = 500;  // ms。この間隔で切断要求と無通信を確かめる
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    DWORD send_timeout = 5000;  // 受け取らない相手で send() に固まらない
+    setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&send_timeout), sizeof(send_timeout));
     last_data_qpc_ = qpc_now();
     try {
         if (handshake()) {
