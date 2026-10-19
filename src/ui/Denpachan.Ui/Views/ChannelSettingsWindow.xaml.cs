@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Denpachan.Ui.Infrastructure;
 using Denpachan.Ui.ViewModels;
+using static Denpachan.Ui.Infrastructure.Loc;
 
 namespace Denpachan.Ui.Views;
 
@@ -22,7 +23,7 @@ public partial class ChannelSettingsWindow : Window
         _main = main;
         _channel = channel;
         _rtmpPort = main.GeneralConfig.At("rtmpServer").Int("port", 1935);
-        Title = $"{channel.Name} の設定";
+        Title = F("channel.title", ("name", channel.Name));
 
         var c = channel.Config!;
         var s = c.At("source");
@@ -33,15 +34,15 @@ public partial class ChannelSettingsWindow : Window
         LatencyBox.Text = s.Int("latencyMs", 120).ToString();
         if (channel.SrtRecommendation.Length > 0)
         {
-            LatencyAdvice.Text = "推奨: " + channel.SrtRecommendation;
+            LatencyAdvice.Text = F("channel.latencyAdvice", ("advice", channel.SrtRecommendation));
             ApplyLatencyButton.IsEnabled = channel.SrtRecommendedLatencyMs > 0;
         }
         else
         {
-            LatencyAdvice.Text = "受信中に、受信状況 (RTT とロス率) から推奨値を出します";
+            LatencyAdvice.Text = T("channel.latencyAdviceIdle");
             ApplyLatencyButton.Visibility = Visibility.Collapsed;
         }
-        PassphraseHint.Text = s.Bool("hasPassphrase") ? "設定済み (空欄なら変更しない)" : "未設定";
+        PassphraseHint.Text = T(s.Bool("hasPassphrase") ? "channel.passphraseSet" : "channel.passphraseUnset");
         Select(PbkeylenBox, s.Int("pbkeylen").ToString());
         StreamIdBox.Text = s.Str("streamId");
         AppBox.Text = s.Str("app", "live");
@@ -108,7 +109,7 @@ public partial class ChannelSettingsWindow : Window
 
     private void BrowseDir_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "録画の保存先" };
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = T("record.dirDialog") };
         if (System.IO.Directory.Exists(RecordDirBox.Text)) dialog.InitialDirectory = RecordDirBox.Text;
         if (dialog.ShowDialog(this) == true) RecordDirBox.Text = dialog.FolderName;
     }
@@ -137,7 +138,7 @@ public partial class ChannelSettingsWindow : Window
         SrtPanel.Visibility = input.StartsWith("srt") ? Visibility.Visible : Visibility.Collapsed;
         PushPanel.Visibility = input == "rtmp:push" ? Visibility.Visible : Visibility.Collapsed;
         PullPanel.Visibility = input == "rtmp:pull" ? Visibility.Visible : Visibility.Collapsed;
-        HostLabel.Content = input == "srt:caller" ? "接続先" : "待ち受けアドレス";
+        HostLabel.Content = T(input == "srt:caller" ? "channel.hostCaller" : "channel.hostListener");
         if (input == "rtmp:push" && string.IsNullOrEmpty(KeyBox.Text)) KeyBox.Text = NewKey();
     }
 
@@ -186,27 +187,28 @@ public partial class ChannelSettingsWindow : Window
         return "127.0.0.1";
     }
 
-    private static bool TryInt(TextBox box, string name, out int value, List<string> errors)
+    /// <summary>数値の欄を読む。読めなければ、欄の名前 (ラベルと同じ文言のキー) を出してエラーにする</summary>
+    private static bool TryInt(TextBox box, string labelKey, out int value, List<string> errors)
     {
         if (int.TryParse(box.Text.Trim(), out value)) return true;
-        errors.Add($"{name} は数値で入力してください");
+        errors.Add(F("channel.notNumber", ("field", T(labelKey))));
         return false;
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         var errors = new List<string>();
-        TryInt(PortBox, "ポート", out var port, errors);
-        TryInt(LatencyBox, "latency", out var latency, errors);
-        TryInt(BufferBox, "再生バッファ", out var buffer, errors);
-        TryInt(OffsetBox, "音声オフセット", out var offset, errors);
-        TryInt(GapBox, "区切りまでの秒数", out var gap, errors);
-        TryInt(MaxSegmentBox, "最大の長さ", out var maxSegment, errors);
-        TryInt(MinFreeBox, "空き容量の下限", out var minFree, errors);
-        TryInt(BitrateBox, "ビットレート", out var bitrate, errors);
-        TryInt(QpBox, "QP", out var qp, errors);
-        TryInt(GopBox, "キーフレーム間隔", out var gop, errors);
-        TryInt(AudioBitrateBox, "音声ビットレート", out var audioBitrate, errors);
+        TryInt(PortBox, "channel.port", out var port, errors);
+        TryInt(LatencyBox, "channel.latency", out var latency, errors);
+        TryInt(BufferBox, "channel.playoutBuffer", out var buffer, errors);
+        TryInt(OffsetBox, "channel.audioOffset", out var offset, errors);
+        TryInt(GapBox, "record.gap", out var gap, errors);
+        TryInt(MaxSegmentBox, "record.maxSegment", out var maxSegment, errors);
+        TryInt(MinFreeBox, "record.minFree", out var minFree, errors);
+        TryInt(BitrateBox, "record.bitrate", out var bitrate, errors);
+        TryInt(QpBox, "record.qp", out var qp, errors);
+        TryInt(GopBox, "record.gop", out var gop, errors);
+        TryInt(AudioBitrateBox, "record.audioBitrate", out var audioBitrate, errors);
         if (errors.Count > 0)
         {
             ShowError(string.Join("\n", errors));
@@ -277,7 +279,7 @@ public partial class ChannelSettingsWindow : Window
             ShowError(error);
             return;
         }
-        _main.Log($"{_channel.Name}: 設定を変更しました");
+        _main.Log(F("event.channelSettingsSaved", ("name", _channel.Name)));
         DialogResult = true;
     }
 

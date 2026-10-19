@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "audio_devices.h"
+#include "denpachan/ui_message.h"
 
 namespace denpachan::engine {
 
@@ -122,7 +123,7 @@ bool WorkerProcess::spawn_locked() {
     if (!CreateProcessW(exe_.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
                         &pi)) {
         started_qpc_ = 0;  // 前のプロセスの起動時刻を「60 秒動いた」と数えない (間隔が 500 ms に張り付く)
-        schedule_restart_locked("cannot start worker (error " + std::to_string(GetLastError()) + ")");
+        schedule_restart_locked(ui_message("worker.cannotStart", {{"error", std::to_string(GetLastError())}}));
         return false;
     }
     CloseHandle(pi.hThread);
@@ -144,7 +145,7 @@ void WorkerProcess::schedule_restart_locked(const std::string& event) {
     spdlog::warn("[{}]{}; restarting in {} ms", label_, event, delay);
 }
 
-void WorkerProcess::terminate_locked(const char* reason) {
+void WorkerProcess::terminate_locked(const std::string& reason) {
     TerminateProcess(process_.get(), 0xDEAD);
     WaitForSingleObject(process_.get(), 2000);
     process_.reset();
@@ -214,14 +215,14 @@ void WorkerProcess::poll() {
         if (code == worker_status::kExitFfmpegUnavailable) {
             // 再起動しても同じなので、間を空ける (engine が FFmpeg を探し直す)
             ffmpeg_unavailable_ = true;
-            last_event_ = "FFmpeg を読み込めません";
+            last_event_ = ui_message("worker.ffmpegUnavailable");
             next_restart_qpc_ = now + qpc_from_ms(10'000);
             spdlog::warn("[{}]worker cannot load FFmpeg; retrying in 10 s", label_);
             return;
         }
-        char buf[64];
-        snprintf(buf, sizeof(buf), "worker exited (code 0x%lX)", code);
-        schedule_restart_locked(buf);
+        char buf[16];
+        snprintf(buf, sizeof(buf), "0x%lX", code);
+        schedule_restart_locked(ui_message("worker.exited", {{"code", buf}}));
         return;
     }
 
@@ -231,11 +232,11 @@ void WorkerProcess::poll() {
     if (!st || st->pid.load() != pid_) return;
     const int64_t limit = qpc_from_ms(kHangTimeoutMs);
     if (now - st->ingest_heartbeat_qpc.load() > limit) {
-        terminate_locked("receive thread not responding");
+        terminate_locked(ui_message("worker.hangReceive"));
     } else if (now - st->playout_heartbeat_qpc.load() > limit) {
-        terminate_locked("output thread not responding");
+        terminate_locked(ui_message("worker.hangOutput"));
     } else if (const int64_t busy = st->decoder_busy_since_qpc.load(); busy != 0 && now - busy > limit) {
-        terminate_locked("decoder not responding");
+        terminate_locked(ui_message("worker.hangDecoder"));
     }
 }
 

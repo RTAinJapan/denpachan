@@ -22,7 +22,12 @@
        XAML はビルド時に BAML になるのでホットリロードが効かない。ホットリロードを切って (no-hot-reload)、
        ビルドし直して起動し直す -->
   <ItemGroup>
-    <Watch Include="**\*.xaml" Exclude="bin\**;obj\**" />
+    <Watch Include="**\*.xaml;Lang\*.json" Exclude="bin\**;obj\**" />
+  </ItemGroup>
+
+  <!-- 画面の文言 (Infrastructure/Loc.cs)。言語ごとに 1 ファイルで、exe に埋め込む -->
+  <ItemGroup>
+    <EmbeddedResource Include="Lang\*.json" LogicalName="lang.%(Filename).json" />
   </ItemGroup>
 
 </Project>

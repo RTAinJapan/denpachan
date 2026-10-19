@@ -57,7 +57,7 @@ public partial class App : Application
                 var repeated = message == lastError && DateTime.Now - lastErrorAt < TimeSpan.FromMinutes(1);
                 lastError = message;
                 lastErrorAt = DateTime.Now;
-                try { window?.ViewModel.Log($"画面のエラー: {message}", true); } catch { }
+                try { window?.ViewModel.Log(Loc.F("event.uiError", ("error", message)), true); } catch { }
                 if (!repeated) MessageBox.Show(message, "denpachan", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally

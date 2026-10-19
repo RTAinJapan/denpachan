@@ -8,6 +8,8 @@
 
 #include <algorithm>
 
+#include "denpachan/ui_message.h"
+
 namespace denpachan::worker {
 
 namespace {
@@ -177,7 +179,8 @@ void SrtIngest::run_listener() {
             spdlog::error("SRT: cannot listen on {}:{}: {}", options_.host, options_.port, last_error());
             {
                 std::lock_guard lk(metrics_.mutex);
-                metrics_.last_error = std::string("cannot listen: ") + last_error();
+                metrics_.last_error = ui_message("srt.cannotListen", {{"port", std::to_string(options_.port)},
+                                                                      {"detail", last_error()}});
             }
             if (lsn != SRT_INVALID_SOCK) srt_close(lsn);
             if (!sleep_interruptible(2000)) return;
@@ -255,21 +258,20 @@ void SrtIngest::run_caller() {
         const SRTSOCKET sock = srt_create_socket();
         sockaddr_storage addr{};
         int addr_len = 0;
-        // 繋がらない理由 (画面に出す)。名前が引けない / 応答がない / 拒否された を分ける
+        // 繋がらない理由 (画面に出すメッセージ。ui_message.h)。名前が引けない / 応答がない / 拒否された を分ける
         std::string reason;
         if (sock == SRT_INVALID_SOCK || !configure(sock, false)) {
-            reason = std::string("SRT の準備に失敗しました: ") + last_error();
+            reason = ui_message("srt.setupFailed", {{"detail", last_error()}});
         } else if (!resolve(options_.host, options_.port, false, addr, addr_len)) {
-            reason = "名前を引けません (" + options_.host + ")";
+            reason = ui_message("net.dns", {{"host", options_.host}});
         } else if (srt_connect(sock, reinterpret_cast<sockaddr*>(&addr), addr_len) == SRT_ERROR) {
             const int code = srt_getlasterror(nullptr);
             if (code == SRT_ECONNREJ) {
-                reason = std::string("接続を拒否されました: ") + srt_rejectreason_str(srt_getrejectreason(sock)) +
-                         " (パスフレーズ、Stream ID、相手の許可設定を確かめる)";
+                reason = ui_message("srt.rejected", {{"reason", srt_rejectreason_str(srt_getrejectreason(sock))}});
             } else if (code == SRT_ENOSERVER) {
-                reason = "応答がありません (相手が動いていない、アドレスやポートが違う、ファイアウォール)";
+                reason = ui_message("srt.noResponse");
             } else {
-                reason = std::string("接続できません: ") + last_error();
+                reason = ui_message("srt.cannotConnect", {{"detail", last_error()}});
             }
         }
         if (!reason.empty()) {

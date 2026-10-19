@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using Denpachan.Ui.Infrastructure;
 using Denpachan.Ui.ViewModels;
+using static Denpachan.Ui.Infrastructure.Loc;
 
 namespace Denpachan.Ui.Views;
 
@@ -14,6 +15,12 @@ public partial class GeneralSettingsWindow : Window
     {
         InitializeComponent();
         _main = main;
+        // 言語は画面の設定 (ui.json)。ほかは engine の設定
+        LanguageBox.ItemsSource = new List<Option<string>> { new(Auto, T("general.languageAuto")) }
+            .Concat(Instance.Languages.Select(l => new Option<string>(l.Code, l.Name)))
+            .ToList();
+        LanguageBox.SelectedValue = main.Language;
+        if (LanguageBox.SelectedIndex < 0) LanguageBox.SelectedIndex = 0;
         AvSyncBox.IsChecked = general.Bool("avSync", true);
         MarginBox.Text = general.Int("audioMarginMs", 10).ToString();
         StallBox.Text = general.Int("stallMs", 2000).ToString();
@@ -26,13 +33,13 @@ public partial class GeneralSettingsWindow : Window
 
     private void BrowseFfmpeg_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog { Title = "ffmpeg.exe", Filter = "ffmpeg.exe|ffmpeg.exe|実行ファイル (*.exe)|*.exe" };
+        var dialog = new Microsoft.Win32.OpenFileDialog { Title = "ffmpeg.exe", Filter = T("general.ffmpegFilter") };
         if (dialog.ShowDialog(this) == true) FfmpegBox.Text = dialog.FileName;
     }
 
     private async void CheckFfmpeg_Click(object sender, RoutedEventArgs e)
     {
-        FfmpegStatus.Text = "確認しています…";
+        FfmpegStatus.Text = T("general.ffmpegChecking");
         FfmpegStatus.Foreground = (System.Windows.Media.Brush)FindResource("DimTextBrush");
         var result = await ExternalFfmpeg.CheckAsync(FfmpegBox.Text.Trim());
         FfmpegStatus.Text = result.Message;
@@ -44,9 +51,11 @@ public partial class GeneralSettingsWindow : Window
         if (!int.TryParse(MarginBox.Text, out var margin) || !int.TryParse(StallBox.Text, out var stall) ||
             !int.TryParse(RtmpPortBox.Text, out var port) || !int.TryParse(IdleBox.Text, out var idle))
         {
-            ShowError("数値で入力してください");
+            ShowError(T("general.notNumber"));
             return;
         }
+        // 言語はその場で変える (engine の設定が保存できなくても、画面の言語は変わる)
+        if (LanguageBox.SelectedValue is string language) _main.Language = language;
         var patch = new JsonObject
         {
             ["avSync"] = AvSyncBox.IsChecked == true,
@@ -63,7 +72,7 @@ public partial class GeneralSettingsWindow : Window
             ShowError(error);
             return;
         }
-        _main.Log("全体設定を変更しました");
+        _main.Log(T("event.generalSettingsSaved"));
         DialogResult = true;
     }
 

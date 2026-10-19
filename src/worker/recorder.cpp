@@ -9,6 +9,7 @@
 #include <climits>
 #include <ctime>
 
+#include "denpachan/ui_message.h"
 #include "filename.h"
 
 namespace denpachan::worker {
@@ -356,7 +357,7 @@ void Recorder::run() {
             if (item) process(*item);
             housekeeping();
         } catch (const std::exception& e) {
-            set_error(e.what());
+            set_error(ui_message("rec.failed", {{"detail", e.what()}}));
             close_segment("error");
         }
     }
@@ -378,7 +379,7 @@ void Recorder::reap_external() {
             continue;
         }
         if (code != 0) {
-            set_error("ffmpeg が異常終了しました (" + std::to_string(code) + "): " + (*it)->last_message());
+            set_error(ui_message("rec.ffmpegCrashed", {{"code", std::to_string(code)}, {"detail", (*it)->last_message()}}));
         } else {
             spdlog::info("record: ffmpeg (pid {}) finished", (*it)->pid());
         }
@@ -528,7 +529,7 @@ void Recorder::housekeeping() {
     if (config_.enabled && now - last_disk_check_qpc_ > qpc_from_ms(10'000)) {
         last_disk_check_qpc_ = now;
         if (free_gb(config_.dir) < config_.min_free_gb) {
-            if (!disk_full_) set_error("ディスクの空きが " + std::to_string(config_.min_free_gb) + " GB を切ったため録画を止めました");
+            if (!disk_full_) set_error(ui_message("rec.diskFull", {{"gb", std::to_string(config_.min_free_gb)}}));
             disk_full_ = true;
             close_segment("disk almost full");
         } else if (disk_full_) {
@@ -544,7 +545,7 @@ void Recorder::housekeeping() {
         // 外部 ffmpeg: 書いているのは ffmpeg なので、ファイルの大きさを 1 秒ごとに見る。落ちていたらエラーにする
         DWORD code = 0;
         if (segment_->ext->exited(code)) {
-            set_error("ffmpeg が終了しました (" + std::to_string(code) + "): " + segment_->ext->last_message());
+            set_error(ui_message("rec.ffmpegExited", {{"code", std::to_string(code)}, {"detail", segment_->ext->last_message()}}));
             const std::string path8 = segment_->path;
             close_segment("ffmpeg exited");
             if (file_size(path8) == 0) {  // 何も書けていない
@@ -577,7 +578,7 @@ bool Recorder::open_segment(const AVFrame* first_frame) {
     if (!info_) return false;
     if (free_gb(config_.dir) < config_.min_free_gb) {
         disk_full_ = true;
-        set_error("ディスクの空きが " + std::to_string(config_.min_free_gb) + " GB を切っているため録画できません");
+        set_error(ui_message("rec.diskLow", {{"gb", std::to_string(config_.min_free_gb)}}));
         return false;
     }
     const bool encode = config_.mode == "encode";
@@ -613,7 +614,7 @@ bool Recorder::open_segment(const AVFrame* first_frame) {
         if (!open_external(*seg)) return false;
     } else {
         if (avformat_alloc_output_context2(&seg->oc, nullptr, config_.container == "ts" ? "mpegts" : "matroska", path8.c_str()) < 0) {
-            set_error("cannot create " + path8);
+            set_error(ui_message("rec.cannotCreate", {{"path", path8}}));
             return false;
         }
         if (encode) {
@@ -624,7 +625,7 @@ bool Recorder::open_segment(const AVFrame* first_frame) {
         seg->oc->flags |= AVFMT_FLAG_FLUSH_PACKETS;  // 落ちても書けたところまで残す
         int err = avio_open(&seg->oc->pb, path8.c_str(), AVIO_FLAG_WRITE);
         if (err < 0) {
-            set_error("cannot open " + path8 + ": " + av_error_string(err));
+            set_error(ui_message("rec.cannotOpen", {{"path", path8}, {"detail", av_error_string(err)}}));
             return false;
         }
         AVDictionary* opts = nullptr;
@@ -632,7 +633,7 @@ bool Recorder::open_segment(const AVFrame* first_frame) {
         err = avformat_write_header(seg->oc, &opts);
         av_dict_free(&opts);
         if (err < 0) {
-            set_error("cannot write header: " + av_error_string(err));
+            set_error(ui_message("rec.cannotWriteHeader", {{"detail", av_error_string(err)}}));
             avio_closep(&seg->oc->pb);
             std::error_code ec;
             std::filesystem::remove(path, ec);  // 空のファイルを残さない
@@ -674,9 +675,8 @@ void Recorder::add_copy_streams(Segment& seg) {
 bool Recorder::open_external(Segment& seg) {
     const std::wstring exe = ExternalEncoder::find(config_.ffmpeg_path);
     if (exe.empty()) {
-        set_error(config_.ffmpeg_path.empty()
-                      ? "ffmpeg.exe が見つかりません (denpachan と同じフォルダか PATH に置くか、全体設定でパスを指定してください)"
-                      : "ffmpeg.exe が見つかりません: " + config_.ffmpeg_path);
+        set_error(config_.ffmpeg_path.empty() ? ui_message("rec.ffmpegNotFound")
+                                              : ui_message("rec.ffmpegNotFoundAt", {{"path", config_.ffmpeg_path}}));
         return false;
     }
     const AVRational rate = info_->video_rate.num > 0 ? info_->video_rate : AVRational{60, 1};
@@ -684,11 +684,11 @@ bool Recorder::open_external(Segment& seg) {
     auto ext = std::make_unique<ExternalEncoder>();
     std::string error;
     if (!ext->start(exe, external_args(config_, seg.path, info_->audio != nullptr, fps), error)) {
-        set_error("ffmpeg を起動できません: " + error);
+        set_error(ui_message("rec.ffmpegStartFailed", {{"detail", error}}));
         return false;
     }
     if (avformat_alloc_output_context2(&seg.oc, nullptr, "nut", nullptr) < 0) {
-        set_error("cannot create the NUT muxer");
+        set_error(ui_message("rec.failed", {{"detail", "cannot create the NUT muxer"}}));
         return false;
     }
     add_copy_streams(seg);
@@ -699,7 +699,7 @@ bool Recorder::open_external(Segment& seg) {
     seg.ext = std::move(ext);
     const int err = avformat_write_header(seg.oc, nullptr);
     if (err < 0) {
-        set_error("ffmpeg に送れません: " + av_error_string(err) + " " + seg.ext->last_message());
+        set_error(ui_message("rec.ffmpegSendFailed", {{"detail", av_error_string(err) + " " + seg.ext->last_message()}}));
         return false;
     }
     spdlog::info("record: external ffmpeg (pid {}) {} {} {}", seg.ext->pid(), path_utf8(exe), config_.video_codec,
@@ -715,7 +715,7 @@ bool Recorder::open_encoders(Segment& seg, const AVFrame* frame) {
     for (const auto& name : encoder_candidates(config_)) {
         const AVCodec* codec = avcodec_find_encoder_by_name(name.c_str());
         if (!codec) {
-            tried += name + " (このビルドには含まれていません) ";
+            tried += name + " (not in this FFmpeg) ";
             continue;
         }
         CodecContextPtr ctx(avcodec_alloc_context3(codec));
@@ -782,7 +782,7 @@ bool Recorder::open_encoders(Segment& seg, const AVFrame* frame) {
         break;
     }
     if (!seg.venc) {
-        set_error("使える GPU エンコーダがありません: " + tried);
+        set_error(ui_message("rec.noGpuEncoder", {{"tried", tried}}));
         return false;
     }
 
@@ -843,7 +843,7 @@ void Recorder::write_packet(int stream_index, AVPacket* pkt, AVRational src_tb) 
     const int err = av_interleaved_write_frame(segment_->oc, p.get());
     if (err < 0) {
         const std::string detail = segment_->ext ? "ffmpeg: " + segment_->ext->last_message() : av_error_string(err);
-        set_error("書き込めません: " + detail);
+        set_error(ui_message("rec.writeFailed", {{"detail", detail}}));
         close_segment("write error");
         retry_open_qpc_ = qpc_now() + qpc_from_ms(10'000);
     }

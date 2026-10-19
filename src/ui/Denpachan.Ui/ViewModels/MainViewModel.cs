@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Denpachan.Ui.Engine;
 using Denpachan.Ui.Infrastructure;
+using static Denpachan.Ui.Infrastructure.Loc;
 
 namespace Denpachan.Ui.ViewModels;
 
@@ -51,6 +52,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ShutdownCommand = new RelayCommand(() => Application.Current.MainWindow?.Close());  // 閉じるときの確認を通る
         SelectCommand = new RelayCommand(p => { if (p is ChannelViewModel ch) Selected = ch; });
         UnregisterVcamCommand = new RelayCommand(UnregisterVcam);
+        Loc.Instance.LanguageChanged += OnLanguageChanged;
+    }
+
+    // ---- 言語 (全体設定で変える。画面の設定 ui.json に保存する) ----
+
+    /// <summary>言語の設定 ("auto" か言語コード)。変えるとその場で画面の文言が変わる</summary>
+    public string Language
+    {
+        get => Loc.Instance.Setting;
+        set
+        {
+            if (value == Loc.Instance.Setting) return;
+            Loc.Instance.SetLanguage(value);
+            OnPropertyChanged();
+            SaveUiSettings();
+        }
+    }
+
+    private JsonNode? _lastState;
+
+    /// <summary>C# で組み立てている文言を作り直す (XAML の {l:Tr} は自分で変わる)</summary>
+    private void OnLanguageChanged()
+    {
+        foreach (var ch in Channels) ch.OnLanguageChanged();
+        OnPropertyChanged(nameof(ConnectionText));
+        if (_lastState != null) OnState(_lastState, relabel: true);
+        _ = SampleSystemAsync();
     }
 
     public void Start()
@@ -80,24 +108,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var error = VcamRegistration.RegisterForUser();
         if (error == null && VcamRegistration.IsRegistered())
         {
-            Log("仮想カメラ (denpachan Cam 1〜4) をこのユーザーに登録しました。OBS では「映像キャプチャデバイス」から選べます");
+            Log(T("event.vcamRegistered"));
         }
         else
         {
-            Log($"仮想カメラを登録できませんでした: {error ?? "登録を確認できません"}", true);
+            Log(F("event.vcamRegisterFailed", ("error", error ?? T("vcam.notConfirmed"))), true);
         }
     }
 
     private void UnregisterVcam()
     {
-        var answer = MessageBox.Show(Application.Current.MainWindow,
-            "このユーザーの仮想カメラ (denpachan Cam 1〜4) の登録を解除します。\n" +
-            "denpachan のフォルダを消す前に使います。次に denpachan を起動すると登録し直されます。\n" +
-            "OBS などで使っている間は、解除すると映らなくなります。よろしいですか?",
+        var answer = MessageBox.Show(Application.Current.MainWindow, T("dialog.unregisterVcam"),
             "denpachan", MessageBoxButton.OKCancel, MessageBoxImage.Question);
         if (answer != MessageBoxResult.OK) return;
         var error = VcamRegistration.UnregisterForUser();
-        Log(error == null ? "仮想カメラの登録を解除しました (このユーザー)" : $"仮想カメラの登録を解除できませんでした: {error}", error != null);
+        Log(error == null ? T("event.vcamUnregistered") : F("event.vcamUnregisterFailed", ("error", error)), error != null);
     }
 
     public ObservableCollection<ChannelViewModel> Channels { get; } = [];
@@ -125,7 +150,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private bool _connected;
     public bool Connected { get => _connected; private set { if (SetProperty(ref _connected, value)) OnPropertyChanged(nameof(ConnectionText)); } }
-    public string ConnectionText => Connected ? "engine: 接続中" : "engine: 接続していません (起動を待っています)";
+    public string ConnectionText => T(Connected ? "main.status.engineConnected" : "main.status.engineDisconnected");
 
     private string _rtmpText = "";
     public string RtmpText { get => _rtmpText; private set => SetProperty(ref _rtmpText, value); }
@@ -161,7 +186,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 if (d.FreeGb < d.MinFreeGb) Raise("error"); else if (d.FreeGb < d.MinFreeGb * 2) Raise("warn");
                 disks.Add($"{d.Root.TrimEnd('\\')} {FormatGb(d.FreeGb)}");
             }
-            SystemText = $"CPU {s.CpuPercent:0}%   メモリ 空き {FormatGb(s.MemoryFreeGb)}" + (disks.Count > 0 ? $"   ディスク {string.Join(", ", disks)}" : "");
+            SystemText = F("main.status.system", ("cpu", $"{s.CpuPercent:0}"), ("memory", FormatGb(s.MemoryFreeGb)))
+                         + (disks.Count > 0 ? F("main.status.disks", ("disks", string.Join(", ", disks))) : "");
             SystemKind = kind;
         }
         catch
@@ -190,7 +216,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private void OnConnectionChanged(bool connected)
     {
         Connected = connected;
-        Log(connected ? "engine に接続しました" : "engine との接続が切れました", !connected);
+        Log(T(connected ? "event.engineConnected" : "event.engineDisconnected"), !connected);
         CommandManager.InvalidateRequerySuggested();
         if (connected)
         {
@@ -199,8 +225,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void OnState(JsonNode state)
+    /// <summary>relabel = 言語を変えたので文言だけ作り直す (イベントログには出さない)</summary>
+    private void OnState(JsonNode state, bool relabel = false)
     {
+        _lastState = state;
         if (state.At("channels") is JsonArray channels)
         {
             foreach (var st in channels)
@@ -208,22 +236,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 var id = st.Int("id");
                 if (id < 1 || id > Channels.Count) continue;
                 var ch = Channels[id - 1];
-                foreach (var e in ch.ApplyState(st!)) Log($"{ch.Name}: {e}", e.Contains("切れ") || e.Contains("途絶") || e.Contains("再起動"));
+                foreach (var e in ch.ApplyState(st!, relabel)) Log(F("event.channel", ("name", ch.Name), ("text", e.Text)), e.Warning);
             }
         }
         var ffmpeg = state.At("ffmpeg");
         var missing = ffmpeg != null && !ffmpeg.Bool("ok", true);
+        var ffmpegMessage = Message(ffmpeg.At("message"));
         if (missing != FfmpegMissing)
         {
-            Log(missing ? ffmpeg.Str("message") : "FFmpeg が見つかりました", missing);
+            if (!relabel) Log(missing ? ffmpegMessage : T("event.ffmpegFound"), missing);
             FfmpegMissing = missing;
         }
-        FfmpegMessage = missing ? ffmpeg.Str("message") + " (見つかると自動で受信を始めます)" : "";
+        FfmpegMessage = missing ? F("main.ffmpegBanner", ("message", ffmpegMessage)) : "";
         var rtmp = state.At("rtmpServer");
         var rtmpState = rtmp.Str("state", "stopped");
-        RtmpText = rtmpState == "stopped" ? "RTMP サーバ: 停止" : $"RTMP サーバ: {(rtmpState == "running" ? "動作中" : "再起動中")} (:{rtmp.Int("port")})";
+        RtmpText = rtmpState switch
+        {
+            "stopped" => T("main.status.rtmpStopped"),
+            "running" => F("main.status.rtmpRunning", ("port", rtmp.Int("port"))),
+            _ => F("main.status.rtmpRestarting", ("port", rtmp.Int("port"))),
+        };
         var restarts = (long)rtmp.Num("restarts");
-        if (_lastRtmpRestarts >= 0 && restarts > _lastRtmpRestarts) Log($"RTMP サーバを再起動しました ({rtmp.Str("lastEvent")})", true);
+        if (!relabel && _lastRtmpRestarts >= 0 && restarts > _lastRtmpRestarts)
+        {
+            Log(F("event.rtmpRestarted", ("reason", Message(rtmp.At("lastEvent")))), true);
+        }
         _lastRtmpRestarts = restarts;
     }
 
@@ -245,7 +282,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (EngineException e)
         {
-            Log($"設定を読めませんでした: {e.Message}", true);
+            Log(F("event.configLoadFailed", ("error", e.Message)), true);
         }
     }
 
@@ -261,7 +298,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (EngineException e)
         {
-            Log($"音声デバイスを取得できませんでした: {e.Message}", true);
+            Log(F("event.devicesFailed", ("error", e.Message)), true);
         }
     }
 
@@ -276,7 +313,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         catch (EngineException e)
         {
-            Log($"操作できませんでした: {e.Message}", true);
+            Log(F("event.callFailed", ("error", e.Message)), true);
             return false;
         }
     }
@@ -300,7 +337,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         var error = await TryPatchChannelAsync(ch, patch);
         if (error == null) return true;
-        Log($"設定を変更できませんでした: {error}", true);
+        Log(F("event.patchFailed", ("error", error)), true);
         MessageBox.Show(Application.Current.MainWindow, error, "denpachan", MessageBoxButton.OK, MessageBoxImage.Warning);
         return false;
     }
@@ -343,10 +380,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (FixtureMode) return true;
         var active = Channels.Where(c => c.Enabled).ToList();
         if (active.Count == 0) return true;
-        var names = string.Join("、", active.Select(c => c.Name));
-        var answer = MessageBox.Show(Application.Current.MainWindow,
-            $"受信中のチャンネルがあります ({names})。\n" +
-            $"終了してよろしいですか?",
+        var names = string.Join(T("common.listSeparator"), active.Select(c => c.Name));
+        var answer = MessageBox.Show(Application.Current.MainWindow, F("dialog.closeWhileReceiving", ("names", names)),
             "denpachan", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
         return answer == MessageBoxResult.OK;
     }
@@ -373,7 +408,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         while (Events.Count > 500) Events.RemoveAt(Events.Count - 1);
     }
 
-    // ---- 画面の設定 (プレビューのオン・オフ、操作ロック) ----
+    // ---- 画面の設定 (プレビューのオン・オフ、操作ロック、言語) ----
 
     private static string UiSettingsPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "denpachan", "ui.json");
@@ -395,6 +430,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 for (var i = 0; i < Math.Min(locked.Count, Channels.Count); i++) Channels[i].IsLocked = locked[i]?.GetValue<bool>() ?? false;
             }
+            Loc.Instance.SetLanguage(json.Str("language", Loc.Auto));
         }
         catch
         {
@@ -416,6 +452,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 ["preview"] = new JsonArray(Channels.Select(c => (JsonNode)c.PreviewEnabled).ToArray()),
                 ["locked"] = new JsonArray(Channels.Select(c => (JsonNode)c.IsLocked).ToArray()),
+                ["language"] = Loc.Instance.Setting,
             };
             File.WriteAllText(UiSettingsPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }

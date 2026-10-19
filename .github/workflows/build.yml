@@ -82,8 +82,13 @@ jobs:
           Start-Sleep -Seconds 5
           if ($engine.HasExited) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw "engine exited with $($engine.ExitCode)" }
           Stop-Process -Id $engine.Id -Force
-          if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'FFmpeg 9.x' -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'ffmpeg.missing' -SimpleMatch -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
           Write-Host 'OK: no FFmpeg DLLs in the output; worker and engine handle missing FFmpeg'
+
+      # 画面の文言: コードが使うキー (画面・C++ のメッセージ ID) と言語ファイル (Lang/*.json) が食い違っていないか
+      - name: UI text keys
+        shell: pwsh
+        run: ./tools/lang/check.ps1
 
       # 画面の試験: 試験用の設定・状態を流し込んでスクリーンショットを撮り、画面の状態を確かめる (engine / FFmpeg 不要)。
       # 撮った PNG は artifact "ui-screenshots" で見られる (失敗したときも上げる)

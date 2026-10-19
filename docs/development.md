@@ -33,13 +33,23 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 
 画面の見た目は `tools/ui_screenshots/run.ps1` (engine なしで、試験用の状態を流し込んでスクリーンショットを撮る。CI でも動く)。
 
+## 画面の文言
+
+画面に出る文は、すべて言語ファイル `src/ui/Denpachan.Ui/Lang/ja.json` にある (キーと文の組)。文言を直すときはこのファイルだけを直す。
+
+- キーは「画面.場所.もの」(例: `main.menu.file`、`channel.port`)。XAML では `{l:Tr main.menu.file}`、C# では `Loc.T("...")`。
+- 文の中の `{name}` は引数で置き換わる (`Loc.F("event.connected", ("peer", peer))`)。数値の書式は C# 側で整えて渡す。
+- `msg.` で始まるキーは worker / engine (C++) からのメッセージ。C++ は文を作らず `ui_message("net.dns", {{"host", host}})` で ID と引数を送り、画面が `msg.net.dns` で文にする (`src/common/include/denpachan/ui_message.h`)。
+- キーを足したり消したりしたら `./tools/lang/check.ps1` で、コードが使うキーと ja.json が食い違っていないかを確かめる (CI でも実行)。
+- 言語を足すときは ja.json を写して `Lang/<言語コード>.json` (例: `en.json`) を作り、`"_name"` をその言語での名前にして訳す。訳していないキーは日本語で出る。全体設定の「言語」に自動で並ぶ。
+
 ## 画面の文言を直すとき (VS Code)
 
 engine や配信がなくても、受信中の状態の画面を出して、文言を直しながら確かめられる。
 
 1. VS Code でこのフォルダを開く (おすすめの拡張機能は `.vscode/extensions.json`)。
-2. 「ターミナル」→「タスクの実行」→「画面: 文言を確認 (メイン画面)」を選ぶ (流し込む状態は normal / degraded / ffmpeg-missing / disconnected から選ぶ)。チャンネル設定・録画タブ・全体設定のタスクもある。
-3. `src/ui/Denpachan.Ui` の XAML や C# を直して保存すると、数秒でビルドし直して画面が起動し直す (`dotnet watch`)。止めるときはターミナルで Ctrl+C。
+2. 「ターミナル」→「タスクの実行」→「画面: 文言を確認 (メイン画面)」を選ぶ (流し込む状態は normal / degraded / ffmpeg-missing / disconnected / unreachable から選ぶ)。チャンネル設定・録画タブ・全体設定のタスクもある。
+3. `src/ui/Denpachan.Ui/Lang/ja.json` や XAML・C# を直して保存すると、数秒でビルドし直して画面が起動し直す (`dotnet watch`)。止めるときはターミナルで Ctrl+C。
 
 コマンドで動かすときは次のとおり (`--settings 1` / `--settings 1 --settings-tab 1` / `--general` で設定画面も開く)。
 

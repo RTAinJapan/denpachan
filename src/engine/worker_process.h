@@ -54,8 +54,8 @@ private:
     bool spawn_locked();
     bool try_adopt_locked();
     void kill_orphan_locked();
-    void terminate_locked(const char* reason);
-    void schedule_restart_locked(const std::string& event);
+    void terminate_locked(const std::string& reason);
+    void schedule_restart_locked(const std::string& event);  // event は画面に出すメッセージ (ui_message.h)
     worker_status::Header* status_locked();
 
     const int ch_;

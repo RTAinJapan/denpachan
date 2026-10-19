@@ -26,7 +26,7 @@
         "worker": { "state": "running", "pid": 5100, "restarts": 0, "uptimeSec": 120, "lastEvent": "" },
         "video": { "state": "waiting", "connected": false, "connections": 0, "peer": "", "codec": "", "width": 0, "height": 0,
                    "hwDecode": true, "bitrateMbps": 0, "decodeFps": 0, "outputFps": 0, "delayMs": 0, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0,
-                   "lastError": "応答がありません (サーバーが動いていない、アドレスが違う、ファイアウォール)" },
+                   "lastError": { "id": "rtmp.noResponse" } },
         "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 0 },
         "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
       },

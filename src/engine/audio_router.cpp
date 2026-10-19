@@ -103,7 +103,7 @@ void AudioRouter::set_mute(int ch, bool mute) {
 
 json AudioRouter::channel_status(int ch) {
     if (auto it = missing_.find(ch); it != missing_.end()) {
-        return {{"device", it->second}, {"open", false}, {"error", "device not found"}};
+        return {{"device", it->second}, {"open", false}, {"error", {{"id", "audio.deviceNotFound"}}}};
     }
     for (auto& [id, d] : devices_) {
         for (const auto& r : d.routes) {

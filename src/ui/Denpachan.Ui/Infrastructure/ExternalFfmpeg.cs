@@ -33,7 +33,7 @@ public static class ExternalFfmpeg
         var exe = Find(configured);
         if (exe == null)
         {
-            return new(false, configured.Length > 0 ? $"見つかりません: {configured}" : "ffmpeg.exe が見つかりません");
+            return new(false, configured.Length > 0 ? Loc.F("ffmpegCheck.notFoundAt", ("path", configured)) : Loc.T("ffmpegCheck.notFound"));
         }
         try
         {
@@ -42,11 +42,11 @@ public static class ExternalFfmpeg
             string Mark(string name) => encoders.Contains($" {name} ") ? "○" : "×";
             var ok = encoders.Contains(" libx264 ");
             var message = $"{exe}\n{version}\nH.264 (libx264) {Mark("libx264")}   HEVC (libx265) {Mark("libx265")}   AV1 (libsvtav1) {Mark("libsvtav1")}";
-            return new(ok, ok ? message : message + "\nこの ffmpeg には libx264 が入っていません");
+            return new(ok, ok ? message : message + "\n" + Loc.T("ffmpegCheck.noX264"));
         }
         catch (Exception e)
         {
-            return new(false, $"{exe} を実行できません: {e.Message}");
+            return new(false, Loc.F("ffmpegCheck.cannotRun", ("path", exe), ("error", e.Message)));
         }
     }
 
@@ -59,7 +59,7 @@ public static class ExternalFfmpeg
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException("起動できません");
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("Process.Start returned null");
         var output = p.StandardOutput.ReadToEndAsync();
         _ = p.StandardError.ReadToEndAsync();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));

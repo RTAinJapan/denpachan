@@ -28,7 +28,7 @@
       {
         "id": 1, "name": "Game A", "enabled": true, "vcam": 1,
         "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9001 },
-        "worker": { "state": "running", "pid": 4120, "restarts": 1, "uptimeSec": 3600, "lastEvent": "worker exited (code 0xC0000005)" },
+        "worker": { "state": "running", "pid": 4120, "restarts": 1, "uptimeSec": 3600, "lastEvent": { "id": "worker.exited", "code": "0xC0000005" } },
         "video": { "state": "live", "connected": true, "connections": 2, "peer": "192.168.1.10:51234", "codec": "hevc", "width": 3840, "height": 2160,
                    "hwDecode": false, "bitrateMbps": 38.2, "decodeFps": 60, "outputFps": 59, "delayMs": 61, "droppedLate": 12, "droppedQueue": 0, "decodeErrors": 4, "lastError": "" },
         "srt": { "latencyMs": 120, "rttMs": 46.0, "rcvBufMs": 140, "recvMbps": 38.5, "lost": 812, "retrans": 790, "dropped": 0, "configuredLatencyMs": 120,
@@ -47,13 +47,13 @@
         "srt": { "latencyMs": 120, "rttMs": 95.0, "rcvBufMs": 140, "recvMbps": 0.4, "lost": 5000, "retrans": 2100, "dropped": 320, "configuredLatencyMs": 120,
                  "recommend": { "latencyMs": 400, "multiplier": 8, "rttMs": 95.0, "lossPct": 6.5, "drops": 320, "windowSec": 60 } },
         "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 12 },
-        "audioOut": { "device": "USB Audio CODEC", "open": false, "error": "device not found" },
+        "audioOut": { "device": "USB Audio CODEC", "open": false, "error": { "id": "audio.deviceNotFound" } },
         "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
       },
       {
         "id": 3, "name": "Game C", "enabled": true, "vcam": 3,
         "source": { "protocol": "rtmp", "mode": "push", "app": "live" },
-        "worker": { "state": "restarting", "pid": 0, "restarts": 3, "uptimeSec": 0, "lastEvent": "decoder not responding" },
+        "worker": { "state": "restarting", "pid": 0, "restarts": 3, "uptimeSec": 0, "lastEvent": { "id": "worker.hangDecoder" } },
         "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 5, "mute": false,
                       "playing": false, "latencyMs": 21.5, "errorMs": 0, "slips": 0, "underruns": 0, "resyncs": 0, "peakDb": [-100, -100] }
       },
@@ -68,7 +68,7 @@
         "audioIn": { "peakDb": [-20.0, -20.5], "delayMs": 50, "avOffsetMs": 0, "gaps": 0 },
         "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 7, "mute": true,
                       "playing": true, "latencyMs": 21.5, "errorMs": 0.1, "slips": 5, "underruns": 0, "resyncs": 0, "peakDb": [-20.0, -20.5] },
-        "record": { "state": "error", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "ディスクの空きが 5 GB を切ったため録画を止めました" }
+        "record": { "state": "error", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": { "id": "rec.diskFull", "gb": "5" } }
       }
     ],
     "rtmpServer": { "state": "running", "pid": 4100, "restarts": 0, "uptimeSec": 98800, "lastEvent": "", "port": 1935 },
@@ -86,10 +86,10 @@
   "locked": [false, false, false, true],
   "select": 2,
   "events": [
-    { "text": "Game A: worker を再起動しました (worker exited (code 0xC0000005))", "warning": true },
+    { "text": "Game A: worker を再起動しました (worker が終了しました (コード 0xC0000005))", "warning": true },
     { "text": "Game B: 映像が途絶えました (最後の映像フレームを保持)", "warning": true },
-    { "text": "Game C: worker を再起動しました (decoder not responding)", "warning": true },
-    { "text": "Game D: 録画: ディスクの空きが 5 GB を切ったため録画を止めました", "warning": false }
+    { "text": "Game C: worker を再起動しました (デコーダが応答しません)", "warning": true },
+    { "text": "Game D: 録画: ディスクの空きが 5 GB を切ったため録画を止めました", "warning": true }
   ],
   "expect": {
     "connected": true,

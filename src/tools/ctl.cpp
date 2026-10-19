@@ -95,6 +95,16 @@ bool call(Connection& c, const std::string& method, const json& params, json& re
     return false;
 }
 
+// 画面に出すメッセージ ({"id":"net.dns","host":"x"}、null なら空) を "net.dns host=x" にする。文は画面の言語ファイルにある
+std::string message_text(const json& m) {
+    if (!m.is_object()) return {};
+    std::string s = m.value("id", "");
+    for (const auto& [key, value] : m.items()) {
+        if (key != "id") s += " " + key + "=" + (value.is_string() ? value.get<std::string>() : value.dump());
+    }
+    return s;
+}
+
 std::string summary_line(const json& ch) {
     char buf[512];
     const json& w = ch.at("worker");
@@ -111,7 +121,7 @@ std::string summary_line(const json& ch) {
     if (ch.contains("audioOut") && !ch.at("audioOut").is_null()) {
         const json& a = ch.at("audioOut");
         if (a.contains("error")) {
-            line += " | audio " + a.at("error").get<std::string>();
+            line += " | audio " + message_text(a.at("error"));
         } else if (a.value("playing", false)) {
             snprintf(buf, sizeof(buf), " | audio %.1f ms slips %llu underruns %llu%s", a.at("latencyMs").get<double>(),
                      (unsigned long long)a.at("slips").get<uint64_t>(), (unsigned long long)a.at("underruns").get<uint64_t>(),
@@ -136,9 +146,12 @@ std::string summary_line(const json& ch) {
                  r.at("seconds").get<double>(), r.at("bytes").get<double>() / 1e6,
                  (unsigned long long)r.at("dropped").get<uint64_t>());
         line += buf;
-        if (!r.at("error").get<std::string>().empty()) line += " err: " + r.at("error").get<std::string>();
+        if (const std::string err = message_text(r.at("error")); !err.empty()) line += " err: " + err;
     }
-    if (!w.at("lastEvent").get<std::string>().empty()) line += " | last: " + w.at("lastEvent").get<std::string>();
+    if (ch.contains("video")) {
+        if (const std::string err = message_text(ch.at("video").at("lastError")); !err.empty()) line += " | error: " + err;
+    }
+    if (const std::string ev = message_text(w.at("lastEvent")); !ev.empty()) line += " | last: " + ev;
     return line;
 }
 

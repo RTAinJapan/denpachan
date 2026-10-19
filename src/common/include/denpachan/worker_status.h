@@ -18,7 +18,7 @@
 namespace denpachan::worker_status {
 
 inline constexpr uint32_t kMagic = 0x53575044;  // "DPWS"
-inline constexpr uint32_t kLayoutVersion = 3;
+inline constexpr uint32_t kLayoutVersion = 4;
 inline constexpr size_t kMappingBytes = 16384;
 
 // worker の終了コード: FFmpeg の DLL が無い / 版が合わない (engine は再起動を繰り返さず、FFmpeg を探し直す)
@@ -32,7 +32,7 @@ struct Metrics {
     uint32_t connections;
     char peer[64];
     char codec[32];
-    char last_error[128];
+    char last_error[256];  // 画面に出すメッセージ (ui_message.h)
     int32_t width;
     int32_t height;
     uint32_t hw_decode;
@@ -76,7 +76,7 @@ struct Metrics {
     uint64_t rec_bytes;
     uint64_t rec_dropped;
     char rec_file[512];
-    char rec_error[160];
+    char rec_error[256];  // 画面に出すメッセージ (ui_message.h)
 };
 
 struct Header {

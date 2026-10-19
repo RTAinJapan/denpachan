@@ -10,6 +10,8 @@ namespace Denpachan.Ui.Infrastructure;
 /// CI で画面のスクリーンショットを撮る (tools/ui_screenshots/) ために使う。
 ///
 /// ファイルの形:
+///   language    画面の言語 (既定 "ja"。Lang/*.json の言語コード)
+///   switchLanguage  流し込んだあとで言語を変える (全体設定で変えたときと同じ。その場で変わるかの試験)
 ///   connected   engine に繋がっているふりをするか (既定 true)
 ///   general     全体の設定 (patchGeneral と同じ形。省略時は既定値)
 ///   channels    チャンネルの設定の配列 (getConfig の channels と同じ形。書いた項目だけ既定値に上書き)
@@ -30,6 +32,8 @@ public static class UiFixture
     public static void Apply(MainViewModel vm, JsonNode fixture)
     {
         vm.FixtureMode = true;
+        // 画面の設定 (ui.json) の言語に左右されないよう、言語もファイルの値 (既定: 日本語) にする
+        Loc.Instance.SetLanguage(fixture.Str("language", Loc.BaseLanguage));
         vm.SetConnectedFromFixture(fixture.Bool("connected", true));
         var general = DefaultGeneral();
         if (fixture.At("general") is JsonObject g) Merge(general, g);
@@ -82,6 +86,8 @@ public static class UiFixture
         }
         var select = fixture.Int("select", 1);
         if (select >= 1 && select <= vm.Channels.Count) vm.Selected = vm.Channels[select - 1];
+        // 全体設定で言語を変えたときと同じ (その場で文言が変わるかの試験)
+        if (fixture.Str("switchLanguage") is { Length: > 0 } switchTo) Loc.Instance.SetLanguage(switchTo);
     }
 
     /// <summary>expect と画面の状態を比べ、合わない項目を返す (空なら合格)</summary>

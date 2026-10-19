@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "denpachan/ui_message.h"
 #include "denpachan/win_util.h"
 
 namespace denpachan::worker {
@@ -29,14 +30,12 @@ bool resolves(const std::string& host) {
     return true;
 }
 
-// URL を開けなかった理由 (画面に出す)。利用者が何を確かめればよいかがわかる言葉にする
+// URL を開けなかった理由 (画面に出すメッセージ。ui_message.h)。利用者が何を確かめればよいかで分ける
 std::string open_error_message(int err, bool timed_out, const std::string& host) {
-    if (timed_out || err == AVERROR(ETIMEDOUT)) {
-        return "応答がありません (サーバーが動いていない、アドレスが違う、ファイアウォール)";
-    }
-    if (err == AVERROR(ECONNREFUSED)) return "接続を拒否されました (サーバーが動いていない、ポートが違う)";
-    if (!host.empty() && !resolves(host)) return "名前を引けません (" + host + ")";
-    return "接続できません (" + av_error_string(err) + ")。URL (app とストリームキー) を確かめる";
+    if (timed_out || err == AVERROR(ETIMEDOUT)) return ui_message("rtmp.noResponse");
+    if (err == AVERROR(ECONNREFUSED)) return ui_message("rtmp.refused");
+    if (!host.empty() && !resolves(host)) return ui_message("net.dns", {{"host", host}});
+    return ui_message("rtmp.cannotOpen", {{"detail", av_error_string(err)}});
 }
 
 constexpr int kIoBufferSize = 64 * 1024;
@@ -387,8 +386,8 @@ bool Decoder::run_session(uint64_t session) {
     err = avformat_find_stream_info(fmt, nullptr);
     if (err < 0) {
         if (!stop_) spdlog::warn("decoder: stream info failed: {}", av_error_string(err));
-        set_error(io_timed_out_ ? "サーバーには繋がったが、配信が届きません (配信元が送っていない、ストリームキーが違う)"
-                                : "配信を読めません (" + av_error_string(err) + ")");
+        set_error(io_timed_out_ ? ui_message("rtmp.noStream")
+                                : ui_message("rtmp.unreadable", {{"detail", av_error_string(err)}}));
         cleanup();
         return false;
     }
@@ -479,7 +478,7 @@ bool Decoder::run_session(uint64_t session) {
                 av_packet_unref(pkt.get());
                 if (qpc_now() > video_deadline) {
                     spdlog::warn("decoder: no video stream");
-                    set_error("音声しか届きません (配信に映像が入っていない)");
+                    set_error(ui_message("input.audioOnly"));
                     break;
                 }
                 continue;

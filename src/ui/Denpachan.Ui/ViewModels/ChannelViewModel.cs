@@ -4,12 +4,16 @@ using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using Denpachan.Ui.Engine;
 using Denpachan.Ui.Infrastructure;
+using static Denpachan.Ui.Infrastructure.Loc;
 
 namespace Denpachan.Ui.ViewModels;
 
 public sealed record Option<T>(T Value, string Label);
 
 public sealed record DetailRow(string Label, string Value);
+
+/// <summary>イベントログに出す出来事 (Warning は黄色で出す)</summary>
+public sealed record ChannelEvent(string Text, bool Warning = false);
 
 /// <summary>1 チャンネル分の表示と操作</summary>
 public sealed class ChannelViewModel : ObservableObject, IDisposable
@@ -26,7 +30,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     // 前回の状態 (イベントログ用)
     private long _lastRestarts = -1;
     private string _lastVideoState = "";
-    private string _lastUnreachableReason = "";
+    private string _lastUnreachable = "";  // 繋がらない理由 (メッセージの JSON。言語を変えても同じ)
     private bool? _lastConnected;
     private string _lastWorkerState = "";
 
@@ -70,17 +74,20 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     public string RecordLine { get => _recordLine; private set => SetProperty(ref _recordLine, value); }
 
     private string _name;
-    public string Name { get => _name; private set => SetProperty(ref _name, value); }
+    public string Name { get => _name; private set { if (SetProperty(ref _name, value)) OnPropertyChanged(nameof(DetailTitle)); } }
+
+    /// <summary>詳細パネルの見出し</summary>
+    public string DetailTitle => F("main.detail.title", ("name", Name));
 
     private bool _enabled;
     public bool Enabled { get => _enabled; private set { if (SetProperty(ref _enabled, value)) OnPropertyChanged(nameof(StartStopLabel)); } }
-    public string StartStopLabel => Enabled ? "停止" : "開始";
+    public string StartStopLabel => T(Enabled ? "main.tile.stop" : "main.tile.start");
 
     private string _statusKind = "stopped";
-    /// <summary>stopped / starting / waiting / live / hold / restarting</summary>
+    /// <summary>stopped / starting / waiting / unreachable / live / hold / restarting</summary>
     public string StatusKind { get => _statusKind; private set => SetProperty(ref _statusKind, value); }
 
-    private string _statusText = "停止";
+    private string _statusText = T("status.stopped");
     public string StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
 
     private string _sourceSummary = "";
@@ -210,13 +217,14 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     private void UpdatePreviewMessage()
     {
-        PreviewMessage = !PreviewEnabled ? "プレビュー オフ" : !Enabled ? "停止中" : PreviewHasFrame ? "" : "NO SIGNAL";
+        PreviewMessage = !PreviewEnabled ? T("main.preview.off") : !Enabled ? T("main.preview.stopped")
+                         : PreviewHasFrame ? "" : T("main.preview.noSignal");
     }
 
     // ---- ルーティング (プルダウン) ----
 
-    public static IReadOnlyList<Option<int>> VcamOptions { get; } =
-        [new(0, "なし"), new(1, "Cam 1"), new(2, "Cam 2"), new(3, "Cam 3"), new(4, "Cam 4")];
+    public IReadOnlyList<Option<int>> VcamOptions =>
+        [new(0, T("common.none")), new(1, "Cam 1"), new(2, "Cam 2"), new(3, "Cam 3"), new(4, "Cam 4")];
 
     private int _vcam;
     public int Vcam
@@ -230,10 +238,11 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
     }
 
-    private IReadOnlyList<string> _audioDeviceChoices = ["なし"];
-    public IReadOnlyList<string> AudioDeviceChoices { get => _audioDeviceChoices; private set => SetProperty(ref _audioDeviceChoices, value); }
+    /// <summary>音声の出力先 (Value は設定に書くデバイス名、"" = なし)</summary>
+    private IReadOnlyList<Option<string>> _audioDeviceChoices = [];
+    public IReadOnlyList<Option<string>> AudioDeviceChoices { get => _audioDeviceChoices; private set => SetProperty(ref _audioDeviceChoices, value); }
 
-    private string _audioDevice = "なし";
+    private string _audioDevice = "";
     public string AudioDevice
     {
         get => _audioDevice;
@@ -244,8 +253,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             if (!SetProperty(ref _audioDevice, value)) return;
             UpdateStartChannelOptions();
             if (_applying) return;
-            var device = value == "なし" ? "" : value;
-            _ = PatchOrRevertAsync(new JsonObject { ["audio"] = new JsonObject { ["device"] = device } }, () => AudioDevice = old);
+            _ = PatchOrRevertAsync(new JsonObject { ["audio"] = new JsonObject { ["device"] = value } }, () => AudioDevice = old);
         }
     }
 
@@ -266,13 +274,13 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     private bool _mute;
     public bool Mute { get => _mute; private set { if (SetProperty(ref _mute, value)) OnPropertyChanged(nameof(MuteLabel)); } }
-    public string MuteLabel => Mute ? "ミュート中" : "ミュート";
+    public string MuteLabel => T(Mute ? "main.tile.muted" : "main.tile.mute");
 
     public void RefreshAudioDeviceChoices()
     {
-        var choices = new List<string> { "なし" };
-        choices.AddRange(_main.AudioDevices.Select(d => d.Name));
-        if (_audioDevice != "なし" && !choices.Contains(_audioDevice)) choices.Add(_audioDevice);  // 設定にあるが見つからないデバイス
+        var choices = new List<Option<string>> { new("", T("common.none")) };
+        choices.AddRange(_main.AudioDevices.Select(d => new Option<string>(d.Name, d.Name)));
+        if (_audioDevice != "" && !choices.Any(c => c.Value == _audioDevice)) choices.Add(new(_audioDevice, _audioDevice));  // 設定にあるが見つからないデバイス
         _applying = true;
         AudioDeviceChoices = choices;
         OnPropertyChanged(nameof(AudioDevice));
@@ -307,6 +315,23 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private async Task StartStopAsync() =>
         await _main.CallAsync(Enabled ? "stopChannel" : "startChannel", new JsonObject { ["ch"] = Id });
 
+    // ---- 言語を変えたとき ----
+
+    /// <summary>C# で組み立てている文言を作り直す (MainViewModel が最後の状態を流し直す)</summary>
+    public void OnLanguageChanged()
+    {
+        OnPropertyChanged(nameof(StartStopLabel));
+        OnPropertyChanged(nameof(MuteLabel));
+        OnPropertyChanged(nameof(DetailTitle));
+        var vcam = _vcam;
+        _applying = true;
+        OnPropertyChanged(nameof(VcamOptions));
+        Vcam = vcam;
+        _applying = false;
+        RefreshAudioDeviceChoices();
+        UpdatePreviewMessage();
+    }
+
     // ---- engine から届いた設定・状態の反映 ----
 
     public void ApplyConfig(JsonNode config)
@@ -317,7 +342,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         Enabled = config.Bool("enabled");
         Vcam = config.Int("vcam");
         var audio = config.At("audio");
-        _audioDevice = audio.Str("device") is { Length: > 0 } d ? d : "なし";
+        _audioDevice = audio.Str("device");
         _audioStartChannel = audio.Int("startChannel", 1);
         Mute = audio.Bool("mute");
         RecordEnabled = config.At("record").Bool("enabled");
@@ -344,10 +369,13 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         return mode == "caller" ? $"SRT caller {s.Str("host")}:{s.Int("port")}" : $"SRT listener :{s.Int("port")}";
     }
 
-    /// <summary>1 秒ごとの状態。イベントログに出す出来事を返す。</summary>
-    public List<string> ApplyState(JsonNode st)
+    /// <summary>
+    /// 1 秒ごとの状態。イベントログに出す出来事を返す。
+    /// relabel = 言語を変えたので文言だけ作り直す (グラフの履歴に足さない、出来事も返さない)。
+    /// </summary>
+    public List<ChannelEvent> ApplyState(JsonNode st, bool relabel = false)
     {
-        var events = new List<string>();
+        var events = new List<ChannelEvent>();
         var worker = st.At("worker");
         var video = st.At("video");
         var workerState = worker.Str("state", "stopped");
@@ -359,46 +387,48 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         // 繋がらない理由 (worker の lastError) を出す
         var source = st.At("source");
         var outgoing = (source.Str("protocol"), source.Str("mode")) is ("rtmp", "pull") or ("srt", "caller");
-        var lastError = video.Str("lastError");
+        var lastError = Message(video.At("lastError"));
         var unreachable = outgoing && connected != true && lastError.Length > 0;
         (StatusKind, StatusText) = workerState switch
         {
-            "stopped" => ("stopped", "停止"),
-            "unavailable" => ("restarting", "FFmpeg がありません"),
-            "restarting" => ("restarting", "再起動中"),
-            _ when video == null => ("starting", "起動中"),
-            _ when videoState == "live" => ("live", "受信中"),
-            _ when videoState == "hold" => ("hold", "途絶 (最後の映像フレームを保持)"),
-            _ when unreachable => ("unreachable", "接続できません"),
-            _ when outgoing && connected == true => ("waiting", "映像を待っています"),
-            _ when outgoing => ("waiting", "接続中…"),
-            _ => ("waiting", "待ち受け中"),
+            "stopped" => ("stopped", T("status.stopped")),
+            "unavailable" => ("restarting", T("status.ffmpegMissing")),
+            "restarting" => ("restarting", T("status.restarting")),
+            _ when video == null => ("starting", T("status.starting")),
+            _ when videoState == "live" => ("live", T("status.live")),
+            _ when videoState == "hold" => ("hold", T("status.hold")),
+            _ when unreachable => ("unreachable", T("status.unreachable")),
+            _ when outgoing && connected == true => ("waiting", T("status.waitingVideo")),
+            _ when outgoing => ("waiting", T("status.connecting")),
+            _ => ("waiting", T("status.listening")),
         };
         UnreachableReason = unreachable ? lastError : "";
 
         // イベントログ
+        var lastEvent = Message(worker.At("lastEvent"));
         var restarts = (long)worker.Num("restarts");
-        if (_lastRestarts >= 0 && restarts > _lastRestarts) events.Add($"worker を再起動しました ({worker.Str("lastEvent")})");
+        if (_lastRestarts >= 0 && restarts > _lastRestarts) events.Add(new(F("event.workerRestarted", ("reason", lastEvent)), true));
         if (_lastWorkerState != "" && workerState != _lastWorkerState && (workerState == "stopped" || _lastWorkerState == "stopped"))
         {
-            events.Add(workerState == "stopped" ? "停止しました" : "開始しました");
+            events.Add(new(T(workerState == "stopped" ? "event.stopped" : "event.started")));
         }
         if (_lastConnected != null && connected != null && connected != _lastConnected)
         {
-            events.Add(connected == true ? $"接続されました ({video.Str("peer")})" : "接続が切れました");
+            events.Add(connected == true ? new(F("event.connected", ("peer", video.Str("peer")))) : new(T("event.disconnected"), true));
         }
         if (_lastVideoState != "" && videoState != _lastVideoState && videoState is "live" or "hold")
         {
-            events.Add(videoState == "live" ? "映像を受信しています" : "映像が途絶えました (最後の映像フレームを保持)");
+            events.Add(videoState == "live" ? new(T("event.live")) : new(T("event.hold"), true));
         }
         // 繋がらない理由は変わったときだけ出す (繋ぎ直しのたびには出さない)
-        if (UnreachableReason.Length > 0 && UnreachableReason != _lastUnreachableReason) events.Add($"接続できません: {UnreachableReason}");
-        _lastUnreachableReason = UnreachableReason;
+        var unreachableKey = unreachable ? video.At("lastError")?.ToJsonString() ?? "" : "";
+        if (unreachableKey.Length > 0 && unreachableKey != _lastUnreachable) events.Add(new(F("event.unreachable", ("reason", lastError)), true));
+        _lastUnreachable = unreachableKey;
         _lastRestarts = restarts;
         _lastWorkerState = workerState;
         _lastConnected = connected;
         _lastVideoState = videoState;
-        LastEvent = worker.Str("lastEvent");
+        LastEvent = lastEvent;
 
         // 主要メトリクス
         var bitrate = video.Num("bitrateMbps");
@@ -409,11 +439,14 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (video != null)
         {
             var res = video.Int("width") > 0 ? $"{video.Int("width")}x{video.Int("height")} " : "";
-            VideoLine = $"{bitrate:0.0} Mbps   {video.Num("outputFps"):0} fps   遅延 {delay:0} ms   {res}{video.Str("codec")}";
+            VideoLine = F("main.tile.videoLine", ("bitrate", $"{bitrate:0.0}"), ("fps", $"{video.Num("outputFps"):0}"),
+                          ("delay", $"{delay:0}"), ("res", res), ("codec", video.Str("codec")));
             var recommended = srt.At("recommend").Int("latencyMs");
             TransportLine = srt != null
-                ? $"SRT latency {srt.Int("latencyMs")} ms{(recommended > 0 ? $" (推奨 {recommended})" : "")}   RTT {rtt:0.0} ms   ロス {srt.Num("lost"):0}   ドロップ {srt.Num("dropped"):0}"
-                : tcp != null ? $"TCP RTT {rtt:0.0} ms   再送 {tcp.Num("retransBytes") / 1024:0} KB" : "";
+                ? F("main.tile.srtLine", ("latency", srt.Int("latencyMs")),
+                    ("recommend", recommended > 0 ? F("main.tile.srtRecommend", ("latency", recommended)) : ""),
+                    ("rtt", $"{rtt:0.0}"), ("lost", $"{srt.Num("lost"):0}"), ("dropped", $"{srt.Num("dropped"):0}"))
+                : tcp != null ? F("main.tile.tcpLine", ("rtt", $"{rtt:0.0}"), ("retrans", $"{tcp.Num("retransBytes") / 1024:0}")) : "";
             // 受信中だけ出す (HW が使えれば何も出さない)
             SoftwareDecode = videoState is "live" or "hold" && !video.Bool("hwDecode");
             // 送出側との経路: 取りこぼし (直近 1 分) は赤、推奨 latency に足りない・再送があるなら黄
@@ -435,7 +468,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (unreachable)
         {
             // 繋がらないあいだは経路の数字 (0 ばかり) の代わりに理由を出す
-            TransportLine = $"接続できません: {lastError}";
+            TransportLine = F("main.tile.unreachable", ("reason", lastError));
             TransportKind = "error";
         }
         SrtRecommendedLatencyMs = srt.At("recommend").Int("latencyMs");
@@ -451,13 +484,14 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             ? _audioDropouts.Add(audioOut.Num("underruns") + audioOut.Num("resyncs"))
             : 0;
         var gaps = audioIn != null ? _audioGaps.Add(audioIn.Num("gaps")) : 0;
-        var dropoutNote = dropouts + gaps > 0 ? $"  音切れ {dropouts + gaps:0} 回/分" : "";
+        var dropoutNote = dropouts + gaps > 0 ? F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")) : "";
         AudioLine = audioOut switch
         {
-            null => "音声出力なし",
-            _ when audioOut.At("error") != null => $"音声: {audioOut.Str("error")} ({audioOut.Str("device")})",
-            _ when audioOut.Bool("playing") => $"音声 {audioOut.Num("latencyMs"):0} ms" + (Mute ? "  ミュート中" : "") + dropoutNote,
-            _ => audioOut.Bool("open") ? "音声 待機中" : "音声デバイスを開けません",
+            null => T("main.tile.audioNone"),
+            _ when audioOut.At("error") != null => F("main.tile.audioError", ("error", Message(audioOut.At("error"))), ("device", audioOut.Str("device"))),
+            _ when audioOut.Bool("playing") => F("main.tile.audioPlaying", ("latency", $"{audioOut.Num("latencyMs"):0}"))
+                                               + (Mute ? T("main.tile.audioMuted") : "") + dropoutNote,
+            _ => T(audioOut.Bool("open") ? "main.tile.audioIdle" : "main.tile.audioCannotOpen"),
         };
         AudioKind = audioOut == null ? "ok"
                     : audioOut.At("error") != null || (!audioOut.Bool("open") && !audioOut.Bool("playing")) ? "error"
@@ -466,32 +500,37 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
         var record = st.At("record");
         var recState = record.Str("state", "off");
+        var recError = Message(record.At("error"));
         if (recState != RecordKind)
         {
-            if (recState == "recording") events.Add($"録画を開始しました ({Path.GetFileName(record.Str("file"))})");
-            else if (RecordKind == "recording") events.Add("録画ファイルを閉じました");
-            if (recState == "error") events.Add($"録画: {record.Str("error")}");
+            if (recState == "recording") events.Add(new(F("event.recStarted", ("file", Path.GetFileName(record.Str("file"))))));
+            else if (RecordKind == "recording") events.Add(new(T("event.recClosed")));
+            if (recState == "error") events.Add(new(F("event.recError", ("error", recError)), true));
         }
         RecordKind = recState;
         RecordLine = recState switch
         {
-            "recording" => $"● REC {FormatDuration(record.Num("seconds"))}  {FormatBytes(record.Num("bytes"))}  {Path.GetFileName(record.Str("file"))}",
-            "waiting" => "● 録画待機 (映像を待っています)",
-            "error" => $"録画エラー: {record.Str("error")}",
+            "recording" => F("main.tile.recRecording", ("duration", FormatDuration(record.Num("seconds"))),
+                             ("size", FormatBytes(record.Num("bytes"))), ("file", Path.GetFileName(record.Str("file")))),
+            "waiting" => T("main.tile.recWaiting"),
+            "error" => F("main.tile.recError", ("error", recError)),
             _ => "",
         };
 
-        Push(_bitrate, bitrate);
-        Push(_delay, delay);
-        Push(_rtt, rtt);
-        BitrateHistory = [.. _bitrate];
-        DelayHistory = [.. _delay];
-        RttHistory = [.. _rtt];
+        if (!relabel)
+        {
+            Push(_bitrate, bitrate);
+            Push(_delay, delay);
+            Push(_rtt, rtt);
+            BitrateHistory = [.. _bitrate];
+            DelayHistory = [.. _delay];
+            RttHistory = [.. _rtt];
+        }
 
         if (workerState == "stopped") PreviewHasFrame = PreviewHasFrame && Enabled;
         UpdatePreviewMessage();
         Details = BuildDetails(st);
-        return events;
+        return relabel ? [] : events;
     }
 
     /// <summary>SRT の latency の推奨値 (受信中なら 0 より大きい。0 = 計測中 / 受信していない)</summary>
@@ -508,26 +547,21 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     {
         var r = srt.At("recommend");
         var recommended = r.Int("latencyMs");
-        if (recommended <= 0) return $"計測中 (受信 {r.Int("windowSec")} 秒)";
+        if (recommended <= 0) return F("srtAdvice.measuring", ("sec", r.Int("windowSec")));
         var effective = srt.Int("latencyMs");
         var configured = srt.Int("configuredLatencyMs");
-        var text = $"{recommended} ms (RTT {r.Num("rttMs"):0.0} ms × {r.Int("multiplier")}、ロス {r.Num("lossPct"):0.##}%、直近 {r.Int("windowSec")} 秒)";
-        if (r.Num("drops") > 0)
-        {
-            return text + $"。取りこぼし {r.Num("drops"):0}: 今の {effective} ms では足りていません";
-        }
-        if (recommended < effective && effective > configured)
-        {
-            return text + $"。相手側の latency ({effective} ms) が使われています。下げるには相手側も下げてください";
-        }
-        if (recommended < effective) return text + $"。今の {effective} ms から下げられます";
-        if (recommended > effective) return text + $"。今の {effective} ms では足りない可能性があります";
+        var text = F("srtAdvice.value", ("latency", recommended), ("rtt", $"{r.Num("rttMs"):0.0}"), ("multiplier", r.Int("multiplier")),
+                     ("loss", $"{r.Num("lossPct"):0.##}"), ("sec", r.Int("windowSec")));
+        if (r.Num("drops") > 0) return text + F("srtAdvice.drops", ("drops", $"{r.Num("drops"):0}"), ("current", effective));
+        if (recommended < effective && effective > configured) return text + F("srtAdvice.peerLatency", ("current", effective));
+        if (recommended < effective) return text + F("srtAdvice.canLower", ("current", effective));
+        if (recommended > effective) return text + F("srtAdvice.notEnough", ("current", effective));
         return text;
     }
 
-    /// <summary>経過時間を h:mm:ss で (TimeSpan の "hh" は 24 時間で 0 に戻るので使わない)</summary>
     private static double PeakOf(JsonNode? v) => v is JsonValue j && j.TryGetValue<double>(out var d) && double.IsFinite(d) ? d : -100;
 
+    /// <summary>経過時間を h:mm:ss で (TimeSpan の "hh" は 24 時間で 0 に戻るので使わない)</summary>
     private static string FormatDuration(double seconds)
     {
         if (!double.IsFinite(seconds) || seconds < 0) seconds = 0;
@@ -547,58 +581,69 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private List<DetailRow> BuildDetails(JsonNode st)
     {
         var rows = new List<DetailRow>();
-        void Add(string label, string value) => rows.Add(new DetailRow(label, value));
+        void Add(string labelKey, string value) => rows.Add(new DetailRow(T(labelKey), value));
         var worker = st.At("worker");
         var video = st.At("video");
-        Add("状態", StatusText);
-        Add("入力", SourceSummary);
+        Add("detail.status", StatusText);
+        Add("detail.input", SourceSummary);
         if (video != null)
         {
-            Add("接続元", video.Str("peer") is { Length: > 0 } p ? p : "-");
-            Add("接続回数", $"{video.Num("connections"):0}");
-            Add("映像", $"{video.Str("codec")} {video.Int("width")}x{video.Int("height")} ({(video.Bool("hwDecode") ? "HW" : "SW")} デコード)");
-            Add("ビットレート", $"{video.Num("bitrateMbps"):0.00} Mbps");
-            Add("デコード / 出力", $"{video.Num("decodeFps"):0} / {video.Num("outputFps"):0} fps");
-            Add("映像遅延", $"{video.Num("delayMs"):0} ms (デコード後から仮想カメラまで)");
-            Add("ドロップフレーム", $"遅れ {video.Num("droppedLate"):0} / 溢れ {video.Num("droppedQueue"):0}");
-            Add("デコードエラー", $"{video.Num("decodeErrors"):0}");
-            if (video.Str("lastError") is { Length: > 0 } err) Add(UnreachableReason.Length > 0 ? "接続失敗理由" : "エラー", err);
+            Add("detail.peer", video.Str("peer") is { Length: > 0 } p ? p : "-");
+            Add("detail.connections", $"{video.Num("connections"):0}");
+            Add("detail.video", F(video.Bool("hwDecode") ? "detail.videoValueHw" : "detail.videoValueSw", ("codec", video.Str("codec")),
+                                  ("width", video.Int("width")), ("height", video.Int("height"))));
+            Add("detail.bitrate", $"{video.Num("bitrateMbps"):0.00} Mbps");
+            Add("detail.fps", $"{video.Num("decodeFps"):0} / {video.Num("outputFps"):0} fps");
+            Add("detail.delay", F("detail.delayValue", ("ms", $"{video.Num("delayMs"):0}")));
+            Add("detail.dropped", F("detail.droppedValue", ("late", $"{video.Num("droppedLate"):0}"), ("queue", $"{video.Num("droppedQueue"):0}")));
+            Add("detail.decodeErrors", $"{video.Num("decodeErrors"):0}");
+            if (Message(video.At("lastError")) is { Length: > 0 } err) Add(UnreachableReason.Length > 0 ? "detail.unreachableReason" : "detail.error", err);
         }
         if (st.At("srt") is JsonNode srt)
         {
-            Add("SRT latency", $"{srt.Int("latencyMs")} ms");
-            Add("SRT RTT", $"{srt.Num("rttMs"):0.0} ms");
-            Add("SRT 受信バッファ", $"{srt.Int("rcvBufMs")} ms");
-            Add("SRT ロス / 再送 / ドロップ", $"{srt.Num("lost"):0} / {srt.Num("retrans"):0} / {srt.Num("dropped"):0}");
-            Add("SRT 推奨 latency", DescribeSrtRecommendation(srt));
+            Add("detail.srtLatency", $"{srt.Int("latencyMs")} ms");
+            Add("detail.srtRtt", $"{srt.Num("rttMs"):0.0} ms");
+            Add("detail.srtBuffer", $"{srt.Int("rcvBufMs")} ms");
+            Add("detail.srtLoss", $"{srt.Num("lost"):0} / {srt.Num("retrans"):0} / {srt.Num("dropped"):0}");
+            Add("detail.srtRecommend", DescribeSrtRecommendation(srt));
         }
         if (st.At("tcp") is JsonNode tcp)
         {
-            Add("TCP RTT", $"{tcp.Num("rttMs"):0.0} ms");
-            Add("TCP 再送", $"{tcp.Num("retransBytes") / 1024:0} KB");
+            Add("detail.tcpRtt", $"{tcp.Num("rttMs"):0.0} ms");
+            Add("detail.tcpRetrans", $"{tcp.Num("retransBytes") / 1024:0} KB");
         }
         if (st.At("audioIn") is JsonNode ai)
         {
-            Add("音声 (worker)", $"遅延 {ai.Num("delayMs"):0} ms / A/V {ai.Num("avOffsetMs"):+0;-0;0} ms / 抜け {ai.Num("gaps"):0}");
+            Add("detail.audioIn", F("detail.audioInValue", ("delay", $"{ai.Num("delayMs"):0}"), ("av", $"{ai.Num("avOffsetMs"):+0;-0;0}"),
+                                    ("gaps", $"{ai.Num("gaps"):0}")));
         }
         if (st.At("audioOut") is JsonNode ao)
         {
-            Add("音声出力", $"{ao.Str("device")} {ao.Int("startChannel")}-{ao.Int("startChannel") + 1}{(ao.Bool("exclusive") ? " (排他)" : "")}");
+            Add("detail.audioOut", $"{ao.Str("device")} {ao.Int("startChannel")}-{ao.Int("startChannel") + 1}"
+                                   + (ao.Bool("exclusive") ? T("detail.audioOutExclusive") : ""));
             if (ao.At("latencyMs") != null)
             {
-                Add("音声の遅延", $"{ao.Num("latencyMs"):0.0} ms (ずれ {ao.Num("errorMs"):+0.00;-0.00} ms)");
-                Add("重複・間引き / 音切れ / 合わせ直し", $"{ao.Num("slips"):0} / {ao.Num("underruns"):0} / {ao.Num("resyncs"):0}");
+                Add("detail.audioLatency", F("detail.audioLatencyValue", ("latency", $"{ao.Num("latencyMs"):0.0}"),
+                                             ("error", $"{ao.Num("errorMs"):+0.00;-0.00}")));
+                Add("detail.audioSlips", $"{ao.Num("slips"):0} / {ao.Num("underruns"):0} / {ao.Num("resyncs"):0}");
             }
         }
         if (st.At("record") is JsonNode rec && rec.Str("state") != "off")
         {
-            Add("録画", rec.Str("state") switch { "recording" => "録画中", "waiting" => "映像待ち", "error" => "エラー", _ => "-" });
-            if (rec.Str("file") is { Length: > 0 } file) Add("録画ファイル", file);
-            Add("録画サイズ / 捨てた数", $"{FormatBytes(rec.Num("bytes"))} / {rec.Num("dropped"):0}");
-            if (rec.Str("error") is { Length: > 0 } recErr) Add("録画エラー", recErr);
+            Add("detail.record", rec.Str("state") switch
+            {
+                "recording" => T("detail.recordRecording"),
+                "waiting" => T("detail.recordWaiting"),
+                "error" => T("detail.recordError"),
+                _ => "-",
+            });
+            if (rec.Str("file") is { Length: > 0 } file) Add("detail.recordFile", file);
+            Add("detail.recordSize", $"{FormatBytes(rec.Num("bytes"))} / {rec.Num("dropped"):0}");
+            if (Message(rec.At("error")) is { Length: > 0 } recErr) Add("detail.recordErrorMessage", recErr);
         }
-        Add("worker", $"{worker.Str("state")} pid {worker.Num("pid"):0}  稼働 {FormatDuration(worker.Num("uptimeSec"))}  再起動 {worker.Num("restarts"):0} 回");
-        if (worker.Str("lastEvent") is { Length: > 0 } ev) Add("直近の異常", ev);
+        Add("detail.worker", F("detail.workerValue", ("state", worker.Str("state")), ("pid", $"{worker.Num("pid"):0}"),
+                               ("uptime", FormatDuration(worker.Num("uptimeSec"))), ("restarts", $"{worker.Num("restarts"):0}")));
+        if (LastEvent.Length > 0) Add("detail.lastEvent", LastEvent);
         return rows;
     }
 

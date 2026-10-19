@@ -1,6 +1,6 @@
 {
   // 画面の文言を直しながら確かめるタスク (docs/development.md の「画面の文言を直すとき」)。
-  // dotnet watch が、XAML や C# を保存するたびにビルドし直して画面を起動し直す (数秒)。
+  // dotnet watch が、言語ファイル (Lang/ja.json)・XAML・C# を保存するたびにビルドし直して画面を起動し直す (数秒)。
   // XAML はホットリロードが効かないので --no-hot-reload にしている (監視対象は csproj の Watch)。
   // --fixture で試験用の状態を流し込むので、engine や配信がなくても受信中の画面が出る。
   // 実行: Ctrl+Shift+P →「タスク: タスクの実行」→ 下の名前を選ぶ。止めるときはターミナルで Ctrl+C。
@@ -10,7 +10,7 @@
       "id": "fixture",
       "type": "pickString",
       "description": "画面に流し込む状態",
-      "options": ["normal", "degraded", "ffmpeg-missing", "disconnected"],
+      "options": ["normal", "degraded", "ffmpeg-missing", "disconnected", "unreachable"],
       "default": "normal"
     }
   ],

@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json.Nodes;
+using Denpachan.Ui.Infrastructure;
 
 namespace Denpachan.Ui.Engine;
 
@@ -78,7 +79,7 @@ public sealed class EngineClient : IDisposable
             }
             _writer = null;
             SetConnected(false);
-            foreach (var p in _pending) p.Value.TrySetException(new EngineException("engine との接続が切れました"));
+            foreach (var p in _pending) p.Value.TrySetException(new EngineException(Loc.T("engine.disconnected")));
             _pending.Clear();
             try { await Task.Delay(1000, ct); } catch (OperationCanceledException) { break; }
         }
@@ -126,7 +127,7 @@ public sealed class EngineClient : IDisposable
     /// <summary>要求を送り、応答を待つ。エラーは EngineException。</summary>
     public async Task<JsonNode?> CallAsync(string method, JsonObject? parameters = null)
     {
-        var writer = _writer ?? throw new EngineException("engine に接続していません");
+        var writer = _writer ?? throw new EngineException(Loc.T("engine.notConnected"));
         var id = Interlocked.Increment(ref _nextId);
         var tcs = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
@@ -139,7 +140,7 @@ public sealed class EngineClient : IDisposable
         catch (Exception e)
         {
             _pending.TryRemove(id, out _);
-            throw new EngineException($"送信できませんでした: {e.Message}");
+            throw new EngineException(Loc.F("engine.sendFailed", ("error", e.Message)));
         }
         finally
         {
@@ -149,7 +150,7 @@ public sealed class EngineClient : IDisposable
         if (done != tcs.Task)
         {
             _pending.TryRemove(id, out _);
-            throw new EngineException("engine が応答しません");
+            throw new EngineException(Loc.T("engine.noResponse"));
         }
         return await tcs.Task;
     }

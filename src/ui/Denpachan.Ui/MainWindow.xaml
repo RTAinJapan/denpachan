@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="clr-namespace:Denpachan.Ui.Controls"
         xmlns:vm="clr-namespace:Denpachan.Ui.ViewModels"
+        xmlns:l="clr-namespace:Denpachan.Ui.Infrastructure"
         Title="denpachan" Width="1600" Height="1000" MinWidth="1100" MinHeight="700"
         Background="{StaticResource BgBrush}" FontFamily="Segoe UI, Yu Gothic UI" FontSize="13">
 
@@ -60,10 +61,10 @@
                         <c:LockToggle DockPanel.Dock="Right" IsLocked="{Binding IsLocked}" Margin="6,0,0,0" VerticalAlignment="Center">
                             <c:LockToggle.Style>
                                 <Style TargetType="c:LockToggle">
-                                    <Setter Property="ToolTip" Value="クリックで操作をロック" />
+                                    <Setter Property="ToolTip" Value="{l:Tr main.tile.lock}" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsLocked}" Value="True">
-                                            <Setter Property="ToolTip" Value="操作をロック中。1 秒長押しで解除" />
+                                            <Setter Property="ToolTip" Value="{l:Tr main.tile.locked}" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -74,9 +75,9 @@
                         </Border>
                         <!-- HW デコードが使えず CPU でデコードしている (HW のときは出さない) -->
                         <Border DockPanel.Dock="Right" CornerRadius="10" Padding="8,2" Margin="0,0,6,0" VerticalAlignment="Center"
-                                Background="{StaticResource HoldBrush}" ToolTip="GPU でデコードできず CPU でデコードしています"
+                                Background="{StaticResource HoldBrush}" ToolTip="{l:Tr main.tile.swDecodeTip}"
                                 Visibility="{Binding SoftwareDecode, Converter={StaticResource BoolToVis}}">
-                            <TextBlock Text="SW デコード" FontWeight="SemiBold" FontSize="12" />
+                            <TextBlock Text="{l:Tr main.tile.swDecode}" FontWeight="SemiBold" FontSize="12" />
                         </Border>
                         <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding SourceSummary}" Style="{StaticResource DimText}" Margin="10,0,0,0"
@@ -115,14 +116,14 @@
                     <StackPanel Grid.Row="2" Margin="0,6,0,0">
                         <TextBlock Text="{Binding VideoLine}" FontFamily="Consolas, Segoe UI" />
                         <TextBlock Text="{Binding TransportLine}" FontFamily="Consolas, Segoe UI" Style="{StaticResource WarnText}" Tag="{Binding TransportKind}"
-                                   ToolTip="黄: 推奨 latency に足りない / TCP の再送あり。赤: 直近 1 分に取りこぼしあり" />
+                                   ToolTip="{l:Tr main.tile.transportTip}" />
                         <Grid Margin="0,3,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="{Binding AudioLine}" FontFamily="Consolas, Segoe UI" Margin="0,0,10,0" VerticalAlignment="Center"
-                                       Tag="{Binding AudioKind}" ToolTip="黄: 直近 1 分に音切れ・合わせ直しあり。赤: 音声デバイスを開けない">
+                                       Tag="{Binding AudioKind}" ToolTip="{l:Tr main.tile.audioTip}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource WarnText}">
                                         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -161,23 +162,24 @@
                     <!-- 操作 -->
                     <WrapPanel Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
                         <Button Content="{Binding StartStopLabel}" Command="{Binding StartStopCommand}" Style="{StaticResource PrimaryButton}" MinWidth="64" />
-                        <ToggleButton Content="● 録画" IsChecked="{Binding RecordEnabled, Mode=OneWay}" Command="{Binding RecordCommand}"
-                                      Style="{StaticResource RecordChip}" ToolTip="受信した映像をファイルに録画します" />
-                        <ToggleButton Content="プレビュー" IsChecked="{Binding PreviewEnabled}" Style="{StaticResource ToggleChip}" />
+                        <ToggleButton Content="{l:Tr main.tile.record}" IsChecked="{Binding RecordEnabled, Mode=OneWay}" Command="{Binding RecordCommand}"
+                                      Style="{StaticResource RecordChip}" ToolTip="{l:Tr main.tile.recordTip}" />
+                        <ToggleButton Content="{l:Tr main.tile.preview}" IsChecked="{Binding PreviewEnabled}" Style="{StaticResource ToggleChip}" />
                         <ToggleButton Content="{Binding MuteLabel}" IsChecked="{Binding Mute, Mode=OneWay}" Command="{Binding MuteCommand}"
-                                      Style="{StaticResource ToggleChip}" ToolTip="音声デバイスへの音声出力を0にします" />
-                        <Button Content="仮想カメラリセット" Command="{Binding ResetCamCommand}"
-                                ToolTip="仮想カメラへの出力を初期化します" />
-                        <Button Content="設定…" Command="{Binding SettingsCommand}" />
+                                      Style="{StaticResource ToggleChip}" ToolTip="{l:Tr main.tile.muteTip}" />
+                        <Button Content="{l:Tr main.tile.resetCam}" Command="{Binding ResetCamCommand}"
+                                ToolTip="{l:Tr main.tile.resetCamTip}" />
+                        <Button Content="{l:Tr main.tile.settings}" Command="{Binding SettingsCommand}" />
                     </WrapPanel>
 
                     <!-- ルーティング -->
                     <WrapPanel Grid.Row="5" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
-                        <TextBlock Text="映像" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                        <ComboBox ItemsSource="{Binding Source={x:Static vm:ChannelViewModel.VcamOptions}}" DisplayMemberPath="Label"
+                        <TextBlock Text="{l:Tr main.tile.video}" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <ComboBox ItemsSource="{Binding VcamOptions}" DisplayMemberPath="Label"
                                   SelectedValuePath="Value" SelectedValue="{Binding Vcam}" MinWidth="90" Margin="0,0,14,0" />
-                        <TextBlock Text="音声" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                        <ComboBox ItemsSource="{Binding AudioDeviceChoices}" SelectedItem="{Binding AudioDevice}" Width="230" Margin="0,0,6,0" />
+                        <TextBlock Text="{l:Tr main.tile.audio}" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <ComboBox ItemsSource="{Binding AudioDeviceChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                  SelectedValue="{Binding AudioDevice}" Width="230" Margin="0,0,6,0" />
                         <ComboBox ItemsSource="{Binding StartChannelOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
                                   SelectedValue="{Binding AudioStartChannel}" MinWidth="70" />
                     </WrapPanel>
@@ -189,12 +191,12 @@
     <DockPanel>
         <!-- メニュー -->
         <Menu DockPanel.Dock="Top" Background="{StaticResource PanelBrush}">
-            <MenuItem Header="ファイル(_F)">
-                <MenuItem Header="全体設定(_G)…" Command="{Binding GeneralSettingsCommand}" />
-                <MenuItem Header="音声デバイスの再読込(_R)" Command="{Binding RefreshDevicesCommand}" />
-                <MenuItem Header="仮想カメラの登録解除(_U)…" Command="{Binding UnregisterVcamCommand}" />
+            <MenuItem Header="{l:Tr main.menu.file}">
+                <MenuItem Header="{l:Tr main.menu.general}" Command="{Binding GeneralSettingsCommand}" />
+                <MenuItem Header="{l:Tr main.menu.refreshDevices}" Command="{Binding RefreshDevicesCommand}" />
+                <MenuItem Header="{l:Tr main.menu.unregisterVcam}" Command="{Binding UnregisterVcamCommand}" />
                 <Separator />
-                <MenuItem Header="終了(_X)" Command="{Binding ShutdownCommand}" />
+                <MenuItem Header="{l:Tr main.menu.exit}" Command="{Binding ShutdownCommand}" />
             </MenuItem>
         </Menu>
 
@@ -216,7 +218,7 @@
         <!-- イベントログ -->
         <Border DockPanel.Dock="Bottom" Height="104" Margin="6,0,6,6" Background="{StaticResource PanelBrush}" CornerRadius="6" Padding="8,6">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Top" Text="イベント" Style="{StaticResource DimText}" Margin="0,0,0,4" />
+                <TextBlock DockPanel.Dock="Top" Text="{l:Tr main.events}" Style="{StaticResource DimText}" Margin="0,0,0,4" />
                 <ListBox ItemsSource="{Binding Events}" Background="Transparent" BorderThickness="0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListBox.ItemTemplate>
@@ -246,15 +248,13 @@
         <Border DockPanel.Dock="Right" Width="400" Margin="0,6,6,6" Background="{StaticResource PanelBrush}" CornerRadius="6" Padding="12"
                 DataContext="{Binding Selected}">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Top" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8">
-                    <Run Text="{Binding Name, Mode=OneWay}" /><Run Text=" 詳細" />
-                </TextBlock>
+                <TextBlock DockPanel.Dock="Top" Text="{Binding DetailTitle}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8" />
                 <StackPanel DockPanel.Dock="Bottom">
-                    <c:LineChart Height="80" Margin="0,8,0,0" Title="ビットレート" Unit="Mbps" Values="{Binding BitrateHistory}"
+                    <c:LineChart Height="80" Margin="0,8,0,0" Title="{l:Tr main.detail.chartBitrate}" Unit="Mbps" Values="{Binding BitrateHistory}"
                                  Stroke="{StaticResource AccentBrush}" />
-                    <c:LineChart Height="80" Margin="0,8,0,0" Title="映像の遅延" Unit="ms" Values="{Binding DelayHistory}" Stroke="#FF3BC16E" />
-                    <c:LineChart Height="80" Margin="0,8,0,0" Title="RTT" Unit="ms" Values="{Binding RttHistory}" Stroke="#FFE8C23A" />
-                    <TextBlock Text="直近 10 分 (1 秒ごと)" Style="{StaticResource DimText}" FontSize="11" Margin="0,4,0,0" />
+                    <c:LineChart Height="80" Margin="0,8,0,0" Title="{l:Tr main.detail.chartDelay}" Unit="ms" Values="{Binding DelayHistory}" Stroke="#FF3BC16E" />
+                    <c:LineChart Height="80" Margin="0,8,0,0" Title="{l:Tr main.detail.chartRtt}" Unit="ms" Values="{Binding RttHistory}" Stroke="#FFE8C23A" />
+                    <TextBlock Text="{l:Tr main.detail.chartWindow}" Style="{StaticResource DimText}" FontSize="11" Margin="0,4,0,0" />
                 </StackPanel>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding Details}">

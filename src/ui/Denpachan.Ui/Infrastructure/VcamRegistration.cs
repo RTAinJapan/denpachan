@@ -69,15 +69,15 @@ public static class VcamRegistration
 
     private static string? CallDllInstall(bool install)
     {
-        if (!File.Exists(DllPath)) return $"{DllPath} がありません";
+        if (!File.Exists(DllPath)) return Loc.F("vcam.dllMissing", ("path", DllPath));
         var module = LoadLibraryW(DllPath);
-        if (module == IntPtr.Zero) return $"{DllPath} を読み込めません (エラー {Marshal.GetLastWin32Error()})";
+        if (module == IntPtr.Zero) return Loc.F("vcam.dllLoadFailed", ("path", DllPath), ("error", Marshal.GetLastWin32Error()));
         try
         {
             var proc = GetProcAddress(module, "DllInstall");
-            if (proc == IntPtr.Zero) return "DllInstall がありません";
+            if (proc == IntPtr.Zero) return Loc.T("vcam.noDllInstall");
             var hr = Marshal.GetDelegateForFunctionPointer<DllInstallFn>(proc)(install ? 1 : 0, "user");
-            return hr < 0 ? $"登録に失敗しました (0x{hr:X8})" : null;
+            return hr < 0 ? Loc.F("vcam.registerFailed", ("hr", $"{hr:X8}")) : null;
         }
         finally
         {

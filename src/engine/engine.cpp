@@ -38,6 +38,15 @@ const char* video_state_name(uint32_t s) {
     return "unknown";
 }
 
+// worker や engine が作ったメッセージ (ui_message.h の JSON 文字列) を状態に載せる形にする。空なら null。
+// 読めないもの (共有メモリで切れたなど) は文のまま "text" で渡す
+json message_json(std::string_view s) {
+    if (s.empty()) return nullptr;
+    json j = json::parse(s, nullptr, false);
+    if (j.is_object() && j.contains("id") && j.at("id").is_string()) return j;
+    return {{"id", "text"}, {"text", std::string(s)}};
+}
+
 int channel_param(const json& params) {
     const int ch = params.at("ch").get<int>();
     if (ch < 1 || ch > kChannelCount) throw std::runtime_error("ch must be 1-4");
@@ -317,7 +326,7 @@ json Engine::state_locked() {
               {"pid", w.pid},
               {"restarts", w.restarts},
               {"uptimeSec", w.uptime_sec},
-              {"lastEvent", w.last_event}}},
+              {"lastEvent", message_json(w.last_event)}}},
         };
         if (w.has_metrics) {
             const auto& m = w.metrics;
@@ -336,7 +345,7 @@ json Engine::state_locked() {
                           {"droppedLate", m.dropped_late},
                           {"droppedQueue", m.dropped_queue},
                           {"decodeErrors", m.decode_errors},
-                          {"lastError", m.last_error}};
+                          {"lastError", message_json(m.last_error)}};
             if (c.source.protocol == "srt") {
                 j["srt"] = {{"latencyMs", m.srt_latency_ms}, {"rttMs", m.srt_rtt_ms}, {"rcvBufMs", m.srt_rcv_buf_ms},
                             {"recvMbps", m.srt_recv_mbps},   {"lost", m.srt_lost},    {"retrans", m.srt_retrans},
@@ -358,7 +367,7 @@ json Engine::state_locked() {
                            {"seconds", m.rec_seconds},
                            {"bytes", m.rec_bytes},
                            {"dropped", m.rec_dropped},
-                           {"error", m.rec_error}};
+                           {"error", message_json(m.rec_error)}};
         }
         j["audioOut"] = audio_.channel_status(c.id);
         channels.push_back(j);
@@ -368,12 +377,12 @@ json Engine::state_locked() {
                  {"pid", r.pid},
                  {"restarts", r.restarts},
                  {"uptimeSec", r.uptime_sec},
-                 {"lastEvent", r.last_event},
+                 {"lastEvent", message_json(r.last_event)},
                  {"port", config_.general.rtmp_port}};
     return {{"channels", channels},
             {"rtmpServer", rtmp},
             {"audioDevices", audio_.devices_status()},
-            {"ffmpeg", {{"ok", ffmpeg_ok_}, {"message", ffmpeg_message_}}}};
+            {"ffmpeg", {{"ok", ffmpeg_ok_}, {"message", message_json(ffmpeg_message_)}}}};
 }
 
 }  // namespace denpachan::engine

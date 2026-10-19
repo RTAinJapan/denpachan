@@ -10,6 +10,8 @@
 #include <initializer_list>
 #include <string>
 
+#include "denpachan/ui_message.h"
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -33,15 +35,10 @@ struct Lib {
 
 struct Result {
     bool ok = true;
-    std::string message;  // ok でなければ、ユーザー向けの説明
+    std::string message;  // ok でなければ、画面に出すメッセージ (ui_message.h)
 };
 
 inline std::string dll_name(const Lib& lib) { return std::string(lib.name) + "-" + std::to_string(lib.major) + ".dll"; }
-
-inline std::string missing_message(const std::string& dlls) {
-    return std::string("FFmpeg ") + kSeries + " (shared 版) が見つかりません (" + dlls +
-           ")。FFmpeg の shared 版を入れ、その bin フォルダを PATH に通すか denpachan と同じフォルダに置いてください";
-}
 
 // libs は依存される側から並べる (avutil → swresample → swscale → avcodec → avformat)
 inline Result check(std::initializer_list<Lib> libs) {
@@ -55,16 +52,18 @@ inline Result check(std::initializer_list<Lib> libs) {
             missing += dll;
         }
     }
-    if (!missing.empty()) return {false, missing_message(missing)};
+    if (!missing.empty()) return {false, ui_message("ffmpeg.missing", {{"series", kSeries}, {"dlls", missing}})};
     for (const Lib& lib : libs) {
         // 同じ major なら互換。ヘッダより古い minor には無い関数があるかもしれないので断る
         const unsigned v = lib.version();
         const unsigned major = v >> 16;
         const unsigned minor = (v >> 8) & 0xff;
         if (major != lib.major || minor < lib.minor) {
-            return {false, std::string("FFmpeg の版が合いません: lib") + lib.name + " " + std::to_string(major) + "." +
-                               std::to_string(minor) + " (" + std::to_string(lib.major) + "." + std::to_string(lib.minor) +
-                               " 以上が必要)。FFmpeg " + kSeries + " の shared 版を使ってください"};
+            return {false, ui_message("ffmpeg.version",
+                                      {{"lib", std::string("lib") + lib.name},
+                                       {"found", std::to_string(major) + "." + std::to_string(minor)},
+                                       {"required", std::to_string(lib.major) + "." + std::to_string(lib.minor)},
+                                       {"series", kSeries}})};
         }
     }
     return {};
