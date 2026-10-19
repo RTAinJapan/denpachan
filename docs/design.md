@@ -116,7 +116,7 @@ flowchart LR
 | HW デコード | D3D11VA (FFmpeg の hwaccel)。使えなければソフトウェア | GPU のベンダーを選ばない |
 | 映像の変換 | libswscale (NV12 へ、OBS が選んだ解像度へ) | |
 | 録画のエンコード | GPU: NVENC / QSV / AMF (FFmpeg)。CPU: 外部の ffmpeg.exe (x264 / x265 / SVT-AV1、§8.4) | x264 / x265 (GPL) を denpachan に入れないため |
-| 音声出力 | WASAPI (イベント駆動) と ASIO (ASIO SDK のインターフェースの定義だけを使い、ドライバは自分で読み込む) | DVS の WDM モードは普通の多チャンネルのデバイスとして、ASIO モードは ASIO のドライバとして見える |
+| 音声出力 | WASAPI (イベント駆動) と ASIO (別の DLL。ASIO SDK のインターフェースの定義だけを使い、ドライバは自分で読み込む) | DVS の WDM モードは普通の多チャンネルのデバイスとして、ASIO モードは ASIO のドライバとして見える。ASIO SDK が GPL-3.0 なので、本体 (MIT) から DLL に切り離す (§6.4) |
 | リサンプル | libswresample (48 kHz 以外のデバイスのときだけ) | |
 | 画面 | .NET 10 / WPF (Fluent のダークテーマ)。外部のライブラリは使わない | 依存を増やさない。グラフは 1 秒ごとの折れ線なので自前で足りる |
 | IPC | 名前付きパイプ + 改行区切りの JSON (制御)、共有メモリ (映像・音声・プレビュー) | C++ と C# の両方で依存なしに扱える |
@@ -373,13 +373,15 @@ DVS は **WDM モード** (WASAPI のデバイスとして見える) と **ASIO 
 - 排他モードでは、デバイスが短い周期に追いつけないことがある (仮想デバイスに多い)。呼び出しが周期どおりに来ていなければ周期を 10 ms → 20 ms と延ばして試し、それでもだめなら共有モードに切り替える。
 - 共有モードでは、IAudioClient3 で最小の周期を使えれば使う。
 
-**ASIO (ASIO モード)** (`src/engine/asio_output.cpp`)
+**ASIO (ASIO モード)** (`src/asio/` と `src/engine/asio_output.cpp`)
 
+- ASIO SDK (Steinberg) は GPL-3.0 なので、SDK に触れる部分は **別の DLL `denpachan-asio.dll`** (`src/asio/`、GPL-3.0) にして、本体 (MIT) から切り離す。engine は SDK のヘッダを一切 include せず、DLL の C の関数 (`src/asio/denpachan_asio.h`。受け渡す型は C のものだけ) を使う。DLL は engine と同じフォルダからだけ読み込み (PATH は探さない)、ABI の版を確かめる。**DLL が無ければ ASIO の出力先を出さないだけで、他はそのまま動く** (GPL のものを含めたくなければ DLL を消す。ビルドでは `-DDENPACHAN_ASIO=OFF`)。
+- DLL が行うこと: ドライバの列挙と読み込み、コールバック、サンプル形式の変換、時刻の均し、開き直し、診断のログ。engine が行うこと: ChannelSource (遅延を一定に保つ・クロックずれの補正・フェード・ミュート)、状態の表示。
 - ドライバはレジストリ (`HKLM\SOFTWARE\ASIO`) で列挙し、出力先の一覧に `ASIO: ドライバ名` として WASAPI のデバイスと並べて出す。設定にはこの名前を書く。
 - ドライバは COM で読み込み、専用のスレッド (STA) でメッセージを回す。ASIO SDK はインターフェースの定義 (ヘッダ) だけを使う。
 - **同時に開く ASIO ドライバは 1 つだけ** (ASIO の作法。コールバックにどの出力かを渡す引数が無い)。別のチャンネルが別の ASIO ドライバを選んだら、そのチャンネルの音声は出さずに画面にエラーを出す。同じドライバを複数のチャンネルで使うのはよい (出力チャンネルで分ける)。
 - サンプルレートは 48 kHz にできれば 48 kHz にする (できなければドライバのレートで出し、ChannelSource がリサンプルする)。バッファはドライバの推奨の大きさ。
-- 音はドライバのコールバック (bufferSwitch) の中で ChannelSource から作り、ドライバのサンプル形式 (int16 / int24 / int32 / float32 / float64 など) に変換して書く。基本遅延 = ドライバの出力の遅延 + バッファ 1 つ分 + 余裕。
+- 音はドライバのコールバック (bufferSwitch) の中で engine の ChannelSource に作ってもらい (DLL → engine の render)、ドライバのサンプル形式 (int16 / int24 / int32 / float32 / float64 など) に変換して書く。基本遅延 = ドライバの出力の遅延 + バッファ 1 つ分 + 余裕。
 - バッファの先頭が鳴る時刻は「前のバッファの時刻 + バッファ 1 つ分」で進め、コールバックが呼ばれた時刻へは少しずつ寄せる (コールバックの間隔の揺れを均し、デバイスと PC のクロックのずれには追いつく)。200 ms 以上ずれたら測り直す。
 - ドライバがリセットを求めたとき (ドライバの設定やサンプルレートの変更) は開き直す。開けない・使えないときは 1 秒ごとに開き直す。
 - コールバックの回数が実時間から 2% 以上ずれていたら (ドライバが実時間で音を出していない)、ログに警告を出す。コールバックが 2 秒来なければ (ドライバの先が動いていない。Voicemeeter なら出力 A1 のデバイスが無いなど) それも警告を出す。
@@ -471,7 +473,7 @@ stateDiagram-v2
 
 ### 8.4 CPU エンコード (外部 ffmpeg)
 
-x264 / x265 は GPL なので denpachan には入れない。代わりに、**利用者が用意した FFmpeg の ffmpeg.exe を子プロセスとして起動する**。別のプログラムを呼び出すだけなので、denpachan 自体は GPL の影響を受けない (GPL の DLL をプロセスの中に読み込む方式は、結合した著作物とみなされる余地があるので採らない)。外部のプロセスなので、エンコーダが落ちても受信を巻き込まない。
+x264 / x265 は GPL なので denpachan には入れない。代わりに、**利用者が用意した FFmpeg の ffmpeg.exe を子プロセスとして起動する**。別のプログラムを呼び出すだけなので、denpachan 自体は GPL の影響を受けない (GPL の DLL をプロセスの中に読み込む方式だと、配布物に GPL の条件がかかる余地があるので、x264 / x265 では採らない。ASIO 出力の DLL (§6.4) はこの例外で、自分たちのコードを GPL-3.0 で出し、配布物に GPL の条件がかかることを受け入れている)。外部のプロセスなので、エンコーダが落ちても受信を巻き込まない。
 
 ```
 worker (録画スレッド)                              ffmpeg.exe (優先度: 通常以下)
@@ -612,7 +614,7 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
 
 - **配布は zip** (`denpachan-X.Y.Z-win64.zip`)。展開すればそのまま使える。インストーラは作らない。仮想カメラは画面が起動時にこのユーザーに登録する (§5.1)。
 - **FFmpeg は同梱しない。** 利用者が FFmpeg 9.x の shared 版 (CPU エンコードには gpl 版) を用意し、`bin` を PATH に通すか denpachan のフォルダに置く。worker と engine は DLL を遅延ロードし、使う前に有無と版 (同じ major、minor は同じか新しい) を確かめる。無ければ engine と画面は動き、「FFmpeg が見つかりません」を出して受信は起動しない (10 秒ごとに探し直し、見つかれば自動で始める)。読み込んだ DLL のフォルダはログに出す。
-- denpachan は GPL-3.0 (ASIO SDK を GPL-3.0 で使うため)。同梱・組み込みしているライブラリ: SRT (MPL-2.0、ソースの入手先を示す)、OpenSSL (Apache-2.0)、spdlog / fmt / nlohmann-json (MIT)、ASIO SDK (GPL-3.0)。ライセンス文を `licenses/` に入れる。
+- denpachan は MIT。ただし ASIO 出力の `denpachan-asio.dll` (`src/asio/`) だけは、ASIO SDK を GPL-3.0 で使うため GPL-3.0 (§6.4)。この DLL を含む配布物 (zip) は GPL-3.0 の条件 (ソースの提供) で配る。ソースはこのリポジトリのタグ。同梱・組み込みしているライブラリ: SRT (MPL-2.0、ソースの入手先を示す)、OpenSSL (Apache-2.0)、spdlog / fmt / nlohmann-json (MIT)、ASIO SDK (GPL-3.0、DLL に組み込み)。ライセンス文を `licenses/` に入れる。
 - 必要なランタイム (.NET 10 デスクトップ ランタイム、VC++ 再頒布可能パッケージ) は README に書く。
 - 版は `CMakeLists.txt` の `project(... VERSION X.Y.Z)` の 1 か所に書き、exe / DLL の版の情報と画面のタイトルに入る。タグ `vX.Y.Z` で GitHub Release を作る (development.md の「リリース」)。
 
@@ -637,6 +639,7 @@ denpachan/
 │  └─ third_party_notices.md # 配布物の licenses/README.md になる
 ├─ src/
 │  ├─ common/                # 共有メモリの定義、FFmpeg の確認、画面に出すメッセージ、exe のアイコン (C++ ヘッダ)
+│  ├─ asio/                  # ASIO 出力の DLL (denpachan-asio.dll)。ASIO SDK を使うのでここだけ GPL-3.0 (LICENSE)
 │  ├─ engine/                # supervisor, audio (WASAPI / ASIO device mixer), IPC server, config store
 │  ├─ worker/                # ingest (srt, flv ring, rtmp pull), decode, playout clock, outputs, recorder, metrics
 │  ├─ rtmpd/                 # RTMP サーバ (handshake, chunk, amf0, publish の振り分け)

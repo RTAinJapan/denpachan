@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cwctype>
 
-#include "asio_output.h"
+#include "asio_plugin.h"
 
 namespace denpachan::engine {
 

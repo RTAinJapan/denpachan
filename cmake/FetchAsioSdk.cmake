@@ -1,8 +1,9 @@
 # ASIO 出力に使う Steinberg の ASIO SDK (docs/dependencies.md §3)。
 #
-# SDK は GPL-3.0 (または Steinberg のライセンス契約) で配られている。denpachan は GPL-3.0 で使う。
+# SDK は GPL-3.0 (または Steinberg のライセンス契約) で配られている。denpachan-asio.dll (src/asio/) が GPL-3.0 で使う
+# (本体は MIT のまま。DENPACHAN_ASIO=OFF なら取らない)。
 # Steinberg の配布物を固定の URL と SHA256 で取り、ヘッダ (common/asio.h、common/iasiodrv.h など) だけを使う。
-# ドライバの列挙と読み込みは engine が自分で行うので、SDK の host/ のソースは使わない (src/engine/asio_output.cpp)。
+# ドライバの列挙と読み込みは DLL が自分で行うので、SDK の host/ のソースは使わない (src/asio/asio_output.cpp)。
 #
 # - DENPACHAN_ASIOSDK_DIR を指定すれば、その (展開済みの) フォルダを使う (取得しない)
 # - 取得したものは out/deps に置く (FFmpeg と同じ。CI ではこのフォルダをキャッシュする)

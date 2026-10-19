@@ -11,10 +11,14 @@ add_executable(denpachan-engine
     audio_devices.cpp
     output_devices.cpp
     device_output.cpp
+    asio_plugin.cpp
     asio_output.cpp
     channel_source.cpp
 )
-target_include_directories(denpachan-engine SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS} ${ASIOSDK_INCLUDE_DIRS})
+target_include_directories(denpachan-engine SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
+# ASIO 出力は denpachan-asio.dll (GPL-3.0) を実行時に読み込む。engine が使うのは C の関数の宣言 (denpachan_asio.h) だけで、
+# ASIO SDK のヘッダは使わない (asio_plugin.cpp)
+target_include_directories(denpachan-engine PRIVATE ${CMAKE_SOURCE_DIR}/src/asio)
 target_link_directories(denpachan-engine PRIVATE ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(denpachan-engine PRIVATE
     denpachan_common

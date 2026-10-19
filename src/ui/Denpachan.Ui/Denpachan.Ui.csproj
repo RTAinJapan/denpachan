@@ -17,7 +17,7 @@
     <InformationalVersion Condition="'$(DenpachanVersionLabel)' != ''">$(Version)-$(DenpachanVersionLabel)</InformationalVersion>
     <Product>denpachan</Product>
     <Company>RTA in Japan</Company>
-    <Copyright>Copyright (c) 2026 RTA in Japan. GPL-3.0</Copyright>
+    <Copyright>Copyright (c) 2026 RTA in Japan. MIT</Copyright>
     <SatelliteResourceLanguages>ja</SatelliteResourceLanguages>
     <!-- exe のアイコン。ウィンドウとタスクバーもこれを使う (元は assets/denpachan.svg) -->
     <ApplicationIcon>..\..\..\assets\denpachan.ico</ApplicationIcon>
