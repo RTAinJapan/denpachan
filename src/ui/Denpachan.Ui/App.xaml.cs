@@ -19,29 +19,29 @@ public partial class App : Application
     {
         base.OnStartup(e);
         MainWindow? window = null;
-        var showingError = false;
+        var inHandler = false;
         var lastError = "";
         var lastErrorAt = DateTime.MinValue;
         DispatcherUnhandledException += (_, args) =>
         {
             // UI の不具合で配信を止めないよう、落とさずに知らせる (engine / worker は別プロセス)。
             // 毎秒の状態更新で同じ例外が続くと、ダイアログの中でまた例外が起きてダイアログが積み重なるので、
-            // 表示中・同じ内容が続く間はイベントログに出すだけにする
+            // 表示中・同じ内容が続く間はイベントログに出すだけにする (ログ中の例外で再入しても何もしない)
             args.Handled = true;
-            var message = args.Exception.Message;
-            var repeated = message == lastError && DateTime.Now - lastErrorAt < TimeSpan.FromMinutes(1);
-            lastError = message;
-            lastErrorAt = DateTime.Now;
-            window?.ViewModel.Log($"画面のエラー: {message}", true);
-            if (showingError || repeated) return;
-            showingError = true;
+            if (inHandler) return;
+            inHandler = true;
             try
             {
-                MessageBox.Show(message, "denpachan", MessageBoxButton.OK, MessageBoxImage.Error);
+                var message = args.Exception.Message;
+                var repeated = message == lastError && DateTime.Now - lastErrorAt < TimeSpan.FromMinutes(1);
+                lastError = message;
+                lastErrorAt = DateTime.Now;
+                try { window?.ViewModel.Log($"画面のエラー: {message}", true); } catch { }
+                if (!repeated) MessageBox.Show(message, "denpachan", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
-                showingError = false;
+                inHandler = false;
             }
         };
 
