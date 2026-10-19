@@ -161,7 +161,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 if (d.FreeGb < d.MinFreeGb) Raise("error"); else if (d.FreeGb < d.MinFreeGb * 2) Raise("warn");
                 disks.Add($"{d.Root.TrimEnd('\\')} {FormatGb(d.FreeGb)}");
             }
-            SystemText = $"CPU {s.CpuPercent:0}%   メモリ 空き {FormatGb(s.MemoryFreeGb)}   ディスク {string.Join(", ", disks)}";
+            SystemText = $"CPU {s.CpuPercent:0}%   メモリ 空き {FormatGb(s.MemoryFreeGb)}" + (disks.Count > 0 ? $"   ディスク {string.Join(", ", disks)}" : "");
             SystemKind = kind;
         }
         catch

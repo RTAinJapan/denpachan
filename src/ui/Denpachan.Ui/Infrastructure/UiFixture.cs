@@ -92,7 +92,8 @@ public static class UiFixture
         void Expect(string label, object? actual, JsonNode? wanted)
         {
             if (wanted == null) return;
-            var a = actual?.ToString() ?? "";
+            // bool は JSON の true/false と C# の True/False を同じに扱う
+            var a = actual is bool ab ? (ab ? "true" : "false") : actual?.ToString() ?? "";
             var w = wanted is JsonValue v && v.TryGetValue<string>(out var s) ? s : wanted.ToJsonString();
             if (!string.Equals(a, w, StringComparison.Ordinal)) failures.Add($"{label}: 期待 {w} / 実際 {a}");
         }

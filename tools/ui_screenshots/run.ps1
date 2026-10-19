@@ -29,15 +29,18 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 Get-ChildItem $Out -Filter '*.png' | Remove-Item -Force
 Get-ChildItem $Out -Filter '*.png.txt' | Remove-Item -Force
 
-# 撮るもの: 名前、流し込む case、denpachan.exe への追加の引数
+# 撮るもの: 名前、流し込む case、denpachan.exe への追加の引数。
+# --size は中身を描く大きさ (CI の画面はメイン画面の既定 1600x1000 より小さいので、ウィンドウの大きさに頼らない)
+$main = @('--size', '1600x1000')
+$dialog = @('--size', '600x0')  # 設定画面: 幅 600、高さは中身なり
 $shots = @(
-    @{ Name = 'main-normal';          Case = 'normal' },
-    @{ Name = 'main-degraded';        Case = 'degraded' },
-    @{ Name = 'main-ffmpeg-missing';  Case = 'ffmpeg-missing' },
-    @{ Name = 'main-disconnected';    Case = 'disconnected' },
-    @{ Name = 'settings-input';       Case = 'normal';   Args = @('--settings', '1') },
-    @{ Name = 'settings-record';      Case = 'normal';   Args = @('--settings', '1', '--settings-tab', '1') },
-    @{ Name = 'settings-general';     Case = 'normal';   Args = @('--general') }
+    @{ Name = 'main-normal';          Case = 'normal';          Args = $main },
+    @{ Name = 'main-degraded';        Case = 'degraded';        Args = $main },
+    @{ Name = 'main-ffmpeg-missing';  Case = 'ffmpeg-missing';  Args = $main },
+    @{ Name = 'main-disconnected';    Case = 'disconnected';    Args = $main },
+    @{ Name = 'settings-input';       Case = 'normal';          Args = $dialog + @('--settings', '1') },
+    @{ Name = 'settings-record';      Case = 'normal';          Args = $dialog + @('--settings', '1', '--settings-tab', '1') },
+    @{ Name = 'settings-general';     Case = 'normal';          Args = $dialog + @('--general') }
 )
 
 function Get-PngSize([string]$path) {
@@ -54,7 +57,8 @@ foreach ($shot in $shots) {
     if ($Only -and $shot.Name -notlike "*$Only*") { continue }
     $png = Join-Path $Out "$($shot.Name).png"
     $case = Join-Path $cases "$($shot.Case).json"
-    $args = @('--fixture', $case, '--screenshot', $png, '--delay', '3') + @($shot.Args)
+    # 5 秒待つ: 状態バーの CPU 使用率は 2 回目の採取 (2 秒ごと) から出る
+    $args = @('--fixture', $case, '--screenshot', $png, '--delay', '5') + @($shot.Args)
     $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -NoNewWindow
     if (-not $p.WaitForExit(60000)) {
         $p.Kill()
