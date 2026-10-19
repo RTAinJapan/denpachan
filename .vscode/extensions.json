@@ -1,6 +1,8 @@
 {
+  // C# は C# 拡張機能だけで足りる (補完・エラー表示・定義へのジャンプ)。画面のプロジェクトは 1 つだけで、
+  // C# Dev Kit のソリューション エクスプローラーなどは要らない
   "recommendations": [
-    "ms-dotnettools.csdevkit",
+    "ms-dotnettools.csharp",
     "ms-vscode.cpptools",
     "ms-vscode.cmake-tools"
   ]
