@@ -87,7 +87,7 @@
   "select": 2,
   "events": [
     { "text": "Game A: worker を再起動しました (worker exited (code 0xC0000005))", "warning": true },
-    { "text": "Game B: 映像が途絶えました (最後の映像を保持)", "warning": true },
+    { "text": "Game B: 映像が途絶えました (最後の映像フレームを保持)", "warning": true },
     { "text": "Game C: worker を再起動しました (decoder not responding)", "warning": true },
     { "text": "Game D: 録画: ディスクの空きが 5 GB を切ったため録画を止めました", "warning": false }
   ],
@@ -96,7 +96,7 @@
     "ffmpegMissing": false,
     "channels": [
       { "statusText": "受信中", "softwareDecode": true, "transportKind": "warn", "audioKind": "warn", "isLocked": false },
-      { "statusText": "途絶 (最後の映像を保持)", "softwareDecode": false, "transportKind": "error", "audioKind": "error" },
+      { "statusText": "途絶 (最後の映像フレームを保持)", "softwareDecode": false, "transportKind": "error", "audioKind": "error" },
       { "statusKind": "restarting", "statusText": "再起動中" },
       { "statusText": "受信中", "recordKind": "error", "isLocked": true, "previewMessage": "" }
     ]

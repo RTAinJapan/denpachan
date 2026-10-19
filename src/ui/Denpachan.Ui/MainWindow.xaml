@@ -166,8 +166,8 @@
                         <ToggleButton Content="プレビュー" IsChecked="{Binding PreviewEnabled}" Style="{StaticResource ToggleChip}" />
                         <ToggleButton Content="{Binding MuteLabel}" IsChecked="{Binding Mute, Mode=OneWay}" Command="{Binding MuteCommand}"
                                       Style="{StaticResource ToggleChip}" ToolTip="音声デバイスへの音声出力を0にします" />
-                        <Button Content="プレビューリセット" Command="{Binding ResetCamCommand}"
-                                ToolTip="プレビューの表示を初期化します" />
+                        <Button Content="仮想カメラリセット" Command="{Binding ResetCamCommand}"
+                                ToolTip="仮想カメラへの出力を初期化します" />
                         <Button Content="設定…" Command="{Binding SettingsCommand}" />
                     </WrapPanel>
 

@@ -368,7 +368,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             "restarting" => ("restarting", "再起動中"),
             _ when video == null => ("starting", "起動中"),
             _ when videoState == "live" => ("live", "受信中"),
-            _ when videoState == "hold" => ("hold", "途絶 (最後の映像を保持)"),
+            _ when videoState == "hold" => ("hold", "途絶 (最後の映像フレームを保持)"),
             _ when unreachable => ("unreachable", "接続できません"),
             _ when outgoing && connected == true => ("waiting", "映像を待っています"),
             _ when outgoing => ("waiting", "接続中…"),
@@ -389,7 +389,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
         if (_lastVideoState != "" && videoState != _lastVideoState && videoState is "live" or "hold")
         {
-            events.Add(videoState == "live" ? "映像を受信しています" : "映像が途絶えました (最後のフレームを保持)");
+            events.Add(videoState == "live" ? "映像を受信しています" : "映像が途絶えました (最後の映像フレームを保持)");
         }
         // 繋がらない理由は変わったときだけ出す (繋ぎ直しのたびには出さない)
         if (UnreachableReason.Length > 0 && UnreachableReason != _lastUnreachableReason) events.Add($"接続できません: {UnreachableReason}");

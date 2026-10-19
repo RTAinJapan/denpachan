@@ -161,7 +161,7 @@
                 <CheckBox x:Name="RecordEnabledBox" Content="録画する" />
                 <Grid Margin="0,6,0,0">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="180" />
+                        <ColumnDefinition Width="200" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
@@ -183,7 +183,7 @@
                     <Label Grid.Row="1" Content="ファイル名" VerticalAlignment="Center" />
                     <TextBox x:Name="TemplateBox" Grid.Row="1" Grid.Column="1" Margin="0,3" FontFamily="Consolas" TextChanged="Template_Changed" />
                     <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap"
-                               Text="{}{ch}: チャンネル番号 {name}: チャンネル名 {YYYY}: 西暦(full) {YY}: 西暦(下二桁) {MM}: 月 {DD}: 日 {hh}: 時 {mm}: 分 {ss}: 秒 {seq}: ミリ秒 {codec}: コーデック {res}: 解像度" />
+                               Text="{}{ch}: チャンネル番号 {name}: チャンネル名 {YYYY}: 西暦(full) {YY}: 西暦(下二桁) {MM}: 月 {DD}: 日 {hh}: 時 {mm}: 分 {ss}: 秒 {seq}: 連番 {codec}: コーデック {res}: 解像度" />
                     <Label Grid.Row="3" Content="例" VerticalAlignment="Center" />
                     <TextBlock x:Name="TemplatePreview" Grid.Row="3" Grid.Column="1" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"
                                VerticalAlignment="Center" />
@@ -194,7 +194,7 @@
                         <ComboBoxItem Content="MKV (推奨)" Tag="mkv" />
                         <ComboBoxItem Content="MPEG-TS" Tag="ts" />
                     </ComboBox>
-                    <Label Grid.Row="6" Content="録画区切る受信停止時間 (秒)" VerticalAlignment="Center"/>
+                    <Label Grid.Row="6" Content="録画を区切る映像停止時間 (秒)" VerticalAlignment="Center"/>
                     <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal">
                         <TextBox x:Name="GapBox" Width="80" Margin="0,3" />
                     </StackPanel>

@@ -5,7 +5,7 @@ using Denpachan.Ui.ViewModels;
 
 namespace Denpachan.Ui.Views;
 
-/// <summary>全体の設定</summary>
+/// <summary>全体設定</summary>
 public partial class GeneralSettingsWindow : Window
 {
     private readonly MainViewModel _main;
@@ -63,7 +63,7 @@ public partial class GeneralSettingsWindow : Window
             ShowError(error);
             return;
         }
-        _main.Log("全体の設定を変更しました");
+        _main.Log("全体設定を変更しました");
         DialogResult = true;
     }
 
