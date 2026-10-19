@@ -678,41 +678,44 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
 
 **エンジン ⇔ ワーカー**: 設定は起動時のコマンドライン引数で渡す。状態 (pid、引数のハッシュ、スレッドごとのハートビート、1 秒ごとのメトリクス) は共有メモリ `Local\denpachan_worker_{ch}`、停止要求は名前付きイベント。映像 / 音声 / プレビュー / FLV は共有メモリ。パイプを使わないので、エンジンが落ちても worker は影響を受けない。
 
-メッセージ定義は `schema/ipc.json` (JSON Schema) を正とし、C++ と C# の型をそこから生成またはテストで突き合わせて、両言語の食い違いを防ぐ。
+メッセージの形は今は C++ (engine) と C# (UI) の両方に書いてあり、画面の試験 (`tools/ui_screenshots/`) と受信の試験で食い違いを見つけている。JSON Schema に定義をまとめて突き合わせるのは今後の課題。
 
 ---
 
-## 11. リポジトリ構成 (案)
+## 11. リポジトリ構成
 
 ```
 denpachan/
-├─ CMakeLists.txt            # C++ 全体
+├─ CMakeLists.txt            # C++ 全体。版 (project の VERSION) はここだけに書く
+├─ CMakePresets.json
 ├─ vcpkg.json
-├─ Denpachan.sln             # C# UI
 ├─ build.ps1                 # C++ と C# をまとめてビルド
-├─ .github/workflows/        # GitHub Actions (build.yml: ビルドと配布物の artifact)
-├─ cmake/                    # FFmpeg の遅延ロードと DLL の除去、ライセンス文のコピー
+├─ .github/workflows/        # GitHub Actions (build.yml: ビルド、試験、配布物の artifact、タグでリリース)
+├─ .vscode/                  # 画面の文言を直しながら確かめるタスクなど
+├─ assets/                   # アイコン (denpachan.svg が元、denpachan.ico を作る)
+├─ cmake/                    # FFmpeg の取得・遅延ロード・DLL の除去、ライセンス文のコピー、版の情報 (VERSIONINFO)
 ├─ docs/
 │  ├─ design.md
 │  ├─ dependencies.md        # 利用者が用意するもの / 同梱するもの / ビルドに使うもの
-│  ├─ development.md         # ビルド・試験・画面の文言の直し方 (開発者向け)
+│  ├─ development.md         # ビルド・試験・文言・リリース (開発者向け)
 │  └─ third_party_notices.md # 配布物の licenses/README.md になる
-├─ schema/                   # IPC メッセージ・設定ファイルの JSON Schema
 ├─ src/
-│  ├─ common/                # 共有メモリ定義, IPC, ログ, 設定, SPSC リングバッファ (C++)
+│  ├─ common/                # 共有メモリの定義、FFmpeg の確認、画面に出すメッセージ、exe のアイコン (C++ ヘッダ)
 │  ├─ engine/                # supervisor, audio (WASAPI device mixer), IPC server, config store
-│  ├─ worker/                # ingest (srt, flv ring, rtmp pull), demux, decode, playout clock, outputs, recorder, metrics
+│  ├─ worker/                # ingest (srt, flv ring, rtmp pull), decode, playout clock, outputs, recorder, metrics
 │  ├─ rtmpd/                 # RTMP サーバ (handshake, chunk, amf0, publish 振り分け)
 │  ├─ vcam/                  # DirectShow ソースフィルタ DLL
-│  └─ ui/Denpachan.Ui/       # C# / WPF
-├─ tools/
-│  └─ testsrc/               # FFmpeg によるテスト送出スクリプト (SRT / RTMP)、nginx-rtmp 検証用設定
-├─ tests/
-│  ├─ native/                # GoogleTest (テンプレート展開, リングバッファ, クロック補正, AMF パーサ)
-│  ├─ fuzz/                  # libFuzzer (RTMP チャンク層, AMF0)
-│  └─ ui/                    # xUnit
-└─ installer/                # WiX v5: DLL 登録, ファイアウォール規則 (1935 / SRT ポート), 自動起動
+│  ├─ tools/                 # denpachan-ctl (コマンドラインの操作)、audio_probe (開発用)
+│  └─ ui/Denpachan.Ui/       # C# / WPF。Lang/ に画面の文言 (言語ファイル)
+└─ tools/
+   ├─ testsrc/               # 受信の試験 (FFmpeg で送出して engine / worker を動かす)
+   ├─ ui_screenshots/        # 画面の試験 (試験用の状態を流し込んでスクリーンショット)
+   ├─ lang/                  # 文言のキーと言語ファイルの突き合わせ
+   ├─ icon/                  # SVG からアイコン (ico) を作る
+   └─ package.ps1            # 配布用の zip
 ```
+
+今は無いもの (今後の課題): C++ の単体試験 (テンプレート展開、リングバッファ、クロック補正、AMF パーサ)、RTMP のチャンク層・AMF0 のファジング、受信の試験の CI での実行。インストーラは作らず、zip を展開して使う形にした (仮想カメラの登録は画面が行う。§5)。
 
 ---
 

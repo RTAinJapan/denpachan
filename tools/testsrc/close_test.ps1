@@ -14,6 +14,9 @@
   ./tools/testsrc/close_test.ps1
 #>
 $ErrorActionPreference = 'Stop'
+# 外部コマンド (denpachan-ctl) に JSON を渡すときの " の扱いを、PowerShell 7 でも 5.1 と同じにする
+# (下の '{\"name\":...}' は 5.1 の渡し方に合わせて書いてある。7 の既定のままだと \ まで渡って JSON が壊れる)
+if ($PSVersionTable.PSVersion.Major -ge 7) { $PSNativeCommandArgumentPassing = 'Legacy' }
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $bin = Join-Path $root 'out/build/bin/Release'
