@@ -360,9 +360,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             await _client.CallAsync("shutdown").WaitAsync(TimeSpan.FromSeconds(3));
         }
-        catch (Exception e) when (e is EngineException or TimeoutException)
+        catch (Exception)
         {
-            // 応答がなくても閉じる (engine は要求を受けていれば自分で止まる)
+            // 応答がなくても、送れなくても閉じる (engine は要求を受けていれば自分で止まる)
         }
     }
 

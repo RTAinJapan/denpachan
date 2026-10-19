@@ -16,4 +16,11 @@
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
 
+  <!-- dotnet watch (VS Code のタスク「画面: 文言を確認」) で XAML の変更も拾う。
+       XAML はビルド時に BAML になるのでホットリロードが効かない。ホットリロードを切って (no-hot-reload)、
+       ビルドし直して起動し直す -->
+  <ItemGroup>
+    <Watch Include="**\*.xaml" Exclude="bin\**;obj\**" />
+  </ItemGroup>
+
 </Project>

@@ -14,8 +14,10 @@ namespace Denpachan.Ui;
 /// 起動オプション:
 ///   --screenshot PATH [--delay SEC]   試験用: 指定秒数後に画面を PNG に保存して終了する
 ///   --select N                         試験用: 起動時に選択するチャンネル
-///   --settings N [--settings-tab T]    試験用: --screenshot で、チャンネル N の設定画面 (T 番目のタブ、0 から) を撮る
-///   --general                          試験用: --screenshot で、全体の設定画面を撮る
+///   --settings N [--settings-tab T]    試験用: チャンネル N の設定画面 (T 番目のタブ、0 から) を開く (--screenshot ならそれを撮る)
+///   --general                          試験用: 全体の設定画面を開く (--screenshot ならそれを撮る)
+///                                      --screenshot なしで --fixture と使うと、文言を直しながら確かめられる
+///                                      (README の「画面の文言を直すとき」、VS Code のタスク)
 ///   --size WxH                         試験用: --screenshot で、画面の中身をウィンドウから外してこの大きさで配置・描画する
 ///                                      (ウィンドウは画面より大きくできないので、CI の小さい画面でも同じ絵にするため)。
 ///                                      H が 0 なら中身の自然な高さ (設定画面)
@@ -98,27 +100,40 @@ public partial class App : Application
         }
         window.Show();
 
+        // --settings / --general の画面を開く (開けなければメイン画面のまま)
+        Window OpenRequestedDialog()
+        {
+            Window target = window;
+            if (settingsFor > 0 && window.ViewModel.Channels[settingsFor - 1].Config != null)
+            {
+                var settings = new Views.ChannelSettingsWindow(window.ViewModel, window.ViewModel.Channels[settingsFor - 1]) { Owner = window };
+                settings.Tabs.SelectedIndex = settingsTab;
+                target = settings;
+                target.Show();
+                target.UpdateLayout();
+            }
+            else if (general && window.ViewModel.GeneralConfig != null)
+            {
+                target = new Views.GeneralSettingsWindow(window.ViewModel, window.ViewModel.GeneralConfig) { Owner = window };
+                target.Show();
+                target.UpdateLayout();
+            }
+            return target;
+        }
+
+        if (screenshot == null && (settingsFor > 0 || general))
+        {
+            // 開発用: 起動したら設定画面も開いておく (文言を直しながら確かめるとき)
+            Dispatcher.InvokeAsync(() => OpenRequestedDialog(), DispatcherPriority.ApplicationIdle);
+        }
+
         if (screenshot != null)
         {
             var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(delay) };
             timer.Tick += (_, _) =>
             {
                 timer.Stop();
-                Window target = window;
-                if (settingsFor > 0 && window.ViewModel.Channels[settingsFor - 1].Config != null)
-                {
-                    var settings = new Views.ChannelSettingsWindow(window.ViewModel, window.ViewModel.Channels[settingsFor - 1]) { Owner = window };
-                    settings.Tabs.SelectedIndex = settingsTab;
-                    target = settings;
-                    target.Show();
-                    target.UpdateLayout();
-                }
-                else if (general && window.ViewModel.GeneralConfig != null)
-                {
-                    target = new Views.GeneralSettingsWindow(window.ViewModel, window.ViewModel.GeneralConfig) { Owner = window };
-                    target.Show();
-                    target.UpdateLayout();
-                }
+                var target = OpenRequestedDialog();
                 Dispatcher.InvokeAsync(() =>
                 {
                     SaveScreenshot(target, screenshot, size);

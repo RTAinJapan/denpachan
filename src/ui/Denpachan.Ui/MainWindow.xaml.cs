@@ -27,7 +27,8 @@ public partial class MainWindow : Window
     // 閉じると受信も止める (engine を worker ごと止める)。受信中なら閉じてよいかを聞く
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (_closeConfirmed) return;
+        // 試験用の状態 (fixture) では engine につながっていないので、確かめず止めもしない
+        if (_closeConfirmed || ViewModel.FixtureMode) return;
         e.Cancel = true;
         if (!ViewModel.ConfirmClose()) return;
         _closeConfirmed = true;

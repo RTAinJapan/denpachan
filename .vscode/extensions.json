@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    "ms-dotnettools.csdevkit",
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools"
+  ]
+}
