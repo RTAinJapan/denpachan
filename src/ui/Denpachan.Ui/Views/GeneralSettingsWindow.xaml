@@ -23,7 +23,7 @@
                     <TextBox x:Name="MarginBox" Width="100" Margin="0,3" />
                     <TextBlock Text="  デバイスのバッファに足す" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" />
                 </StackPanel>
-                <Label Grid.Row="2" Content="通信途絶とみなす時間 (ms)" VerticalAlignment="Center" />
+                <Label Grid.Row="2" Content="映像途絶とみなす時間 (ms)" VerticalAlignment="Center" />
                 <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
                     <TextBox x:Name="StallBox" Width="100" Margin="0,3" />
                 </StackPanel>
