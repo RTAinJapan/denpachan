@@ -52,6 +52,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         ShutdownCommand = new RelayCommand(() => Application.Current.MainWindow?.Close());  // 閉じるときの確認を通る
         SelectCommand = new RelayCommand(p => { if (p is ChannelViewModel ch) Selected = ch; });
         UnregisterVcamCommand = new RelayCommand(UnregisterVcam);
+        OpenSettingsFolderCommand = new RelayCommand(OpenSettingsFolder);
         Loc.Instance.LanguageChanged += OnLanguageChanged;
     }
 
@@ -135,6 +136,25 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ICommand ShutdownCommand { get; }
     public ICommand SelectCommand { get; }
     public ICommand UnregisterVcamCommand { get; }
+    public ICommand OpenSettingsFolderCommand { get; }
+
+    /// <summary>設定ファイル (engine の config.json、画面の ui.json) のあるフォルダ</summary>
+    private static string SettingsFolder =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "denpachan");
+
+    /// <summary>設定ファイルのフォルダをエクスプローラーで開く (まだ無ければ作ってから開く)</summary>
+    private void OpenSettingsFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(SettingsFolder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{SettingsFolder}\"") { UseShellExecute = true });
+        }
+        catch (Exception e)
+        {
+            Log(F("event.openFolderFailed", ("path", SettingsFolder), ("error", e.Message)), true);
+        }
+    }
 
     private ChannelViewModel? _selected;
     public ChannelViewModel? Selected
@@ -410,8 +430,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     // ---- 画面の設定 (プレビューのオン・オフ、操作ロック、言語) ----
 
-    private static string UiSettingsPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "denpachan", "ui.json");
+    private static string UiSettingsPath => Path.Combine(SettingsFolder, "ui.json");
 
     private bool _loadingUiSettings;
 

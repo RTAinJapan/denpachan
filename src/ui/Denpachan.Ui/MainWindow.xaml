@@ -193,6 +193,7 @@
         <Menu DockPanel.Dock="Top" Background="{StaticResource PanelBrush}">
             <MenuItem Header="{l:Tr main.menu.file}">
                 <MenuItem Header="{l:Tr main.menu.general}" Command="{Binding GeneralSettingsCommand}" />
+                <MenuItem Header="{l:Tr main.menu.openSettingsFolder}" Command="{Binding OpenSettingsFolderCommand}" />
                 <MenuItem Header="{l:Tr main.menu.refreshDevices}" Command="{Binding RefreshDevicesCommand}" />
                 <MenuItem Header="{l:Tr main.menu.unregisterVcam}" Command="{Binding UnregisterVcamCommand}" />
                 <Separator />
