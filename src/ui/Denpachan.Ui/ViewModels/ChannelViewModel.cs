@@ -552,11 +552,12 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         var configured = srt.Int("configuredLatencyMs");
         var text = F("srtAdvice.value", ("latency", recommended), ("rtt", $"{r.Num("rttMs"):0.0}"), ("multiplier", r.Int("multiplier")),
                      ("loss", $"{r.Num("lossPct"):0.##}"), ("sec", r.Int("windowSec")));
-        if (r.Num("drops") > 0) return text + F("srtAdvice.drops", ("drops", $"{r.Num("drops"):0}"), ("current", effective));
-        if (recommended < effective && effective > configured) return text + F("srtAdvice.peerLatency", ("current", effective));
-        if (recommended < effective) return text + F("srtAdvice.canLower", ("current", effective));
-        if (recommended > effective) return text + F("srtAdvice.notEnough", ("current", effective));
-        return text;
+        var note = r.Num("drops") > 0 ? F("srtAdvice.drops", ("drops", $"{r.Num("drops"):0}"), ("current", effective))
+                   : recommended < effective && effective > configured ? F("srtAdvice.peerLatency", ("current", effective))
+                   : recommended < effective ? F("srtAdvice.canLower", ("current", effective))
+                   : recommended > effective ? F("srtAdvice.notEnough", ("current", effective))
+                   : "";
+        return note.Length > 0 ? F("srtAdvice.withNote", ("value", text), ("note", note)) : text;
     }
 
     private static double PeakOf(JsonNode? v) => v is JsonValue j && j.TryGetValue<double>(out var d) && double.IsFinite(d) ? d : -100;
