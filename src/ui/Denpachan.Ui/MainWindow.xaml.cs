@@ -12,6 +12,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Title = $"denpachan {Infrastructure.AppVersion.Text}";  // 版はタイトルに出す (問い合わせのときに確かめられるように)
         ViewModel = new MainViewModel();
         DataContext = ViewModel;
         Loaded += (_, _) => ViewModel.Start();

@@ -10,11 +10,13 @@
 .EXAMPLE
   ./build.ps1                 # Release
   ./build.ps1 -Config debug
+  ./build.ps1 -VersionLabel rc.1   # 版の後ろにラベルを付ける (プレリリース。CI がタグ vX.Y.Z-rc.1 のときに使う)
 #>
 param(
     [ValidateSet('release', 'debug')]
     [string]$Config = 'release',
-    [switch]$Clean
+    [switch]$Clean,
+    [string]$VersionLabel = ''
 )
 $ErrorActionPreference = 'Stop'
 
@@ -26,6 +28,8 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     if (-not $vs) { throw 'C++ ツールセット入りの Visual Studio が見つからない' }
+    # 開発者シェルの初期化スクリプトは vswhere.exe を PATH から呼ぶ。無いと「'vswhere.exe' は…認識されていません」と出る
+    $env:PATH = (Split-Path $vswhere) + ';' + $env:PATH
     Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
     Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 }
@@ -46,14 +50,15 @@ if (-not $env:VCPKG_DOWNLOADS) {
 Push-Location $PSScriptRoot
 try {
     if ($Clean -and (Test-Path out/build)) { Remove-Item -Recurse -Force out/build }
-    cmake --preset x64
+    # ラベルは毎回渡す (前のビルドのラベルが CMake のキャッシュに残らないように)
+    cmake --preset x64 "-DDENPACHAN_VERSION_LABEL=$VersionLabel"
     if ($LASTEXITCODE) { throw 'configure failed' }
     cmake --build --preset $Config
     if ($LASTEXITCODE) { throw 'build failed' }
 
     # UI (C# / WPF)。engine と同じフォルダに出す (UI は隣の denpachan-engine.exe を起動する)
     $cfgName = if ($Config -eq 'release') { 'Release' } else { 'Debug' }
-    dotnet build src/ui/Denpachan.Ui/Denpachan.Ui.csproj -c $cfgName -o "out/build/bin/$cfgName" --nologo -v minimal
+    dotnet build src/ui/Denpachan.Ui/Denpachan.Ui.csproj -c $cfgName -o "out/build/bin/$cfgName" --nologo -v minimal "-p:DenpachanVersionLabel=$VersionLabel"
     if ($LASTEXITCODE) { throw 'UI build failed' }
 } finally {
     Pop-Location

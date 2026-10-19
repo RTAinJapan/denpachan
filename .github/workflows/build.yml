@@ -83,9 +83,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # タグ vX.Y.Z-ラベル のときは、ラベルを exe の製品版と画面のタイトルの版に付ける
       - name: Build
         shell: pwsh
-        run: ./build.ps1
+        env:
+          LABEL: ${{ steps.version.outputs.label }}
+        run: ./build.ps1 -VersionLabel "$env:LABEL"
 
       - name: Check the output
         shell: pwsh

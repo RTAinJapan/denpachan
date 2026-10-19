@@ -27,6 +27,9 @@ Visual Studio 2026 (C++ によるデスクトップ開発)、.NET 10 SDK、vcpkg
 
 版を書くのは `CMakeLists.txt` の `project(denpachan ... VERSION X.Y.Z)` の 1 か所だけ (画面の csproj もここを読む。ラベルはここには書かない)。
 
+- 版は、画面のタイトル (`denpachan X.Y.Z`) と、exe・DLL のプロパティの「詳細」(`cmake/VersionResource.cmake`) に出る。
+- ラベルは `./build.ps1 -VersionLabel rc.1` で付く (CI はタグ `vX.Y.Z-rc.1` のときに付ける)。画面のタイトルと製品バージョンが `X.Y.Z-rc.1` になる (ファイルバージョンは数字だけなので `X.Y.Z.0` のまま)。
+
 手順:
 
 1. `CMakeLists.txt` の版を上げて main にコミットする (PR でよい)。

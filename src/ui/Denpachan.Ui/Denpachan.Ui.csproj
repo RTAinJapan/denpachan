@@ -13,6 +13,11 @@
     <!-- 版は CMakeLists.txt の project(denpachan ... VERSION x.y.z) だけに書き、ここはそれを読む
          (C++ と画面、配布の zip、リリースのタグで同じ版にするため。docs/development.md の「リリース」) -->
     <Version>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\..\CMakeLists.txt')), '(?&lt;=project\(denpachan[^)]*VERSION )[0-9]+\.[0-9]+\.[0-9]+'))</Version>
+    <!-- プレリリースのラベル (rc.1 など)。build.ps1 -VersionLabel が渡す。画面のタイトルに出る版 (InformationalVersion) に付く -->
+    <InformationalVersion Condition="'$(DenpachanVersionLabel)' != ''">$(Version)-$(DenpachanVersionLabel)</InformationalVersion>
+    <Product>denpachan</Product>
+    <Company>RTA in Japan</Company>
+    <Copyright>Copyright (c) 2026 RTA in Japan. MIT License</Copyright>
     <SatelliteResourceLanguages>ja</SatelliteResourceLanguages>
     <!-- exe のアイコン。ウィンドウとタスクバーもこれを使う (元は assets/denpachan.svg) -->
     <ApplicationIcon>..\..\..\assets\denpachan.ico</ApplicationIcon>
