@@ -443,9 +443,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
                           ("delay", $"{delay:0}"), ("res", res), ("codec", video.Str("codec")));
             var recommended = srt.At("recommend").Int("latencyMs");
             TransportLine = srt != null
-                ? F("main.tile.srtLine", ("latency", srt.Int("latencyMs")),
-                    ("recommend", recommended > 0 ? F("main.tile.srtRecommend", ("latency", recommended)) : ""),
-                    ("rtt", $"{rtt:0.0}"), ("lost", $"{srt.Num("lost"):0}"), ("dropped", $"{srt.Num("dropped"):0}"))
+                ? F(recommended > 0 ? "main.tile.srtLineWithRecommend" : "main.tile.srtLine", ("latency", srt.Int("latencyMs")),
+                    ("recommend", recommended), ("rtt", $"{rtt:0.0}"), ("lost", $"{srt.Num("lost"):0}"), ("dropped", $"{srt.Num("dropped"):0}"))
                 : tcp != null ? F("main.tile.tcpLine", ("rtt", $"{rtt:0.0}"), ("retrans", $"{tcp.Num("retransBytes") / 1024:0}")) : "";
             // 受信中だけ出す (HW が使えれば何も出さない)
             SoftwareDecode = videoState is "live" or "hold" && !video.Bool("hwDecode");
@@ -484,13 +483,18 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             ? _audioDropouts.Add(audioOut.Num("underruns") + audioOut.Num("resyncs"))
             : 0;
         var gaps = audioIn != null ? _audioGaps.Add(audioIn.Num("gaps")) : 0;
-        var dropoutNote = dropouts + gaps > 0 ? F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")) : "";
+        // 再生中の補足 (ミュート、音切れ)。あれば「、」でつないで後ろに出す
+        var audioNotes = new List<string>();
+        if (Mute) audioNotes.Add(T("main.tile.audioMuted"));
+        if (dropouts + gaps > 0) audioNotes.Add(F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")));
+        var audioLatency = $"{audioOut.Num("latencyMs"):0}";
         AudioLine = audioOut switch
         {
             null => T("main.tile.audioNone"),
             _ when audioOut.At("error") != null => F("main.tile.audioError", ("error", Message(audioOut.At("error"))), ("device", audioOut.Str("device"))),
-            _ when audioOut.Bool("playing") => F("main.tile.audioPlaying", ("latency", $"{audioOut.Num("latencyMs"):0}"))
-                                               + (Mute ? T("main.tile.audioMuted") : "") + dropoutNote,
+            _ when audioOut.Bool("playing") => audioNotes.Count == 0
+                ? F("main.tile.audioPlaying", ("latency", audioLatency))
+                : F("main.tile.audioPlayingWithNotes", ("latency", audioLatency), ("notes", string.Join(T("common.listSeparator"), audioNotes))),
             _ => T(audioOut.Bool("open") ? "main.tile.audioIdle" : "main.tile.audioCannotOpen"),
         };
         AudioKind = audioOut == null ? "ok"
@@ -620,8 +624,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
         if (st.At("audioOut") is JsonNode ao)
         {
-            Add("detail.audioOut", $"{ao.Str("device")} {ao.Int("startChannel")}-{ao.Int("startChannel") + 1}"
-                                   + (ao.Bool("exclusive") ? T("detail.audioOutExclusive") : ""));
+            Add("detail.audioOut", F(ao.Bool("exclusive") ? "detail.audioOutValueExclusive" : "detail.audioOutValue",
+                                     ("device", ao.Str("device")), ("channels", $"{ao.Int("startChannel")}-{ao.Int("startChannel") + 1}")));
             if (ao.At("latencyMs") != null)
             {
                 Add("detail.audioLatency", F("detail.audioLatencyValue", ("latency", $"{ao.Num("latencyMs"):0.0}"),

@@ -6,6 +6,8 @@
   - コードが使うキーが ja.json に無い (画面に [キー] と出てしまう)
   - ja.json にあるのにどこでも使っていないキー (消し忘れ)
   - ほかの言語ファイルに、ja.json に無いキーがある / {name} の引数が ja.json と違う
+  - 空白・「。」・「、」で始まる文 (ほかの文の後ろにつなぐ断片。つなぎ方ごと 1 つの文にする。
+    区切り文字そのもの (キーが Separator で終わる) は除く)
   を見つけたら終了コード 1。ほかの言語ファイルで訳していないキー (日本語で出る) は数だけ出す。
 
   コードが使うキーは次から拾う:
@@ -70,8 +72,13 @@ foreach ($key in $base.Keys) {
     if (-not $key.StartsWith('_') -and -not $used.ContainsKey($key)) { $problems += "ja.json にあるが使っていない: $key" }
 }
 
-foreach ($f in Get-ChildItem $langDir -Filter *.json | Where-Object { $_.Name -ne 'ja.json' }) {
+foreach ($f in Get-ChildItem $langDir -Filter *.json) {
     $lang = Read-Lang $f.FullName
+    foreach ($key in $lang.Keys) {
+        if ($key.StartsWith('_') -or $key.EndsWith('Separator')) { continue }
+        if ($lang[$key] -match '^[\s。、.,]') { $problems += "$($f.Name): $key が断片になっている (空白や句読点で始まる): '$($lang[$key])'" }
+    }
+    if ($f.Name -eq 'ja.json') { continue }
     $untranslated = 0
     foreach ($key in $base.Keys) {
         if ($key.StartsWith('_')) { continue }

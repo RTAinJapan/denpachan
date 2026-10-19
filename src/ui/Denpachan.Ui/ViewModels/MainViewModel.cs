@@ -186,8 +186,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 if (d.FreeGb < d.MinFreeGb) Raise("error"); else if (d.FreeGb < d.MinFreeGb * 2) Raise("warn");
                 disks.Add($"{d.Root.TrimEnd('\\')} {FormatGb(d.FreeGb)}");
             }
-            SystemText = F("main.status.system", ("cpu", $"{s.CpuPercent:0}"), ("memory", FormatGb(s.MemoryFreeGb)))
-                         + (disks.Count > 0 ? F("main.status.disks", ("disks", string.Join(", ", disks))) : "");
+            SystemText = F(disks.Count > 0 ? "main.status.systemWithDisks" : "main.status.system", ("cpu", $"{s.CpuPercent:0}"),
+                           ("memory", FormatGb(s.MemoryFreeGb)), ("disks", string.Join(", ", disks)));
             SystemKind = kind;
         }
         catch
