@@ -14,8 +14,8 @@ namespace Denpachan.Ui;
 ///   --select N                         試験用: 起動時に選択するチャンネル
 ///   --settings N [--settings-tab T]    試験用: --screenshot で、チャンネル N の設定画面 (T 番目のタブ、0 から) を撮る
 ///   --general                          試験用: --screenshot で、全体の設定画面を撮る
-///   --size WxH                         試験用: --screenshot で、画面の中身をこの大きさで描く (CI の画面が小さくても同じ絵になる)。
-///                                      H が 0 なら中身の自然な高さ (設定画面)
+///   --size WxH                         試験用: --screenshot で、ウィンドウをこの大きさにする (枠なし・サイズ変更不可にして、
+///                                      CI の小さい画面でも Windows に縮められないようにする)。H が 0 なら中身の自然な高さ (設定画面)
 ///   --fixture PATH                     試験用: engine に繋がず、ファイルの設定と状態を画面に流し込む (UiFixture)。
 ///                                      --screenshot と使うと、PNG の隣に画面の状態 (PATH.txt) を書き、
 ///                                      fixture の expect と合わなければ終了コード 1
@@ -90,6 +90,24 @@ public partial class App : Application
                     break;
             }
         }
+        // 枠のあるウィンドウは画面より大きくできない (Windows が縮める) ので、撮影のときは枠なしにして大きさを決める
+        void ApplySize(Window w)
+        {
+            if (size is not { } s) return;
+            w.WindowStyle = WindowStyle.None;
+            w.ResizeMode = ResizeMode.NoResize;
+            w.Width = s.Width;
+            if (s.Height > 0)
+            {
+                w.SizeToContent = SizeToContent.Manual;
+                w.Height = s.Height;
+            }
+            else
+            {
+                w.SizeToContent = SizeToContent.Height;
+            }
+        }
+        if (screenshot != null) ApplySize(window);
         window.Show();
 
         if (screenshot != null)
@@ -104,29 +122,15 @@ public partial class App : Application
                     var settings = new Views.ChannelSettingsWindow(window.ViewModel, window.ViewModel.Channels[settingsFor - 1]) { Owner = window };
                     settings.Tabs.SelectedIndex = settingsTab;
                     target = settings;
+                    ApplySize(target);
                     target.Show();
                     target.UpdateLayout();
                 }
                 else if (general && window.ViewModel.GeneralConfig != null)
                 {
                     target = new Views.GeneralSettingsWindow(window.ViewModel, window.ViewModel.GeneralConfig) { Owner = window };
+                    ApplySize(target);
                     target.Show();
-                    target.UpdateLayout();
-                }
-                if (size is { } s)
-                {
-                    // 中身に大きさを直接与える。ウィンドウが画面より大きくできなくても、中身はこの大きさで配置・描画される
-                    var content = (FrameworkElement)target.Content;
-                    content.Width = s.Width;
-                    if (s.Height > 0)
-                    {
-                        content.Height = s.Height;
-                    }
-                    else
-                    {
-                        content.Measure(new Size(s.Width, double.PositiveInfinity));
-                        content.Height = content.DesiredSize.Height;
-                    }
                     target.UpdateLayout();
                 }
                 Dispatcher.InvokeAsync(() =>

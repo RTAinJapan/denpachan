@@ -47,8 +47,9 @@ function Get-PngSize([string]$path) {
     # IHDR: 16 バイト目から幅と高さ (ビッグエンディアン 4 バイトずつ)
     $b = [System.IO.File]::ReadAllBytes($path)
     if ($b.Length -lt 24 -or $b[1] -ne 0x50 -or $b[2] -ne 0x4E -or $b[3] -ne 0x47) { return $null }
-    $w = ($b[16] -shl 24) -bor ($b[17] -shl 16) -bor ($b[18] -shl 8) -bor $b[19]
-    $h = ($b[20] -shl 24) -bor ($b[21] -shl 16) -bor ($b[22] -shl 8) -bor $b[23]
+    # [byte] のままシフトすると byte に切り詰められる (1600 が 64 になる) ので int にしてから
+    $w = ([int]$b[16] -shl 24) -bor ([int]$b[17] -shl 16) -bor ([int]$b[18] -shl 8) -bor [int]$b[19]
+    $h = ([int]$b[20] -shl 24) -bor ([int]$b[21] -shl 16) -bor ([int]$b[22] -shl 8) -bor [int]$b[23]
     return @($w, $h)
 }
 
