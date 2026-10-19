@@ -34,11 +34,11 @@ SRT / RTMP で受けた映像と音声 (最大 4 チャンネル) を、OBS な�
 - 画面が落ちたときは、受信は止まらずに続く。もう一度 `denpachan.exe` を起動すれば、動いている受信につながる。
 - 設定は `%APPDATA%\denpachan`、ログとクラッシュダンプは `%LOCALAPPDATA%\denpachan` に置かれる。
 
-### 3. やめるとき
+### 3. アンインストール
 
 1. メニューの「仮想カメラの登録を解除」を選ぶ。
-2. 画面を閉じる (受信も止まる)。OBS や Discord など、カメラを使うアプリも閉じる (denpachan Cam を使ったままだと、フォルダを消せない)。
-3. denpachan のフォルダを消す。設定も消すなら `%APPDATA%\denpachan` と `%LOCALAPPDATA%\denpachan` も消す。
+2. 画面を閉じる。OBS や Discord など、カメラを使うアプリも閉じる (denpachan Cam を使ったままだと、フォルダを消せない)。
+3. denpachan のフォルダを消す。設定とログも消すなら `%APPDATA%\denpachan` と `%LOCALAPPDATA%\denpachan` も消す。
 
 ## ドキュメント
 
