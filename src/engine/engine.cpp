@@ -205,7 +205,6 @@ void Engine::apply_channel_locked(int ch) {
     // 録画の設定は共有メモリで渡す (worker を再起動しない)。起動前に書いておけば起動時に読まれる。
     json record = c.record;
     record["name"] = c.name;
-    record["ffmpegPath"] = config_.general.ffmpeg_path;
     w.set_record_config(record.dump());
     if (c.enabled && ffmpeg_ok_) {
         w.start(worker_args(c));  // 同じ設定で動いていれば何もしない

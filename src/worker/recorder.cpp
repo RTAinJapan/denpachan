@@ -134,7 +134,6 @@ RecordConfig parse_record_config(const std::string& text, int ch) {
         c.replacement = get(j, "invalidCharReplacement", c.replacement);
         c.min_free_gb = get(j, "minFreeGb", c.min_free_gb);
         c.name = get(j, "name", "CH" + std::to_string(ch));
-        c.ffmpeg_path = get(j, "ffmpegPath", std::string());  // engine が全体設定から入れる
         if (j.contains("encode")) {
             const auto& e = j.at("encode");
             if (e.contains("video")) {
@@ -408,8 +407,7 @@ void Recorder::process(Item& item) {
                                     n.tmpl != o.tmpl || n.video_codec != o.video_codec ||
                                     n.video_encoder != o.video_encoder || n.rate_control != o.rate_control ||
                                     n.bitrate_kbps != o.bitrate_kbps || n.qp != o.qp || n.preset != o.preset ||
-                                    n.gop_sec != o.gop_sec || n.audio_bitrate_kbps != o.audio_bitrate_kbps ||
-                                    (uses_external_encoder(n) && n.ffmpeg_path != o.ffmpeg_path);
+                                    n.gop_sec != o.gop_sec || n.audio_bitrate_kbps != o.audio_bitrate_kbps;
         if (segment_ && output_changed) close_segment(n.enabled ? "settings changed" : "recording turned off");
         if (n.enabled && !o.enabled) spdlog::info("record: enabled ({}, {})", n.mode, n.container);
         config_ = n;
@@ -673,10 +671,9 @@ void Recorder::add_copy_streams(Segment& seg) {
 }
 
 bool Recorder::open_external(Segment& seg) {
-    const std::wstring exe = ExternalEncoder::find(config_.ffmpeg_path);
+    const std::wstring exe = ExternalEncoder::find();
     if (exe.empty()) {
-        set_error(config_.ffmpeg_path.empty() ? ui_message("rec.ffmpegNotFound")
-                                              : ui_message("rec.ffmpegNotFoundAt", {{"path", config_.ffmpeg_path}}));
+        set_error(ui_message("rec.ffmpegNotFound"));
         return false;
     }
     const AVRational rate = info_->video_rate.num > 0 ? info_->video_rate : AVRational{60, 1};

@@ -62,8 +62,6 @@ struct GeneralConfig {
     int stall_ms = 2000;
     int audio_margin_ms = 10;
     bool av_sync = true;
-    // CPU で再エンコードして録画するときの外部 ffmpeg.exe。空なら denpachan と同じフォルダ、次に PATH から探す
-    std::string ffmpeg_path;
     // RTMP サーバ (rtmpd)。RTMP push のチャンネルが 1 つでも動いていれば起動する
     std::string rtmp_bind = "0.0.0.0";
     int rtmp_port = 1935;

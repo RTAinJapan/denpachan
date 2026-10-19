@@ -28,22 +28,6 @@ public partial class GeneralSettingsWindow : Window
         BindBox.Text = rtmp.Str("bind", "0.0.0.0");
         RtmpPortBox.Text = rtmp.Int("port", 1935).ToString();
         IdleBox.Text = rtmp.Int("idleTimeoutMs", 5000).ToString();
-        FfmpegBox.Text = general.Str("ffmpegPath");
-    }
-
-    private void BrowseFfmpeg_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new Microsoft.Win32.OpenFileDialog { Title = "ffmpeg.exe", Filter = T("general.ffmpegFilter") };
-        if (dialog.ShowDialog(this) == true) FfmpegBox.Text = dialog.FileName;
-    }
-
-    private async void CheckFfmpeg_Click(object sender, RoutedEventArgs e)
-    {
-        FfmpegStatus.Text = T("general.ffmpegChecking");
-        FfmpegStatus.Foreground = (System.Windows.Media.Brush)FindResource("DimTextBrush");
-        var result = await ExternalFfmpeg.CheckAsync(FfmpegBox.Text.Trim());
-        FfmpegStatus.Text = result.Message;
-        FfmpegStatus.Foreground = result.Ok ? (System.Windows.Media.Brush)FindResource("TextBrush") : System.Windows.Media.Brushes.LightCoral;
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
@@ -61,7 +45,6 @@ public partial class GeneralSettingsWindow : Window
             ["avSync"] = AvSyncBox.IsChecked == true,
             ["audioMarginMs"] = margin,
             ["stallMs"] = stall,
-            ["ffmpegPath"] = FfmpegBox.Text.Trim(),
             ["rtmpServer"] = new JsonObject { ["bind"] = BindBox.Text.Trim(), ["port"] = port, ["idleTimeoutMs"] = idle },
         };
         SaveButton.IsEnabled = false;

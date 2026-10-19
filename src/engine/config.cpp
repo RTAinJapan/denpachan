@@ -184,7 +184,6 @@ json to_json(const GeneralConfig& g) {
     return {{"stallMs", g.stall_ms},
             {"audioMarginMs", g.audio_margin_ms},
             {"avSync", g.av_sync},
-            {"ffmpegPath", g.ffmpeg_path},
             {"rtmpServer", {{"bind", g.rtmp_bind}, {"port", g.rtmp_port}, {"idleTimeoutMs", g.rtmp_idle_timeout_ms}}}};
 }
 
@@ -243,7 +242,7 @@ GeneralConfig general_from_json(const json& j) {
     g.stall_ms = get_or(j, "stallMs", def.stall_ms);
     g.audio_margin_ms = get_or(j, "audioMarginMs", def.audio_margin_ms);
     g.av_sync = get_or(j, "avSync", def.av_sync);
-    g.ffmpeg_path = get_or(j, "ffmpegPath", def.ffmpeg_path);
+    // 以前あった "ffmpegPath" (CPU エンコードの ffmpeg.exe) は読まない。ffmpeg.exe は FFmpeg の DLL と同じフォルダから使う
     if (j.contains("rtmpServer")) {
         const auto& r = j.at("rtmpServer");
         g.rtmp_bind = get_or(r, "bind", def.rtmp_bind);

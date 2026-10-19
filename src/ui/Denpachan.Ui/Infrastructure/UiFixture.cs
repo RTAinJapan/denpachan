@@ -165,7 +165,6 @@ public static class UiFixture
         ["stallMs"] = 2000,
         ["audioMarginMs"] = 10,
         ["avSync"] = true,
-        ["ffmpegPath"] = "",
         ["rtmpServer"] = new JsonObject { ["bind"] = "0.0.0.0", ["port"] = 1935, ["idleTimeoutMs"] = 5000 },
     };
 

@@ -120,16 +120,6 @@ step "5d. CPU エンコード (x265, 固定 QP 28) → 5 秒受信"
 send 5
 sleep "$AFTER"
 
-step "5e. ffmpeg が見つからない → エラー表示、受信は続く"
-"$CTL" set-general '{"ffmpegPath":"C:\\nowhere\\ffmpeg.exe"}' >/dev/null
-send 4 &
-SENDER=$!
-sleep 3
-summary
-wait "$SENDER"
-"$CTL" set-general '{"ffmpegPath":""}' >/dev/null
-sleep 4
-
 step "6. MPEG-TS / パススルー に切り替え → 4 秒受信"
 "$CTL" set 1 '{"record":{"mode":"passthrough","container":"ts"}}' >/dev/null
 send 4

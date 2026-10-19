@@ -27,8 +27,7 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 - 見つからない・版が合わないとき: engine と画面は動き、画面の上部とチャンネルの状態に「FFmpeg 9.x (shared 版) が見つかりません」を出す。
   受信 (worker) は起動しない。engine は 10 秒ごとに探し直し、見つかれば再起動なしで受信を始める。
 - 録画の **CPU エンコード** (x264 / x265 / SVT-AV1) は、FFmpeg の `ffmpeg.exe` を子プロセスとして起動して行う (設計書 §8.4)。
-  shared 版の `bin` には ffmpeg.exe も入っているので、PATH に通せば追加の用意は要らない。x264 / x265 を使うには **gpl** 版が必要 (lgpl 版の ffmpeg.exe には入っていない)。
-  全体設定で別の ffmpeg.exe を指定することもできる。
+  shared 版の `bin` には ffmpeg.exe も入っていて、denpachan は受信に使っている DLL と同じフォルダの ffmpeg.exe を使うので、追加の用意や設定は要らない (無ければ PATH から探す)。x264 / x265 を使うには **gpl** 版が必要 (lgpl 版の ffmpeg.exe には入っていない)。
 - GPU エンコード (NVENC / QSV / AMF) は、読み込んだ FFmpeg の DLL に入っているものを使う。上記の配布版にはどれも入っている。
 
 ### 1.2 なぜ FFmpeg を同梱しないか

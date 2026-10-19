@@ -47,7 +47,6 @@ struct RecordConfig {
     // 再エンコード
     std::string video_codec = "h264";   // h264 / hevc / av1
     std::string video_encoder = "auto"; // auto / nvenc / qsv / amf (GPU)、cpu (外部 ffmpeg)
-    std::string ffmpeg_path;            // CPU のときの ffmpeg.exe。空なら denpachan と同じフォルダ、次に PATH
     std::string rate_control = "cbr";   // cbr / vbr / cqp
     int bitrate_kbps = 12000;
     int qp = 23;

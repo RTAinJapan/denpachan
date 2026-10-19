@@ -25,8 +25,9 @@ public:
     ExternalEncoder(const ExternalEncoder&) = delete;
     ExternalEncoder& operator=(const ExternalEncoder&) = delete;
 
-    // ffmpeg.exe を探す。configured (UTF-8) が空なら denpachan と同じフォルダ、次に PATH。見つからなければ空
-    static std::wstring find(const std::string& configured);
+    // ffmpeg.exe を探す。受信に使っている FFmpeg の DLL (shared 版の bin) と同じフォルダを先に見て、
+    // 無ければ PATH。受信と録画で同じ FFmpeg を使うため (別に指定する設定は持たない)。見つからなければ空
+    static std::wstring find();
     // 動いている ffmpeg をすべて止める (録画スレッドが書き込みで固まったときの最後の手段)
     static void kill_all();
 
