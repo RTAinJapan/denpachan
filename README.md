@@ -13,11 +13,10 @@ SRT / RTMP で受けた映像と音声 (最大 4 チャンネル) を、OBS な�
 | Windows 10 / 11 (x64) | |
 | .NET 10 デスクトップ ランタイム (x64) | https://dotnet.microsoft.com/download/dotnet/10.0 の「.NET Desktop Runtime」 |
 | Visual C++ 再頒布可能パッケージ (x64、最新版) | https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist |
-| **FFmpeg 9.x の shared 版** | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) の「release full shared」、または [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) の `win64-gpl-shared-9.0` |
+| **FFmpeg 9.x** | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) の「release full shared」、または [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) の `win64-gpl-shared-9.0` (どちらか 1 つ) |
 
 - FFmpeg は、展開した `bin` フォルダを **PATH に通す**か、`bin` の中身を **denpachan と同じフォルダに置く**。
   見つからないときは、画面の上部に赤い帯で案内が出る (入れれば再起動しなくても動き出す)。
-- 録画を CPU (x264 / x265) でエンコードするときは、FFmpeg は **gpl** 版を入れる。
 - あると良いもの: GPU のドライバ (ハードウェアデコード・録画の GPU エンコード)、OBS など DirectShow の映像を取り込めるソフト、Dante Virtual Soundcard など。
 
 ### 2. 起動する

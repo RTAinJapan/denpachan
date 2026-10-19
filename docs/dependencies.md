@@ -18,7 +18,8 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 ### 1.1 FFmpeg
 
 - **FFmpeg 9.x の shared 版** (DLL が入っているもの) を使う。static 版 (ffmpeg.exe 1 つだけのもの) では動かない。
-  - 例: [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) の「release full shared」、[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) の `win64-gpl-shared-9.0` / `win64-lgpl-shared-9.0`
+  - 利用者に案内するもの (README): [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) の「release full shared」、または [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) の `win64-gpl-shared-9.0`。どちらも gpl 版で、録画の CPU エンコードまで全部使える。
+  - BtbN の `win64-lgpl-shared-9.0` でも動くが、録画の CPU エンコード (x264 / x265) だけは使えない。README では選択肢を増やさないため案内しない。
 - 展開した `bin` フォルダを **PATH に通す**か、中の DLL を **denpachan と同じフォルダに置く**。
   使う DLL: `avcodec-63.dll`, `avformat-63.dll`, `avutil-61.dll`, `swresample-7.dll`, `swscale-10.dll` (とそれらが使う DLL)。
 - 版の決まり: denpachan をビルドした FFmpeg と major が同じ (avcodec 63 = FFmpeg 9 系) で、minor が同じか新しいこと。
