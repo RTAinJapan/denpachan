@@ -35,7 +35,7 @@ $exclude = '*.pdb', '*.ilk', '*.exp', '*.lib', 'audio_probe.exe'
 Get-ChildItem $bin | Where-Object { $n = $_.Name; -not ($exclude | Where-Object { $n -like $_ }) } |
     Copy-Item -Destination $stage -Recurse
 Copy-Item (Join-Path $root 'README.md') $stage
-foreach ($doc in 'design.md', 'dependencies.md', 'third_party_notices.md') {
+foreach ($doc in 'design.md', 'dependencies.md', 'development.md', 'third_party_notices.md') {  # README からリンクしているもの
     Copy-Item (Join-Path $root "docs/$doc") (Join-Path $stage 'docs')
 }
 

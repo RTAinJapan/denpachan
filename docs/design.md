@@ -693,6 +693,7 @@ denpachan/
 ├─ docs/
 │  ├─ design.md
 │  ├─ dependencies.md        # 利用者が用意するもの / 同梱するもの / ビルドに使うもの
+│  ├─ development.md         # ビルド・試験・画面の文言の直し方 (開発者向け)
 │  └─ third_party_notices.md # 配布物の licenses/README.md になる
 ├─ schema/                   # IPC メッセージ・設定ファイルの JSON Schema
 ├─ src/

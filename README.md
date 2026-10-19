@@ -42,37 +42,9 @@ SRT / RTMP で受けた映像と音声 (最大 4 チャンネル) を、OBS な�
 
 ## ドキュメント
 
+- 開発 (ビルド・試験・画面の文言の直し方): [docs/development.md](docs/development.md)
 - 設計: [docs/design.md](docs/design.md)
 - 依存関係・ライセンス: [docs/dependencies.md](docs/dependencies.md)
-
-## ビルド
-
-```powershell
-./build.ps1
-```
-
-Visual Studio 2026 (C++ によるデスクトップ開発)、.NET 10 SDK、vcpkg (`VCPKG_ROOT`) が必要。出力は `out/build/bin/Release`。
-
-- ビルドに使う FFmpeg のヘッダは、初回の configure で FFmpeg 9.0.2 の shared 版を `out/deps/` に取ってくる (配布物には入れない)。
-- FFmpeg の DLL は出力に入らないので、開発中は `out/deps/ffmpeg-9.0.2-full_build-shared/bin` を PATH に足して動かす。
-- GitHub Actions でも同じようにビルドし、配布用の zip を artifact にする (`.github/workflows/build.yml`)。
-
-### 画面の文言を直すとき (VS Code)
-
-engine や配信がなくても、受信中の状態の画面を出して、文言を直しながら確かめられる。
-
-1. VS Code でこのフォルダを開く (おすすめの拡張機能は `.vscode/extensions.json`)。
-2. 「ターミナル」→「タスクの実行」→「画面: 文言を確認 (メイン画面)」を選ぶ (流し込む状態は normal / degraded / ffmpeg-missing / disconnected から選ぶ)。チャンネル設定・録画タブ・全体設定のタスクもある。
-3. `src/ui/Denpachan.Ui` の XAML や C# を直して保存すると、数秒でビルドし直して画面が起動し直す (`dotnet watch`)。止めるときはターミナルで Ctrl+C。
-
-コマンドで動かすときは次のとおり (`--settings 1` / `--settings 1 --settings-tab 1` / `--general` で設定画面も開く)。
-
-```powershell
-dotnet watch --no-hot-reload run --project src/ui/Denpachan.Ui/Denpachan.Ui.csproj -- --fixture tools/ui_screenshots/cases/normal.json
-```
-
-- 画面に流し込む状態は `tools/ui_screenshots/cases/*.json` (スクリーンショット試験と同じもの)。
-- XAML はホットリロードが効かないので、ホットリロードを切って毎回起動し直している。
 
 ## ライセンス
 

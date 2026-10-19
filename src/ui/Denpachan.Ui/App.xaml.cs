@@ -17,7 +17,7 @@ namespace Denpachan.Ui;
 ///   --settings N [--settings-tab T]    試験用: チャンネル N の設定画面 (T 番目のタブ、0 から) を開く (--screenshot ならそれを撮る)
 ///   --general                          試験用: 全体の設定画面を開く (--screenshot ならそれを撮る)
 ///                                      --screenshot なしで --fixture と使うと、文言を直しながら確かめられる
-///                                      (README の「画面の文言を直すとき」、VS Code のタスク)
+///                                      (docs/development.md の「画面の文言を直すとき」、VS Code のタスク)
 ///   --size WxH                         試験用: --screenshot で、画面の中身をウィンドウから外してこの大きさで配置・描画する
 ///                                      (ウィンドウは画面より大きくできないので、CI の小さい画面でも同じ絵にするため)。
 ///                                      H が 0 なら中身の自然な高さ (設定画面)

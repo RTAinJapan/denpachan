@@ -86,7 +86,7 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 ### 3.3 配布の形
 
 - 配布は zip (`tools/package.ps1` が `out/dist/denpachan-<版>-win64.zip` を作る。CI でも同じものを artifact にする)。展開すればインストールせずに使える。
-  - 中身: 実行ファイルと同梱の DLL、`licenses/`、README.md、docs/ (設計・依存関係・ライセンス)。PDB は別の zip。開発用の audio_probe.exe は入れない。FFmpeg が入っていたら作るのを止める。
+  - 中身: 実行ファイルと同梱の DLL、`licenses/`、README.md、docs/ (設計・依存関係・開発・ライセンス。README からリンクしているもの)。PDB は別の zip。開発用の audio_probe.exe は入れない。FFmpeg が入っていたら作るのを止める。
   - 仮想カメラは画面が起動時にこのユーザーに登録する (設計書 §5.1)。
 - .NET 10 デスクトップ ランタイム、VC++ 再頒布可能パッケージ、FFmpeg 9.x shared は同梱せず、README に入手先を書く。
 - 展開した zip での動作は `tools/testsrc/package_test.sh` で確かめる (仮想カメラの登録と、DirectShow で映像が取れること)。
