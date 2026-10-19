@@ -6,11 +6,8 @@
 #include <filesystem>
 #include <set>
 
+#include "denpachan/ffmpeg_runtime.h"
 #include "filename.h"
-
-extern "C" {
-#include <libavcodec/version_major.h>
-}
 
 namespace denpachan::worker {
 
@@ -50,16 +47,6 @@ std::wstring quote_arg(const std::wstring& arg) {
     return out;
 }
 
-// 読み込んでいる FFmpeg の DLL (avcodec) のフォルダ。読み込んでいなければ空
-std::filesystem::path ffmpeg_dll_dir() {
-    const std::wstring dll = L"avcodec-" + std::to_wstring(LIBAVCODEC_VERSION_MAJOR) + L".dll";
-    HMODULE module = GetModuleHandleW(dll.c_str());
-    if (!module) return {};
-    wchar_t buf[MAX_PATH * 2] = {};
-    const DWORD n = GetModuleFileNameW(module, buf, DWORD(std::size(buf)));
-    if (n == 0 || n >= std::size(buf)) return {};
-    return std::filesystem::path(std::wstring(buf, n)).parent_path();
-}
 
 }  // namespace
 
@@ -88,8 +75,8 @@ ExternalEncoder::~ExternalEncoder() {
 
 std::wstring ExternalEncoder::find() {
     std::error_code ec;
-    if (const auto dir = ffmpeg_dll_dir(); !dir.empty()) {
-        const std::filesystem::path beside = dir / L"ffmpeg.exe";
+    if (const std::wstring dir = ffmpeg_runtime::loaded_dir(); !dir.empty()) {
+        const std::filesystem::path beside = std::filesystem::path(dir) / L"ffmpeg.exe";
         if (std::filesystem::is_regular_file(beside, ec)) return beside.wstring();
     }
     wchar_t buf[MAX_PATH] = {};

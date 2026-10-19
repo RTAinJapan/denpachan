@@ -66,7 +66,8 @@ void Engine::check_ffmpeg_locked() {
     ffmpeg_message_ = result.message;
     g_ffmpeg_available = result.ok;
     if (result.ok && !was_ok) {
-        spdlog::info("FFmpeg found (avcodec {}.{})", avcodec_version() >> 16, (avcodec_version() >> 8) & 0xff);
+        spdlog::info("FFmpeg found (avcodec {}.{}): {}", avcodec_version() >> 16, (avcodec_version() >> 8) & 0xff,
+                     to_utf8(ffmpeg_runtime::loaded_dir()));
         for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
     } else if (!result.ok && result.message != old_message) {
         spdlog::error("{}", result.message);

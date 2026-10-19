@@ -26,6 +26,7 @@
 #include "denpachan/ffmpeg_runtime.h"
 #include "denpachan/worker_status.h"
 #include "decoder.h"
+#include "filename.h"
 #include "playout_clock.h"
 #include "denpachan/win_util.h"
 #include "flv_ring_ingest.h"
@@ -300,8 +301,8 @@ int main(int argc, char** argv) {
         spdlog::critical("{}", ff.message);
         return int(worker_status::kExitFfmpegUnavailable);
     }
-    spdlog::info("FFmpeg: avcodec {}.{}, avformat {}.{}", avcodec_version() >> 16, (avcodec_version() >> 8) & 0xff,
-                 avformat_version() >> 16, (avformat_version() >> 8) & 0xff);
+    spdlog::info("FFmpeg: avcodec {}.{}, avformat {}.{}: {}", avcodec_version() >> 16, (avcodec_version() >> 8) & 0xff,
+                 avformat_version() >> 16, (avformat_version() >> 8) & 0xff, path_utf8(ffmpeg_runtime::loaded_dir()));
 
     // 配信中にスリープ・省電力で止まらないようにする (設計書 §4)
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);

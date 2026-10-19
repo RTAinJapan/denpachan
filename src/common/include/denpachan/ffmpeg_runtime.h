@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <initializer_list>
+#include <iterator>
 #include <string>
 
 #include "denpachan/ui_message.h"
@@ -39,6 +40,20 @@ struct Result {
 };
 
 inline std::string dll_name(const Lib& lib) { return std::string(lib.name) + "-" + std::to_string(lib.major) + ".dll"; }
+
+// 読み込んでいる FFmpeg の DLL (avcodec) のフォルダ。読み込んでいなければ空。
+// ログに出す (どの FFmpeg を使っているか) のと、録画の CPU エンコードで同じフォルダの ffmpeg.exe を使うため
+inline std::wstring loaded_dir() {
+    const std::wstring dll = L"avcodec-" + std::to_wstring(LIBAVCODEC_VERSION_MAJOR) + L".dll";
+    HMODULE module = GetModuleHandleW(dll.c_str());
+    if (!module) return {};
+    wchar_t buf[MAX_PATH * 2] = {};
+    const DWORD n = GetModuleFileNameW(module, buf, DWORD(std::size(buf)));
+    if (n == 0 || n >= std::size(buf)) return {};
+    std::wstring path(buf, n);
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+}
 
 // libs は依存される側から並べる (avutil → swresample → swscale → avcodec → avformat)
 inline Result check(std::initializer_list<Lib> libs) {
