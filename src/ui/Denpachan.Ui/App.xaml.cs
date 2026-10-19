@@ -48,6 +48,7 @@ public partial class App : Application
                 {
                     // 試験 (CI) ではダイアログを待つ人がいない: 例外を書き出して終わる
                     if (screenshot != null) File.WriteAllText(screenshot + ".txt", "{\"result\": \"exception\", \"error\": " + System.Text.Json.JsonSerializer.Serialize(args.Exception.ToString()) + "}");
+                    window.AllowCloseWithoutConfirm();
                     Shutdown(2);
                     return;
                 }
@@ -64,6 +65,8 @@ public partial class App : Application
         };
 
         window = new MainWindow();
+        // Windows のシャットダウン・ログオフでは閉じてよいかを聞かない (ダイアログでシャットダウンを止めないように)
+        SessionEnding += (_, _) => window.AllowCloseWithoutConfirm();
         var delay = 6.0;
         var settingsFor = 0;  // 試験用: このチャンネルの設定画面を撮る (0 = メイン画面)
         var settingsTab = 0;
@@ -126,6 +129,7 @@ public partial class App : Application
                         File.WriteAllText(screenshot + ".txt", UiFixture.Report(window.ViewModel, failures));
                         exitCode = failures.Count == 0 ? 0 : 1;
                     }
+                    window.AllowCloseWithoutConfirm();  // 試験: 確認せず、engine も止めない (試験側が片付ける)
                     Shutdown(exitCode);
                 }, DispatcherPriority.ContextIdle);
             };

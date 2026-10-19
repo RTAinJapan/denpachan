@@ -194,8 +194,7 @@
                 <MenuItem Header="音声デバイスを読み直す(_R)" Command="{Binding RefreshDevicesCommand}" />
                 <MenuItem Header="仮想カメラの登録を解除 (フォルダを消す前に)(_U)…" Command="{Binding UnregisterVcamCommand}" />
                 <Separator />
-                <MenuItem Header="engine を停止して終了(_Q)" Command="{Binding ShutdownCommand}" />
-                <MenuItem Header="画面を閉じる (受信は続ける)(_C)" Click="Close_Click" />
+                <MenuItem Header="終了 (受信も止める)(_X)" Command="{Binding ShutdownCommand}" />
             </MenuItem>
         </Menu>
 

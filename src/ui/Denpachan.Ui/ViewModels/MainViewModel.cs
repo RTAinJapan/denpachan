@@ -48,7 +48,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         RefreshDevicesCommand = new RelayCommand(() => _ = LoadDevicesAsync(), () => Connected);
         GeneralSettingsCommand = new RelayCommand(OpenGeneralSettings, () => Connected && GeneralConfig != null);
-        ShutdownCommand = new RelayCommand(() => _ = ShutdownAsync(), () => Connected);
+        ShutdownCommand = new RelayCommand(() => Application.Current.MainWindow?.Close());  // 閉じるときの確認を通る
         SelectCommand = new RelayCommand(p => { if (p is ChannelViewModel ch) Selected = ch; });
         UnregisterVcamCommand = new RelayCommand(UnregisterVcam);
     }
@@ -332,14 +332,38 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         window.ShowDialog();
     }
 
-    private async Task ShutdownAsync()
+    // ---- 終了 (画面を閉じると受信も止める) ----
+
+    /// <summary>
+    /// 閉じてよいか確かめる。受信を開始しているチャンネルがあれば、止めてよいかを聞く (既定はキャンセル)。
+    /// false = 閉じない。
+    /// </summary>
+    public bool ConfirmClose()
     {
+        if (FixtureMode) return true;
+        var active = Channels.Where(c => c.Enabled).ToList();
+        if (active.Count == 0) return true;
+        var names = string.Join("、", active.Select(c => c.Name));
+        var recording = active.Any(c => c.RecordKind == "recording") ? "\n録画中のファイルも閉じます。" : "";
         var answer = MessageBox.Show(Application.Current.MainWindow,
-            "engine と全チャンネルの受信を停止して終了します。\n仮想カメラと音声出力も止まります。よろしいですか?",
-            "denpachan", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.OK) return;
-        await CallAsync("shutdown");
-        Application.Current.Shutdown();
+            $"受信中のチャンネルがあります ({names})。\n" +
+            $"閉じると受信を止め、仮想カメラと音声の出力も止まります。{recording}\n閉じてよいですか?",
+            "denpachan", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        return answer == MessageBoxResult.OK;
+    }
+
+    /// <summary>engine を worker ごと止める。繋がっていなければ何もしない</summary>
+    public async Task StopEngineAsync()
+    {
+        if (!Connected) return;
+        try
+        {
+            await _client.CallAsync("shutdown").WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        catch (Exception e) when (e is EngineException or TimeoutException)
+        {
+            // 応答がなくても閉じる (engine は要求を受けていれば自分で止まる)
+        }
     }
 
     // ---- イベントログ ----
