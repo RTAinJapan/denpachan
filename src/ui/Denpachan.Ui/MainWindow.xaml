@@ -161,7 +161,7 @@
 
                     <!-- 操作 -->
                     <WrapPanel Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
-                        <Button Content="{Binding StartStopLabel}" Command="{Binding StartStopCommand}" Style="{StaticResource PrimaryButton}" MinWidth="64" />
+                        <Button Content="{Binding StartStopLabel}" Command="{Binding StartStopCommand}" Style="{StaticResource StartStopButton}" MinWidth="64" />
                         <ToggleButton Content="{l:Tr main.tile.record}" IsChecked="{Binding RecordEnabled, Mode=OneWay}" Command="{Binding RecordCommand}"
                                       Style="{StaticResource RecordChip}" ToolTip="{l:Tr main.tile.recordTip}" />
                         <ToggleButton Content="{l:Tr main.tile.preview}" IsChecked="{Binding PreviewEnabled}" Style="{StaticResource ToggleChip}" />

@@ -63,6 +63,21 @@
         <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
     </Style>
 
+    <!-- 受信の開始 / 停止ボタン: 止まっているときは「開始」を緑 (受信中の色) で塗り、受信しているときは「停止」を赤の枠と文字で出す。
+         どちらの操作になるかを色で見分けられるように (プレビューなどの青いボタンとも分ける)。
+         停止を赤で塗らないのは、隣の録画ボタン (録画中は赤で塗る) と見分けるため -->
+    <Style x:Key="StartStopButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Background" Value="{StaticResource LiveBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource LiveBrush}" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Enabled}" Value="True">
+                <Setter Property="Background" Value="{StaticResource PanelHiBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ErrorBrush}" />
+                <Setter Property="Foreground" Value="#FFFF7A80" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
     <Style TargetType="ToggleButton" x:Key="ToggleChip">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="Background" Value="{StaticResource PanelHiBrush}" />
