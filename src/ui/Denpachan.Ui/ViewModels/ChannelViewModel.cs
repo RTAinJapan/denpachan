@@ -118,6 +118,18 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private bool _isSelected;
     public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
 
+    private bool _isLocked;
+    /// <summary>操作ロック (誤操作の防止)。タイルのボタンとプルダウンを使えなくする。</summary>
+    public bool IsLocked
+    {
+        get => _isLocked;
+        set
+        {
+            if (!SetProperty(ref _isLocked, value)) return;
+            _main.SaveUiSettings();
+        }
+    }
+
     // ---- プレビュー ----
 
     public WriteableBitmap PreviewBitmap => _preview.Bitmap;

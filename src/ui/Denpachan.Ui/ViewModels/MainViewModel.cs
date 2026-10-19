@@ -282,7 +282,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         while (Events.Count > 500) Events.RemoveAt(Events.Count - 1);
     }
 
-    // ---- 画面の設定 (プレビューのオン・オフ) ----
+    // ---- 画面の設定 (プレビューのオン・オフ、操作ロック) ----
 
     private static string UiSettingsPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "denpachan", "ui.json");
@@ -295,10 +295,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (!File.Exists(UiSettingsPath)) return;
             var json = JsonNode.Parse(File.ReadAllText(UiSettingsPath));
+            _loadingUiSettings = true;
             if (json.At("preview") is JsonArray preview)
             {
-                _loadingUiSettings = true;
                 for (var i = 0; i < Math.Min(preview.Count, Channels.Count); i++) Channels[i].PreviewEnabled = preview[i]?.GetValue<bool>() ?? true;
+            }
+            if (json.At("locked") is JsonArray locked)
+            {
+                for (var i = 0; i < Math.Min(locked.Count, Channels.Count); i++) Channels[i].IsLocked = locked[i]?.GetValue<bool>() ?? false;
             }
         }
         catch
@@ -317,7 +321,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(UiSettingsPath)!);
-            var json = new JsonObject { ["preview"] = new JsonArray(Channels.Select(c => (JsonNode)c.PreviewEnabled).ToArray()) };
+            var json = new JsonObject
+            {
+                ["preview"] = new JsonArray(Channels.Select(c => (JsonNode)c.PreviewEnabled).ToArray()),
+                ["locked"] = new JsonArray(Channels.Select(c => (JsonNode)c.IsLocked).ToArray()),
+            };
             File.WriteAllText(UiSettingsPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
         catch

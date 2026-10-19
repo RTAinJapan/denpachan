@@ -9,6 +9,15 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
 
+        <!-- 操作ロック中は使えなくする (タイルのボタンとプルダウン) -->
+        <Style x:Key="LockablePanel" TargetType="WrapPanel">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                    <Setter Property="IsEnabled" Value="False" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <!-- チャンネルのタイル -->
         <DataTemplate x:Key="ChannelTile" DataType="{x:Type vm:ChannelViewModel}">
             <Border Margin="6" Padding="10" CornerRadius="6" Background="{StaticResource PanelBrush}" BorderThickness="2"
@@ -33,8 +42,20 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!-- 見出し: 名前、入力、状態 -->
+                    <!-- 見出し: 名前、入力、状態、操作ロック -->
                     <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                        <c:LockToggle DockPanel.Dock="Right" IsLocked="{Binding IsLocked}" Margin="6,0,0,0" VerticalAlignment="Center">
+                            <c:LockToggle.Style>
+                                <Style TargetType="c:LockToggle">
+                                    <Setter Property="ToolTip" Value="クリックで操作をロック (誤操作の防止)" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                            <Setter Property="ToolTip" Value="操作をロック中。1 秒長押しで解除" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </c:LockToggle.Style>
+                        </c:LockToggle>
                         <Border DockPanel.Dock="Right" Style="{StaticResource StatusPill}" VerticalAlignment="Center">
                             <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" FontSize="12" />
                         </Border>
@@ -111,7 +132,7 @@
                                  Capacity="120" Stroke="{StaticResource AccentBrush}" />
 
                     <!-- 操作 -->
-                    <WrapPanel Grid.Row="4" Margin="0,8,0,0">
+                    <WrapPanel Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
                         <Button Content="{Binding StartStopLabel}" Command="{Binding StartStopCommand}" Style="{StaticResource PrimaryButton}" MinWidth="64" />
                         <ToggleButton Content="● 録画" IsChecked="{Binding RecordEnabled, Mode=OneWay}" Command="{Binding RecordCommand}"
                                       Style="{StaticResource RecordChip}" ToolTip="録画のオン・オフ (受信は止めない)" />
@@ -124,7 +145,7 @@
                     </WrapPanel>
 
                     <!-- ルーティング -->
-                    <WrapPanel Grid.Row="5" Margin="0,8,0,0">
+                    <WrapPanel Grid.Row="5" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
                         <TextBlock Text="映像" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
                         <ComboBox ItemsSource="{Binding Source={x:Static vm:ChannelViewModel.VcamOptions}}" DisplayMemberPath="Label"
                                   SelectedValuePath="Value" SelectedValue="{Binding Vcam}" MinWidth="90" Margin="0,0,14,0" />
