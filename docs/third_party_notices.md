@@ -1,6 +1,12 @@
 # 同梱しているソフトウェアとライセンス
 
-denpachan 本体は MIT ライセンスです (`denpachan.txt`)。配布物には次のライブラリを同梱しています。各ライセンス文はこのフォルダにあります。
+denpachan は MIT License で配布しています (`denpachan.txt`)。Copyright (c) 2026 RTA in Japan。
+ソースコードは https://github.com/RTAinJapan/denpachan で入手できます。
+
+ASIO 出力の `denpachan-asio-driver.dll` は、Steinberg の ASIO SDK を GPL-3.0 で使っているため、
+別のリポジトリ https://github.com/RTAinJapan/denpachan-asio-driver で GPL-3.0 として配っています。この配布物には入っていません。
+
+配布物には次のライブラリを同梱・組み込みしています。各ライセンス文はこのフォルダにあります。
 
 | ファイル | ソフトウェア | 版 | ライセンス | ライセンス文 |
 |---------|-------------|----|-----------|-------------|

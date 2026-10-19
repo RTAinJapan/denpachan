@@ -4,7 +4,10 @@
 
 #include <cmath>
 
+#include "asio_output.h"
 #include "audio_devices.h"
+#include "device_output.h"
+#include "output_devices.h"
 
 using nlohmann::json;
 
@@ -25,7 +28,7 @@ bool same_routes(const std::vector<RouteOptions>& a, const std::vector<RouteOpti
 }
 
 bool same_options(const DeviceOptions& a, const DeviceOptions& b) {
-    return a.id == b.id && a.exclusive == b.exclusive && a.margin_ms == b.margin_ms;
+    return a.id == b.id && a.asio == b.asio && a.exclusive == b.exclusive && a.margin_ms == b.margin_ms;
 }
 
 double dbfs(float v) { return v > 1e-5f ? 20.0 * std::log10(v) : -100.0; }
@@ -40,19 +43,33 @@ void AudioRouter::apply(const Config& config) {
     // 有効なチャンネルのルーティングをデバイスごとにまとめる
     std::map<std::wstring, Device> plans;
     missing_.clear();
+    asio_busy_.clear();
+    std::wstring asio_id;  // 使う ASIO ドライバ (同時に 1 つだけ。最初のチャンネルのものを使う)
+    std::wstring asio_name;
     for (const auto& ch : config.channels) {
         if (!ch.enabled || ch.audio.device.empty()) continue;
-        const auto dev = find_audio_device(eRender, from_utf8(ch.audio.device));
+        const auto dev = find_output_device(from_utf8(ch.audio.device));
         if (!dev) {
             missing_[ch.id] = ch.audio.device;
             continue;
+        }
+        if (dev->asio) {
+            if (asio_id.empty()) {
+                asio_id = dev->id;
+                asio_name = dev->name;
+            }
+            if (dev->id != asio_id) {
+                asio_busy_[ch.id] = ch.audio.device;
+                continue;
+            }
         }
         auto& plan = plans[dev->id];
         if (plan.options.id.empty()) {
             plan.options.id = dev->id;
             plan.options.name = dev->name;
+            plan.options.asio = dev->asio;
             plan.options.margin_ms = config.general.audio_margin_ms;
-            plan.options.exclusive = ch.audio.mode == "exclusive";
+            plan.options.exclusive = !dev->asio && ch.audio.mode == "exclusive";
         }
         RouteOptions r;
         r.ch = ch.id;
@@ -63,7 +80,7 @@ void AudioRouter::apply(const Config& config) {
         plan.routes.push_back(r);
     }
 
-    // 不要になった / 変わったデバイスを止める
+    // 不要になった / 変わったデバイスを止める (ASIO を別のドライバに替えるときは、先に止めてから開く)
     for (auto it = devices_.begin(); it != devices_.end();) {
         auto p = plans.find(it->first);
         if (p == plans.end() || !same_options(p->second.options, it->second.options) ||
@@ -79,7 +96,11 @@ void AudioRouter::apply(const Config& config) {
     for (auto& [id, plan] : plans) {
         auto it = devices_.find(id);
         if (it == devices_.end()) {
-            plan.output = std::make_unique<DeviceOutput>(plan.options, plan.routes);
+            if (plan.options.asio) {
+                plan.output = std::make_unique<AsioOutput>(plan.options, plan.routes);
+            } else {
+                plan.output = std::make_unique<DeviceOutput>(plan.options, plan.routes);
+            }
             plan.output->start();
             devices_.emplace(id, std::move(plan));
         } else {
@@ -90,6 +111,9 @@ void AudioRouter::apply(const Config& config) {
     if (missing_ != logged_missing_) {  // 5 秒ごとの apply で毎回出さない
         for (const auto& [ch, name] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, name);
         logged_missing_ = missing_;
+    }
+    for (const auto& [ch, name] : asio_busy_) {
+        spdlog::warn("ch{}: {} is not used: only one ASIO driver at a time ({} is in use)", ch, name, to_utf8(asio_name));
     }
 }
 
@@ -105,6 +129,9 @@ json AudioRouter::channel_status(int ch) {
     if (auto it = missing_.find(ch); it != missing_.end()) {
         return {{"device", it->second}, {"open", false}, {"error", {{"id", "audio.deviceNotFound"}}}};
     }
+    if (auto it = asio_busy_.find(ch); it != asio_busy_.end()) {
+        return {{"device", it->second}, {"open", false}, {"error", {{"id", "audio.asioOneDriver"}}}};
+    }
     for (auto& [id, d] : devices_) {
         for (const auto& r : d.routes) {
             if (r.ch != ch) continue;
@@ -112,6 +139,7 @@ json AudioRouter::channel_status(int ch) {
             json j = {{"device", to_utf8(d.options.name)},
                       {"deviceId", to_utf8(id)},
                       {"open", st.open},
+                      {"api", d.options.asio ? "asio" : "wasapi"},
                       {"exclusive", st.exclusive},
                       {"startChannel", r.start_channel},
                       {"mute", r.mute}};
@@ -124,6 +152,10 @@ json AudioRouter::channel_status(int ch) {
                 j["slips"] = stats.slips.load();
                 j["underruns"] = stats.underruns.load();
                 j["resyncs"] = stats.resyncs.load();
+                {
+                    std::lock_guard lk(stats.reason_mutex);
+                    j["lastResync"] = stats.last_resync_reason;  // 直近の合わせ直しの理由 (調べもの用)
+                }
                 j["peakDb"] = {dbfs(stats.peak_l.exchange(0)), dbfs(stats.peak_r.exchange(0))};
             });
             return j;
@@ -139,6 +171,7 @@ json AudioRouter::devices_status() {
         arr.push_back({{"name", to_utf8(d.options.name)},
                        {"id", to_utf8(id)},
                        {"open", st.open},
+                       {"api", d.options.asio ? "asio" : "wasapi"},
                        {"exclusive", st.exclusive},
                        {"sampleRate", st.sample_rate},
                        {"channels", st.channels},

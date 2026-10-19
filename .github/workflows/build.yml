@@ -77,7 +77,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: out/deps
-          key: ffmpeg-${{ hashFiles('cmake/FetchFfmpeg.cmake') }}
+          key: deps-${{ hashFiles('cmake/FetchFfmpeg.cmake') }}
 
       - uses: actions/setup-dotnet@v6
         with:

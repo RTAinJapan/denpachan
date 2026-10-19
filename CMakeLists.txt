@@ -28,6 +28,8 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 include(cmake/FetchFfmpeg.cmake)  # ヘッダと import lib だけ使う (DLL は同梱しない)
 include(cmake/FfmpegRuntime.cmake)
 
+# ASIO 出力は別のリポジトリ (denpachan-asio-driver、GPL-3.0) の DLL を engine が実行時に読み込む。ここではビルドしない
+
 add_subdirectory(src/common)
 add_subdirectory(src/vcam)
 add_subdirectory(src/worker)

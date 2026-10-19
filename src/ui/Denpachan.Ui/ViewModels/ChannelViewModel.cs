@@ -292,6 +292,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private void UpdateStartChannelOptions()
     {
         var channels = _main.AudioDevices.FirstOrDefault(d => d.Name == _audioDevice)?.Channels ?? 2;
+        // ASIO のドライバは、別の ASIO ドライバを使っている間はチャンネル数が分からない (0)。そのときは広く出す
+        if (channels <= 0) channels = 64;
         channels = Math.Clamp(channels, 2, 64);
         var options = new List<Option<int>>();
         for (var start = 1; start + 1 <= channels; start += 2) options.Add(new(start, $"{start}-{start + 1}"));

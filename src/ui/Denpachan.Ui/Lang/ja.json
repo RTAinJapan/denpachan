@@ -96,6 +96,7 @@
   "channel.audioMode": "音声の出力モード",
   "channel.audioModeShared": "共有",
   "channel.audioModeExclusive": "排他",
+  "channel.audioModeAsio": "ASIO のドライバに出すときは使いません (共有 / 排他は WASAPI のデバイスのときだけ)",
   "channel.audioOffset": "音声オフセット (ms)",
   "channel.fade": "受信の開始・途絶の瞬間に短いフェードをかける (ノイズ防止)",
   "channel.reconnectNote": "受信の設定を変えると一旦切断されます。",
@@ -287,5 +288,6 @@
   "msg.worker.ffmpegUnavailable": "FFmpeg を読み込めません",
   "msg.ffmpeg.missing": "FFmpeg {series} (shared 版) が見つかりません ({dlls})。",
   "msg.ffmpeg.version": "FFmpeg の版が合いません: {lib} {found} ({required} 以上が必要)。FFmpeg {series} の shared 版を指定してください",
-  "msg.audio.deviceNotFound": "デバイスが見つかりません"
+  "msg.audio.deviceNotFound": "デバイスが見つかりません",
+  "msg.audio.asioOneDriver": "ASIO のドライバは同時に 1 つしか使えません (別のチャンネルが別の ASIO ドライバを使っています)"
 }

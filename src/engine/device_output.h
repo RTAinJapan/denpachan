@@ -18,46 +18,26 @@
 #include <thread>
 #include <vector>
 
+#include "audio_output.h"
 #include "channel_source.h"
 #include "denpachan/win_util.h"
 
 namespace denpachan::engine {
 
-struct DeviceOptions {
-    std::wstring id;
-    std::wstring name;
-    bool exclusive = false;
-    int margin_ms = 10;  // デバイスのバッファに足す音声の余裕 (到着の揺れの吸収)
-};
-
-struct DeviceStatus {
-    bool open = false;
-    bool exclusive = false;
-    int sample_rate = 0;
-    int channels = 0;
-    std::string sample_format;
-    double buffer_ms = 0;
-    double delay_ms = 0;  // 鳴らすべき時刻からの基本遅延 (バッファ + 余裕)
-    uint64_t reopens = 0;
-};
-
-class DeviceOutput {
+class DeviceOutput : public AudioOutput {
 public:
     DeviceOutput(DeviceOptions options, std::vector<RouteOptions> routes);
-    ~DeviceOutput();
+    ~DeviceOutput() override;
 
-    void start();
-    void stop();
+    void start() override;
+    void stop() override;
 
-    DeviceStatus status();
-    const DeviceOptions& options() const { return options_; }
+    DeviceStatus status() override;
+    const DeviceOptions& options() const override { return options_; }
 
-    // ミュートの切り替え (デバイスを開き直しても保たれる)
-    void set_mute(int ch, bool mute);
+    void set_mute(int ch, bool mute) override;
 
-    // 各チャンネルの ChannelSource に f を適用する (デバイスを開いたことがなければ何もしない)
-    template <typename F>
-    void for_each_source(F&& f) {
+    void for_each_source(const std::function<void(ChannelSource&)>& f) override {
         std::lock_guard lk(sources_mutex_);
         for (auto& s : sources_) f(*s);
     }
