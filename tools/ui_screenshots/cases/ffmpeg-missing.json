@@ -1,0 +1,36 @@
+{
+  "_comment": "FFmpeg (同梱しない) が見つからない: 上部に赤い帯、有効なチャンネルは「FFmpeg がありません」",
+  "channels": [
+    { "name": "Game A", "enabled": true, "vcam": 1, "source": { "protocol": "srt", "mode": "listener", "port": 9001 } },
+    { "name": "Game B", "enabled": true, "vcam": 2, "source": { "protocol": "rtmp", "mode": "push", "app": "live", "key": "gameb" } },
+    { "name": "CH3", "enabled": false },
+    { "name": "CH4", "enabled": false }
+  ],
+  "state": {
+    "channels": [
+      { "id": 1, "name": "Game A", "enabled": true, "vcam": 1, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9001 },
+        "worker": { "state": "unavailable", "pid": 0, "restarts": 0, "uptimeSec": 0, "lastEvent": { "id": "worker.ffmpegUnavailable" } }, "audioOut": null },
+      { "id": 2, "name": "Game B", "enabled": true, "vcam": 2, "source": { "protocol": "rtmp", "mode": "push", "app": "live" },
+        "worker": { "state": "unavailable", "pid": 0, "restarts": 0, "uptimeSec": 0, "lastEvent": { "id": "worker.ffmpegUnavailable" } }, "audioOut": null },
+      { "id": 3, "name": "CH3", "enabled": false, "vcam": 3, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9003 },
+        "worker": { "state": "stopped", "pid": 0, "restarts": 0, "uptimeSec": 0, "lastEvent": "" }, "audioOut": null },
+      { "id": 4, "name": "CH4", "enabled": false, "vcam": 4, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9004 },
+        "worker": { "state": "stopped", "pid": 0, "restarts": 0, "uptimeSec": 0, "lastEvent": "" }, "audioOut": null }
+    ],
+    "rtmpServer": { "state": "running", "pid": 4100, "restarts": 0, "uptimeSec": 10, "lastEvent": "", "port": 1935 },
+    "audioDevices": [],
+    "ffmpeg": { "ok": false, "message": { "id": "ffmpeg.missing", "series": "9.x", "dlls": "avcodec-62.dll, avformat-62.dll" } }
+  },
+  "repeat": 5,
+  "select": 1,
+  "expect": {
+    "connected": true,
+    "ffmpegMissing": true,
+    "channels": [
+      { "statusText": "FFmpeg がありません", "statusKind": "restarting" },
+      { "statusText": "FFmpeg がありません" },
+      { "statusText": "停止" },
+      { "statusText": "停止" }
+    ]
+  }
+}

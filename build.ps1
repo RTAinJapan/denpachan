@@ -1,0 +1,65 @@
+﻿<#
+.SYNOPSIS
+  denpachan の C++ 部分をビルドする。
+
+.DESCRIPTION
+  Visual Studio の開発者シェルに入り、CMake プリセットで configure / build する。
+  VCPKG_ROOT が未設定なら D:\dev\vcpkg を使う。vcpkg のダウンロード / バイナリキャッシュは、
+  未設定なら VCPKG_ROOT の隣の vcpkg-cache 配下に置く (C ドライブを圧迫しないため)。
+
+.EXAMPLE
+  ./build.ps1                 # Release
+  ./build.ps1 -Config debug
+  ./build.ps1 -VersionLabel rc.1   # 版の後ろにラベルを付ける (プレリリース。CI がタグ vX.Y.Z-rc.1 のときに使う)
+#>
+param(
+    [ValidateSet('release', 'debug')]
+    [string]$Config = 'release',
+    [switch]$Clean,
+    [string]$VersionLabel = ''
+)
+$ErrorActionPreference = 'Stop'
+
+# 呼び出し元が指定した vcpkg (開発者シェルに入る前の値)
+$vcpkgRoot = $env:VCPKG_ROOT
+
+# VS 開発者シェル (cl.exe / cmake / ninja を PATH に入れる)
+if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vs) { throw 'C++ ツールセット入りの Visual Studio が見つからない' }
+    # 開発者シェルの初期化スクリプトは vswhere.exe を PATH から呼ぶ。無いと「'vswhere.exe' は…認識されていません」と出る
+    $env:PATH = (Split-Path $vswhere) + ';' + $env:PATH
+    Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+    Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+}
+
+# 開発者シェルは VCPKG_ROOT を VS 同梱の vcpkg に書き換えるので、シェルに入った後で設定し直す
+$env:VCPKG_ROOT = if ($vcpkgRoot) { $vcpkgRoot } else { 'D:\dev\vcpkg' }
+if (-not (Test-Path "$env:VCPKG_ROOT\vcpkg.exe")) { throw "vcpkg が見つからない: $env:VCPKG_ROOT" }
+$cacheRoot = Join-Path (Split-Path $env:VCPKG_ROOT -Parent) 'vcpkg-cache'
+if (-not $env:VCPKG_DEFAULT_BINARY_CACHE) {
+    $env:VCPKG_DEFAULT_BINARY_CACHE = Join-Path $cacheRoot 'archives'
+    New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+}
+if (-not $env:VCPKG_DOWNLOADS) {
+    $env:VCPKG_DOWNLOADS = Join-Path $cacheRoot 'downloads'
+    New-Item -ItemType Directory -Force $env:VCPKG_DOWNLOADS | Out-Null
+}
+
+Push-Location $PSScriptRoot
+try {
+    if ($Clean -and (Test-Path out/build)) { Remove-Item -Recurse -Force out/build }
+    # ラベルは毎回渡す (前のビルドのラベルが CMake のキャッシュに残らないように)
+    cmake --preset x64 "-DDENPACHAN_VERSION_LABEL=$VersionLabel"
+    if ($LASTEXITCODE) { throw 'configure failed' }
+    cmake --build --preset $Config
+    if ($LASTEXITCODE) { throw 'build failed' }
+
+    # UI (C# / WPF)。engine と同じフォルダに出す (UI は隣の denpachan-engine.exe を起動する)
+    $cfgName = if ($Config -eq 'release') { 'Release' } else { 'Debug' }
+    dotnet build src/ui/Denpachan.Ui/Denpachan.Ui.csproj -c $cfgName -o "out/build/bin/$cfgName" --nologo -v minimal "-p:DenpachanVersionLabel=$VersionLabel"
+    if ($LASTEXITCODE) { throw 'UI build failed' }
+} finally {
+    Pop-Location
+}

@@ -1,0 +1,82 @@
+{
+  "_comment": "こちらから接続しに行く方式で繋がらない: ch1 RTMP pull がサーバーに繋がらない (理由あり)、ch2 SRT caller が接続中 (理由はまだない)、ch3 SRT caller は繋がったが映像待ち、ch4 SRT listener の待ち受け (比較用)",
+  "channels": [
+    {
+      "name": "Pull", "enabled": true, "vcam": 1,
+      "source": { "protocol": "rtmp", "mode": "pull", "url": "rtmp://rtmp.example.com/live/streamkey" }
+    },
+    {
+      "name": "Caller A", "enabled": true, "vcam": 2,
+      "source": { "protocol": "srt", "mode": "caller", "host": "srt.example.com", "port": 30001, "latencyMs": 120 }
+    },
+    {
+      "name": "Caller B", "enabled": true, "vcam": 3,
+      "source": { "protocol": "srt", "mode": "caller", "host": "srt.example.com", "port": 30002, "latencyMs": 120 }
+    },
+    {
+      "name": "Listener", "enabled": true, "vcam": 4,
+      "source": { "protocol": "srt", "mode": "listener", "port": 9004, "latencyMs": 120 }
+    }
+  ],
+  "state": {
+    "channels": [
+      {
+        "id": 1, "name": "Pull", "enabled": true, "vcam": 1,
+        "source": { "protocol": "rtmp", "mode": "pull", "app": "" },
+        "worker": { "state": "running", "pid": 5100, "restarts": 0, "uptimeSec": 120, "lastEvent": "" },
+        "video": { "state": "waiting", "connected": false, "connections": 0, "peer": "", "codec": "", "width": 0, "height": 0,
+                   "hwDecode": true, "bitrateMbps": 0, "decodeFps": 0, "outputFps": 0, "delayMs": 0, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0,
+                   "lastError": { "id": "rtmp.noResponse" } },
+        "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 0 },
+        "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
+      },
+      {
+        "id": 2, "name": "Caller A", "enabled": true, "vcam": 2,
+        "source": { "protocol": "srt", "mode": "caller", "host": "srt.example.com", "port": 30001 },
+        "worker": { "state": "running", "pid": 5104, "restarts": 0, "uptimeSec": 2, "lastEvent": "" },
+        "video": { "state": "waiting", "connected": false, "connections": 0, "peer": "", "codec": "", "width": 0, "height": 0,
+                   "hwDecode": true, "bitrateMbps": 0, "decodeFps": 0, "outputFps": 0, "delayMs": 0, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 0, "rttMs": 0, "rcvBufMs": 0, "recvMbps": 0, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 0, "multiplier": 0, "rttMs": 0, "lossPct": 0, "drops": 0, "windowSec": 0 } },
+        "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 0 },
+        "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
+      },
+      {
+        "id": 3, "name": "Caller B", "enabled": true, "vcam": 3,
+        "source": { "protocol": "srt", "mode": "caller", "host": "srt.example.com", "port": 30002 },
+        "worker": { "state": "running", "pid": 5108, "restarts": 0, "uptimeSec": 30, "lastEvent": "" },
+        "video": { "state": "waiting", "connected": true, "connections": 1, "peer": "srt.example.com:30002", "codec": "", "width": 0, "height": 0,
+                   "hwDecode": true, "bitrateMbps": 0.1, "decodeFps": 0, "outputFps": 0, "delayMs": 0, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 120, "rttMs": 5.0, "rcvBufMs": 120, "recvMbps": 0.1, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 0, "multiplier": 0, "rttMs": 0, "lossPct": 0, "drops": 0, "windowSec": 4 } },
+        "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 0 },
+        "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
+      },
+      {
+        "id": 4, "name": "Listener", "enabled": true, "vcam": 4,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9004 },
+        "worker": { "state": "running", "pid": 5112, "restarts": 0, "uptimeSec": 600, "lastEvent": "" },
+        "video": { "state": "waiting", "connected": false, "connections": 0, "peer": "", "codec": "", "width": 0, "height": 0,
+                   "hwDecode": true, "bitrateMbps": 0, "decodeFps": 0, "outputFps": 0, "delayMs": 0, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 0, "rttMs": 0, "rcvBufMs": 0, "recvMbps": 0, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 0, "multiplier": 0, "rttMs": 0, "lossPct": 0, "drops": 0, "windowSec": 0 } },
+        "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 0 },
+        "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
+      }
+    ],
+    "rtmpServer": { "state": "stopped", "pid": 0, "restarts": 0, "uptimeSec": 0, "lastEvent": "", "port": 1935 },
+    "audioDevices": [],
+    "ffmpeg": { "ok": true, "message": "" }
+  },
+  "select": 1,
+  "expect": {
+    "connected": true,
+    "ffmpegMissing": false,
+    "channels": [
+      { "statusKind": "unreachable", "statusText": "接続できません", "transportKind": "error" },
+      { "statusKind": "waiting", "statusText": "接続中…" },
+      { "statusKind": "waiting", "statusText": "映像を待っています" },
+      { "statusKind": "waiting", "statusText": "待ち受け中" }
+    ]
+  }
+}

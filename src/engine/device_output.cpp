@@ -1,0 +1,358 @@
+#include "device_output.h"
+
+#include <avrt.h>
+#include <ks.h>
+#include <ksmedia.h>
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#include "audio_devices.h"
+
+using Microsoft::WRL::ComPtr;
+
+namespace denpachan::engine {
+
+namespace {
+
+constexpr REFERENCE_TIME kMinExclusivePeriod = 30'000;     // 3ms (100ns 単位)
+constexpr REFERENCE_TIME kRetryExclusivePeriod = 100'000;  // 周期に追いつけなかったら 10ms から試し直す
+constexpr REFERENCE_TIME kMaxExclusivePeriod = 200'000;    // 20ms を超えるなら共有モードにする
+
+struct CoTaskMemDeleter {
+    void operator()(void* p) const { CoTaskMemFree(p); }
+};
+
+bool is_float_format(const WAVEFORMATEX* f) {
+    if (f->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) return true;
+    if (f->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        return reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(f)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+    }
+    return false;
+}
+
+const char* sample_type_name(int type) {
+    static const char* names[] = {"float32", "int16", "int24", "int24in32", "int32"};
+    return names[type];
+}
+
+}  // namespace
+
+DeviceOutput::DeviceOutput(DeviceOptions options, std::vector<RouteOptions> routes)
+    : options_(std::move(options)), routes_(std::move(routes)), stop_event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+
+DeviceOutput::~DeviceOutput() { stop(); }
+
+void DeviceOutput::start() {
+    stop_ = false;
+    ResetEvent(stop_event_.get());
+    thread_ = std::thread(&DeviceOutput::run, this);
+}
+
+void DeviceOutput::stop() {
+    stop_ = true;
+    SetEvent(stop_event_.get());
+    if (thread_.joinable()) thread_.join();
+}
+
+void DeviceOutput::set_mute(int ch, bool mute) {
+    std::lock_guard lk(sources_mutex_);
+    for (auto& r : routes_)
+        if (r.ch == ch) r.mute = mute;
+    for (auto& s : sources_)
+        if (s->options().ch == ch) s->set_mute(mute);
+}
+
+DeviceStatus DeviceOutput::status() {
+    std::lock_guard lk(status_mutex_);
+    return status_;
+}
+
+bool DeviceOutput::open() {
+    const std::string name = to_utf8(options_.name);
+    // 開けない理由は最初と 1 分ごとに出す (1 秒ごとに試すので、毎回出すとログの履歴が埋まる)
+    const auto fail_level = open_failures_ == 0 || open_failures_ % 60 == 0 ? spdlog::level::err : spdlog::level::debug;
+    auto dev = open_audio_device(options_.id);
+    if (!dev) return false;
+    auto activate = [&]() -> bool {
+        client_.Reset();
+        return SUCCEEDED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client_));
+    };
+    if (!activate()) return false;
+
+    WAVEFORMATEX* mix_raw = nullptr;
+    if (FAILED(client_->GetMixFormat(&mix_raw))) return false;
+    std::unique_ptr<WAVEFORMATEX, CoTaskMemDeleter> mix(mix_raw);
+    channels_ = mix->nChannels;
+    rate_ = mix->nSamplesPerSec;
+
+    // 排他モードの周期に追いつけないデバイスは共有モードに切り替える (run() で検出)
+    exclusive_ = options_.exclusive && !exclusive_failed_;
+    HRESULT hr = E_FAIL;
+    if (exclusive_) {
+        // 排他モード: デバイスが受け付ける形式を順に試す
+        struct Candidate {
+            SampleType type;
+            WORD bits;
+            WORD valid;
+            GUID subformat;
+        };
+        const Candidate candidates[] = {
+            {SampleType::Float32, 32, 32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT},
+            {SampleType::Int32, 32, 32, KSDATAFORMAT_SUBTYPE_PCM},
+            {SampleType::Int24In32, 32, 24, KSDATAFORMAT_SUBTYPE_PCM},
+            {SampleType::Int24, 24, 24, KSDATAFORMAT_SUBTYPE_PCM},
+            {SampleType::Int16, 16, 16, KSDATAFORMAT_SUBTYPE_PCM},
+        };
+        WAVEFORMATEXTENSIBLE fmt{};
+        bool found = false;
+        for (const auto& c : candidates) {
+            fmt = WAVEFORMATEXTENSIBLE{};
+            fmt.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+            fmt.Format.nChannels = WORD(channels_);
+            fmt.Format.nSamplesPerSec = rate_;
+            fmt.Format.wBitsPerSample = c.bits;
+            fmt.Format.nBlockAlign = WORD(channels_ * c.bits / 8);
+            fmt.Format.nAvgBytesPerSec = rate_ * fmt.Format.nBlockAlign;
+            fmt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+            fmt.Samples.wValidBitsPerSample = c.valid;
+            fmt.dwChannelMask = mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE
+                                    ? reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix.get())->dwChannelMask
+                                    : 0;
+            fmt.SubFormat = c.subformat;
+            if (client_->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &fmt.Format, nullptr) == S_OK) {
+                sample_type_ = c.type;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            spdlog::log(fail_level, "audio [{}]: no exclusive-mode format supported ({} Hz, {} ch)", name, rate_, channels_);
+            return false;
+        }
+        REFERENCE_TIME def_period = 0, min_period = 0;
+        client_->GetDevicePeriod(&def_period, &min_period);
+        REFERENCE_TIME period = std::max({min_period, kMinExclusivePeriod, exclusive_period_});
+        hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period,
+                                 &fmt.Format, nullptr);
+        if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+            UINT32 frames = 0;
+            client_->GetBufferSize(&frames);
+            period = REFERENCE_TIME(std::llround(10'000'000.0 * frames / rate_));
+            if (!activate()) return false;
+            hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period,
+                                     &fmt.Format, nullptr);
+        }
+    } else {
+        // 共有モード: ミックス形式のまま (通常 float32)
+        if (is_float_format(mix.get()) && mix->wBitsPerSample == 32) {
+            sample_type_ = SampleType::Float32;
+        } else if (mix->wBitsPerSample == 16) {
+            sample_type_ = SampleType::Int16;
+        } else {
+            spdlog::log(fail_level, "audio [{}]: unsupported mix format ({} bit)", name, mix->wBitsPerSample);
+            return false;
+        }
+        ComPtr<IAudioClient3> client3;
+        if (SUCCEEDED(client_.As(&client3))) {
+            UINT32 def_frames = 0, fundamental = 0, min_frames = 0, max_frames = 0;
+            if (SUCCEEDED(client3->GetSharedModeEnginePeriod(mix.get(), &def_frames, &fundamental, &min_frames,
+                                                             &max_frames))) {
+                hr = client3->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, min_frames, mix.get(),
+                                                          nullptr);
+            }
+        }
+        if (FAILED(hr)) {
+            if (!activate()) return false;
+            hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, mix.get(),
+                                     nullptr);
+        }
+    }
+    if (FAILED(hr)) {
+        spdlog::log(fail_level, "audio [{}]: initialize ({}) failed: 0x{:08x}", name, exclusive_ ? "exclusive" : "shared",
+                    uint32_t(hr));
+        return false;
+    }
+
+    event_.reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+    if (FAILED(client_->SetEventHandle(event_.get())) || FAILED(client_->GetBufferSize(&buffer_frames_)) ||
+        FAILED(client_->GetService(IID_PPV_ARGS(&render_)))) {
+        return false;
+    }
+
+    // 無音で埋めてから開始する
+    BYTE* data = nullptr;
+    if (SUCCEEDED(render_->GetBuffer(buffer_frames_, &data))) {
+        render_->ReleaseBuffer(buffer_frames_, AUDCLNT_BUFFERFLAGS_SILENT);
+    }
+
+    // 音声の基本遅延 = 書いてから鳴り終わるまでの最大 + 余裕。
+    // 共有モード: 書く量 + 先行して鳴る量 = バッファ 1 つ分
+    // 排他モード: いま鳴っているバッファの次にバッファを丸ごと書く = バッファ 2 つ分
+    const double buffer_ms = 1000.0 * buffer_frames_ / rate_;
+    const double pipeline_ms = exclusive_ ? 2 * buffer_ms : buffer_ms;
+    base_delay_qpc_ = qpc_from_us(int64_t(pipeline_ms * 1000)) + qpc_from_ms(options_.margin_ms);
+    {
+        std::lock_guard lk(sources_mutex_);
+        sources_.clear();
+        for (const auto& r : routes_) {
+            if (r.start_channel < 1 || r.start_channel > channels_) {
+                spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch,
+                             r.start_channel, channels_);
+            }
+            sources_.push_back(std::make_unique<ChannelSource>(r, rate_, channels_));
+        }
+    }
+
+    if (FAILED(client_->Start())) return false;
+
+    {
+        std::lock_guard lk(status_mutex_);
+        status_.open = true;
+        status_.exclusive = exclusive_;
+        status_.sample_rate = int(rate_);
+        status_.channels = channels_;
+        status_.sample_format = sample_type_name(int(sample_type_));
+        status_.buffer_ms = buffer_ms;
+        status_.delay_ms = double(qpc_to_us(base_delay_qpc_)) / 1000.0;
+    }
+    spdlog::info("audio [{}]: opened {} {} Hz {} ch {} buffer {:.2f} ms", name,
+                 exclusive_ ? "exclusive" : "shared", rate_, channels_, sample_type_name(int(sample_type_)),
+                 buffer_ms);
+    return true;
+}
+
+void DeviceOutput::close() {
+    if (client_) client_->Stop();
+    render_.Reset();
+    client_.Reset();
+    event_.reset();
+    std::lock_guard lk(status_mutex_);
+    status_.open = false;
+}
+
+void DeviceOutput::write_samples(BYTE* dst, int frames) {
+    const size_t n = size_t(frames) * channels_;
+    const float* src = mix_.data();
+    switch (sample_type_) {
+    case SampleType::Float32: {
+        auto* d = reinterpret_cast<float*>(dst);
+        for (size_t i = 0; i < n; ++i) d[i] = std::clamp(src[i], -1.0f, 1.0f);
+        break;
+    }
+    case SampleType::Int16: {
+        auto* d = reinterpret_cast<int16_t*>(dst);
+        for (size_t i = 0; i < n; ++i) d[i] = int16_t(std::lrint(std::clamp(src[i], -1.0f, 1.0f) * 32767.0f));
+        break;
+    }
+    case SampleType::Int32:
+    case SampleType::Int24In32: {
+        auto* d = reinterpret_cast<int32_t*>(dst);
+        for (size_t i = 0; i < n; ++i) {
+            d[i] = int32_t(std::llrint(double(std::clamp(src[i], -1.0f, 1.0f)) * 2147483647.0)) & ~0xFF;
+        }
+        break;
+    }
+    case SampleType::Int24: {
+        for (size_t i = 0; i < n; ++i) {
+            const int32_t v = int32_t(std::lrint(std::clamp(src[i], -1.0f, 1.0f) * 8388607.0f));
+            dst[3 * i] = BYTE(v);
+            dst[3 * i + 1] = BYTE(v >> 8);
+            dst[3 * i + 2] = BYTE(v >> 16);
+        }
+        break;
+    }
+    }
+}
+
+bool DeviceOutput::render() {
+    UINT32 frames = buffer_frames_;
+    UINT32 lead = buffer_frames_;  // 排他: いま鳴っているバッファの次に鳴る
+    if (!exclusive_) {
+        UINT32 padding = 0;
+        if (FAILED(client_->GetCurrentPadding(&padding))) return false;
+        frames = buffer_frames_ - padding;
+        lead = padding;
+    }
+    const int64_t now = qpc_now();
+    if (last_render_qpc_ != 0) {
+        const int64_t gap = qpc_to_us(now - last_render_qpc_);
+        if (gap > max_gap_us_.load()) max_gap_us_ = gap;
+    }
+    last_render_qpc_ = now;
+    ++render_count_;
+    if (frames == 0) return true;
+
+    const int64_t first_hear = now + qpc_from_us(int64_t(lead) * 1'000'000 / rate_);
+    mix_.assign(size_t(frames) * channels_, 0.0f);
+    {
+        std::lock_guard lk(sources_mutex_);
+        for (auto& s : sources_) s->render(mix_.data(), int(frames), first_hear, base_delay_qpc_);
+    }
+
+    BYTE* data = nullptr;
+    if (FAILED(render_->GetBuffer(frames, &data))) return false;
+    write_samples(data, int(frames));
+    return SUCCEEDED(render_->ReleaseBuffer(frames, 0));
+}
+
+void DeviceOutput::run() {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    DWORD task_index = 0;
+    HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
+    const std::string name = to_utf8(options_.name);
+
+    while (!stop_) {
+        if (!open()) {
+            close();
+            ++open_failures_;
+            WaitForSingleObject(stop_event_.get(), 1000);  // デバイスが戻るまで 1 秒ごとに試す
+            continue;
+        }
+        open_failures_ = 0;
+        // 排他モードで、デバイスからの呼び出しが周期どおりに来ているかを見る
+        const double expected_calls = double(rate_) / buffer_frames_;
+        int64_t check_start = qpc_now();
+        uint64_t check_calls = 0;
+        while (!stop_) {
+            HANDLE handles[2] = {event_.get(), stop_event_.get()};
+            const DWORD w = WaitForMultipleObjects(2, handles, FALSE, 500);
+            if (w == WAIT_OBJECT_0 + 1) break;
+            if (!render()) {
+                spdlog::warn("audio [{}]: device lost, reopening", name);
+                break;
+            }
+            ++check_calls;
+            if (exclusive_ && qpc_now() - check_start >= qpc_from_ms(1000)) {
+                const double calls = double(check_calls) * qpc_freq() / double(qpc_now() - check_start);
+                if (calls < expected_calls * 0.9) {
+                    // 周期を延ばして排他モードのまま試し、上限を超えたら共有モードにする
+                    const REFERENCE_TIME current = REFERENCE_TIME(std::llround(10'000'000.0 * buffer_frames_ / rate_));
+                    exclusive_period_ = std::max(kRetryExclusivePeriod, current * 2);
+                    exclusive_failed_ = exclusive_period_ > kMaxExclusivePeriod;
+                    spdlog::warn("audio [{}]: device does not keep up with the exclusive-mode period ({:.0f}/{:.0f} "
+                                 "calls/s); {}",
+                                 name, calls, expected_calls,
+                                 exclusive_failed_ ? std::string("falling back to shared mode")
+                                                   : fmt::format("retrying with {:.0f} ms period",
+                                                                 double(exclusive_period_) / 10'000));
+                    break;
+                }
+                check_start = qpc_now();
+                check_calls = 0;
+            }
+        }
+        close();
+        if (!stop_) {
+            std::lock_guard lk(status_mutex_);
+            ++status_.reopens;
+        }
+    }
+
+    if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+    CoUninitialize();
+}
+
+}  // namespace denpachan::engine

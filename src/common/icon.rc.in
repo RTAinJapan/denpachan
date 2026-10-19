@@ -1,0 +1,2 @@
+// exe のアイコン (元は assets/denpachan.svg。tools/icon/make_icon.ps1 で ico にする)
+1 ICON "@DENPACHAN_ICON@"

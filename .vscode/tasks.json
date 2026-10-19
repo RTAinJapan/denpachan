@@ -1,0 +1,78 @@
+{
+  // 画面の文言を直しながら確かめるタスク (docs/development.md の「画面の文言を直すとき」)。
+  // dotnet watch が、言語ファイル (Lang/ja.json)・XAML・C# を保存するたびにビルドし直して画面を起動し直す (数秒)。
+  // XAML はホットリロードが効かないので --no-hot-reload にしている (監視対象は csproj の Watch)。
+  // --fixture で試験用の状態を流し込むので、engine や配信がなくても受信中の画面が出る。
+  // 実行: Ctrl+Shift+P →「タスク: タスクの実行」→ 下の名前を選ぶ。止めるときはターミナルで Ctrl+C。
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "fixture",
+      "type": "pickString",
+      "description": "画面に流し込む状態",
+      "options": ["normal", "degraded", "ffmpeg-missing", "disconnected", "unreachable"],
+      "default": "normal"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "画面: 文言を確認 (メイン画面)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "watch", "--no-hot-reload", "run", "--project", "${workspaceFolder}/src/ui/Denpachan.Ui/Denpachan.Ui.csproj", "--",
+        "--fixture", "${workspaceFolder}/tools/ui_screenshots/cases/${input:fixture}.json"
+      ],
+      "isBackground": true,
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "画面: 文言を確認 (チャンネル設定 - 受信と出力)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "watch", "--no-hot-reload", "run", "--project", "${workspaceFolder}/src/ui/Denpachan.Ui/Denpachan.Ui.csproj", "--",
+        "--fixture", "${workspaceFolder}/tools/ui_screenshots/cases/normal.json", "--settings", "1"
+      ],
+      "isBackground": true,
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "画面: 文言を確認 (チャンネル設定 - 録画)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "watch", "--no-hot-reload", "run", "--project", "${workspaceFolder}/src/ui/Denpachan.Ui/Denpachan.Ui.csproj", "--",
+        "--fixture", "${workspaceFolder}/tools/ui_screenshots/cases/normal.json", "--settings", "1", "--settings-tab", "1"
+      ],
+      "isBackground": true,
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "画面: 文言を確認 (全体設定)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "watch", "--no-hot-reload", "run", "--project", "${workspaceFolder}/src/ui/Denpachan.Ui/Denpachan.Ui.csproj", "--",
+        "--fixture", "${workspaceFolder}/tools/ui_screenshots/cases/normal.json", "--general"
+      ],
+      "isBackground": true,
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "画面: スクリーンショット試験",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/ui_screenshots/run.ps1"],
+      "problemMatcher": []
+    },
+    {
+      "label": "ビルド (全体)",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/build.ps1"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}

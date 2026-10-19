@@ -1,0 +1,289 @@
+<Window x:Class="Denpachan.Ui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="clr-namespace:Denpachan.Ui.Controls"
+        xmlns:vm="clr-namespace:Denpachan.Ui.ViewModels"
+        xmlns:l="clr-namespace:Denpachan.Ui.Infrastructure"
+        Title="denpachan" Width="1600" Height="1000" MinWidth="1100" MinHeight="700"
+        Background="{StaticResource BgBrush}" FontFamily="Segoe UI, Yu Gothic UI" FontSize="13">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <!-- 劣化の表示: ok / warn (黄) / error (赤)。TransportKind・AudioKind・SystemKind で使う -->
+        <Style x:Key="WarnText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource DimTextBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="warn">
+                    <Setter Property="Foreground" Value="#FFF0B44C" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="error">
+                    <Setter Property="Foreground" Value="#FFFF5C5C" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 操作ロック中は使えなくする (タイルのボタンとプルダウン) -->
+        <Style x:Key="LockablePanel" TargetType="WrapPanel">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                    <Setter Property="IsEnabled" Value="False" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- チャンネルのタイル -->
+        <DataTemplate x:Key="ChannelTile" DataType="{x:Type vm:ChannelViewModel}">
+            <Border Margin="6" Padding="10" CornerRadius="6" Background="{StaticResource PanelBrush}" BorderThickness="2"
+                    MouseLeftButtonDown="Tile_MouseLeftButtonDown">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="BorderBrush" Value="Transparent" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 見出し: 名前、入力、状態、操作ロック -->
+                    <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                        <c:LockToggle DockPanel.Dock="Right" IsLocked="{Binding IsLocked}" Margin="6,0,0,0" VerticalAlignment="Center">
+                            <c:LockToggle.Style>
+                                <Style TargetType="c:LockToggle">
+                                    <Setter Property="ToolTip" Value="{l:Tr main.tile.lock}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                            <Setter Property="ToolTip" Value="{l:Tr main.tile.locked}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </c:LockToggle.Style>
+                        </c:LockToggle>
+                        <Border DockPanel.Dock="Right" Style="{StaticResource StatusPill}" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" FontSize="12" />
+                        </Border>
+                        <!-- HW デコードが使えず CPU でデコードしている (HW のときは出さない) -->
+                        <Border DockPanel.Dock="Right" CornerRadius="10" Padding="8,2" Margin="0,0,6,0" VerticalAlignment="Center"
+                                Background="{StaticResource HoldBrush}" ToolTip="{l:Tr main.tile.swDecodeTip}"
+                                Visibility="{Binding SoftwareDecode, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{l:Tr main.tile.swDecode}" FontWeight="SemiBold" FontSize="12" />
+                        </Border>
+                        <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding SourceSummary}" Style="{StaticResource DimText}" Margin="10,0,0,0"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+
+                    <!-- プレビュー (16:9) -->
+                    <Border Grid.Row="1" Background="Black" CornerRadius="3" ClipToBounds="True">
+                        <Grid>
+                            <Viewbox Stretch="Uniform">
+                                <Grid Width="640" Height="360">
+                                    <Image Source="{Binding PreviewBitmap}" Stretch="Fill" RenderOptions.BitmapScalingMode="Linear">
+                                        <Image.Style>
+                                            <Style TargetType="Image">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding PreviewEnabled}" Value="True" />
+                                                            <Condition Binding="{Binding PreviewHasFrame}" Value="True" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Image.Style>
+                                    </Image>
+                                    <TextBlock Text="{Binding PreviewMessage}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               FontSize="28" Style="{StaticResource DimText}" />
+                                </Grid>
+                            </Viewbox>
+                        </Grid>
+                    </Border>
+
+                    <!-- メトリクス -->
+                    <StackPanel Grid.Row="2" Margin="0,6,0,0">
+                        <TextBlock Text="{Binding VideoLine}" FontFamily="Consolas, Segoe UI" />
+                        <TextBlock Text="{Binding TransportLine}" FontFamily="Consolas, Segoe UI" Style="{StaticResource WarnText}" Tag="{Binding TransportKind}"
+                                   ToolTip="{l:Tr main.tile.transportTip}" />
+                        <Grid Margin="0,3,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding AudioLine}" FontFamily="Consolas, Segoe UI" Margin="0,0,10,0" VerticalAlignment="Center"
+                                       Tag="{Binding AudioKind}" ToolTip="{l:Tr main.tile.audioTip}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource WarnText}">
+                                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <c:LevelMeter Db="{Binding PeakL}" Height="5" Margin="0,0,0,2" />
+                                <c:LevelMeter Db="{Binding PeakR}" Height="5" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Text="{Binding RecordLine}" FontFamily="Consolas, Segoe UI" TextTrimming="CharacterEllipsis" Margin="0,2,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource DimTextBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding RecordKind}" Value="off">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding RecordKind}" Value="recording">
+                                            <Setter Property="Foreground" Value="#FFFF5C5C" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding RecordKind}" Value="error">
+                                            <Setter Property="Foreground" Value="#FFF0B44C" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+
+                    <!-- ビットレートの推移 -->
+                    <c:LineChart Grid.Row="3" Height="22" Margin="0,4,0,0" Values="{Binding BitrateHistory}" ShowLabels="False"
+                                 Capacity="120" Stroke="{StaticResource AccentBrush}" />
+
+                    <!-- 操作 -->
+                    <WrapPanel Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
+                        <Button Content="{Binding StartStopLabel}" Command="{Binding StartStopCommand}" Style="{StaticResource StartStopButton}" MinWidth="64" />
+                        <ToggleButton Content="{l:Tr main.tile.record}" IsChecked="{Binding RecordEnabled, Mode=OneWay}" Command="{Binding RecordCommand}"
+                                      Style="{StaticResource RecordChip}" ToolTip="{l:Tr main.tile.recordTip}" />
+                        <ToggleButton Content="{l:Tr main.tile.preview}" IsChecked="{Binding PreviewEnabled}" Style="{StaticResource ToggleChip}" />
+                        <ToggleButton Content="{Binding MuteLabel}" IsChecked="{Binding Mute, Mode=OneWay}" Command="{Binding MuteCommand}"
+                                      Style="{StaticResource ToggleChip}" ToolTip="{l:Tr main.tile.muteTip}" />
+                        <Button Content="{l:Tr main.tile.resetCam}" Command="{Binding ResetCamCommand}"
+                                ToolTip="{l:Tr main.tile.resetCamTip}" />
+                        <Button Content="{l:Tr main.tile.settings}" Command="{Binding SettingsCommand}" />
+                    </WrapPanel>
+
+                    <!-- ルーティング -->
+                    <WrapPanel Grid.Row="5" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
+                        <TextBlock Text="{l:Tr main.tile.video}" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <ComboBox ItemsSource="{Binding VcamOptions}" DisplayMemberPath="Label"
+                                  SelectedValuePath="Value" SelectedValue="{Binding Vcam}" MinWidth="90" Margin="0,0,14,0" />
+                        <TextBlock Text="{l:Tr main.tile.audio}" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <ComboBox ItemsSource="{Binding AudioDeviceChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                  SelectedValue="{Binding AudioDevice}" Width="230" Margin="0,0,6,0" />
+                        <ComboBox ItemsSource="{Binding StartChannelOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                                  SelectedValue="{Binding AudioStartChannel}" MinWidth="70" />
+                    </WrapPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel>
+        <!-- メニュー -->
+        <Menu DockPanel.Dock="Top" Background="{StaticResource PanelBrush}">
+            <MenuItem Header="{l:Tr main.menu.file}">
+                <MenuItem Header="{l:Tr main.menu.general}" Command="{Binding GeneralSettingsCommand}" />
+                <MenuItem Header="{l:Tr main.menu.openSettingsFolder}" Command="{Binding OpenSettingsFolderCommand}" />
+                <MenuItem Header="{l:Tr main.menu.refreshDevices}" Command="{Binding RefreshDevicesCommand}" />
+                <MenuItem Header="{l:Tr main.menu.unregisterVcam}" Command="{Binding UnregisterVcamCommand}" />
+                <Separator />
+                <MenuItem Header="{l:Tr main.menu.exit}" Command="{Binding ShutdownCommand}" />
+            </MenuItem>
+        </Menu>
+
+        <!-- FFmpeg (同梱しない) が見つからないときの案内 -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource ErrorBrush}" Padding="12,6"
+                Visibility="{Binding FfmpegMissing, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="{Binding FfmpegMessage}" TextWrapping="Wrap" Foreground="White" />
+        </Border>
+
+        <!-- 状態バー: engine との接続、PC の様子 (2 秒ごと)、RTMP サーバ -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="10,4">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding RtmpText}" Style="{StaticResource DimText}" />
+                <TextBlock DockPanel.Dock="Left" Text="{Binding ConnectionText}" Style="{StaticResource DimText}" Margin="0,0,24,0" />
+                <TextBlock Text="{Binding SystemText}" Style="{StaticResource WarnText}" Tag="{Binding SystemKind}" HorizontalAlignment="Center" />
+            </DockPanel>
+        </Border>
+
+        <!-- イベントログ -->
+        <Border DockPanel.Dock="Bottom" Height="104" Margin="6,0,6,6" Background="{StaticResource PanelBrush}" CornerRadius="6" Padding="8,6">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="{l:Tr main.events}" Style="{StaticResource DimText}" Margin="0,0,0,4" />
+                <ListBox ItemsSource="{Binding Events}" Background="Transparent" BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:EventItem}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding TimeText}" Style="{StaticResource DimText}" FontFamily="Consolas" Margin="0,0,10,0" />
+                                <TextBlock Text="{Binding Text}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Warning}" Value="True">
+                                                    <Setter Property="Foreground" Value="#FFF0B44C" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- 詳細 (選んだチャンネル) -->
+        <Border DockPanel.Dock="Right" Width="400" Margin="0,6,6,6" Background="{StaticResource PanelBrush}" CornerRadius="6" Padding="12"
+                DataContext="{Binding Selected}">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="{Binding DetailTitle}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8" />
+                <StackPanel DockPanel.Dock="Bottom">
+                    <c:LineChart Height="80" Margin="0,8,0,0" Title="{l:Tr main.detail.chartBitrate}" Unit="Mbps" Values="{Binding BitrateHistory}"
+                                 Stroke="{StaticResource AccentBrush}" />
+                    <c:LineChart Height="80" Margin="0,8,0,0" Title="{l:Tr main.detail.chartDelay}" Unit="ms" Values="{Binding DelayHistory}" Stroke="#FF3BC16E" />
+                    <c:LineChart Height="80" Margin="0,8,0,0" Title="{l:Tr main.detail.chartRtt}" Unit="ms" Values="{Binding RttHistory}" Stroke="#FFE8C23A" />
+                    <TextBlock Text="{l:Tr main.detail.chartWindow}" Style="{StaticResource DimText}" FontSize="11" Margin="0,4,0,0" />
+                </StackPanel>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding Details}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:DetailRow}">
+                                <!-- Tip があればその行の説明をツールチップに出す (行のどこにマウスを載せても出るよう背景を透明で塗る) -->
+                                <Grid Margin="0,1" Background="Transparent" ToolTip="{Binding Tip}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Label}" Style="{StaticResource DimText}" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <!-- 4ch のタイル -->
+        <ItemsControl ItemsSource="{Binding Channels}" ItemTemplate="{StaticResource ChannelTile}" Margin="0,0,0,0">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <UniformGrid Columns="2" Rows="2" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+        </ItemsControl>
+    </DockPanel>
+</Window>

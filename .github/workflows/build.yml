@@ -1,0 +1,190 @@
+# denpachan のビルド (docs/dependencies.md §3)。
+#
+# - C++: vcpkg (baseline と同じコミット) + CMake プリセット。vcpkg のバイナリはキャッシュする
+# - FFmpeg: cmake/FetchFfmpeg.cmake が固定の URL と SHA256 で取る (ヘッダと import lib だけ使う)。取ったものはキャッシュする
+# - UI: .NET 10
+# - 配布用の zip (展開すればすぐ使える。FFmpeg は含まない) と PDB の zip を artifact にする (tools/package.ps1)
+# - タグ vX.Y.Z (プレリリースは vX.Y.Z-rc.1 など) を push すると、同じビルドで GitHub Release を作る (release ジョブ)。
+#   タグの版は CMakeLists.txt の project(... VERSION X.Y.Z) と合っていなければならない (docs/development.md の「リリース」)
+# - 手動: Actions の「Run workflow」でブランチを選んで実行できる (workflow が既定ブランチにあるときに出る)
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_COMMIT: bf19794383e8fb95eba5aa553235bc8ec2271688  # vcpkg.json の builtin-baseline と同じ
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache\archives
+      VCPKG_DOWNLOADS: ${{ github.workspace }}\vcpkg-cache\downloads
+    steps:
+      - uses: actions/checkout@v7
+
+      # 版は CMakeLists.txt の project(... VERSION X.Y.Z) だけに書いてある。タグで動いたときは、タグが vX.Y.Z または
+      # vX.Y.Z-ラベル の形で、X.Y.Z が CMakeLists.txt と同じかを先に確かめる (違えばビルドせずに失敗。リリースも作らない)
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(denpachan .*VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $label = ''
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $m = [regex]::Match($env:GITHUB_REF_NAME, '^v(\d+\.\d+\.\d+)(?:-([0-9A-Za-z][0-9A-Za-z.]*))?$')
+            if (-not $m.Success) { throw "tag '$env:GITHUB_REF_NAME' must be vX.Y.Z or vX.Y.Z-label (e.g. v1.2.0, v1.2.0-rc.1)" }
+            if ($m.Groups[1].Value -ne $version) { throw "tag $env:GITHUB_REF_NAME does not match the version in CMakeLists.txt ($version)" }
+            $label = $m.Groups[2].Value
+          }
+          "label=$label" >> $env:GITHUB_OUTPUT
+          "prerelease=$(if ($label) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          Write-Host "version: $version$(if ($label) { "-$label" })"
+
+      - name: Checkout vcpkg
+        uses: actions/checkout@v7
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_COMMIT }}
+          path: vcpkg
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE, $env:VCPKG_DOWNLOADS | Out-Null
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v6
+        with:
+          path: vcpkg-cache/archives
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-
+
+      - name: Cache FFmpeg (build only)
+        uses: actions/cache@v6
+        with:
+          path: out/deps
+          key: ffmpeg-${{ hashFiles('cmake/FetchFfmpeg.cmake') }}
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # タグ vX.Y.Z-ラベル のときは、ラベルを exe の製品版と画面のタイトルの版に付ける
+      - name: Build
+        shell: pwsh
+        env:
+          LABEL: ${{ steps.version.outputs.label }}
+        run: ./build.ps1 -VersionLabel "$env:LABEL"
+
+      - name: Check the output
+        shell: pwsh
+        run: |
+          $bin = 'out/build/bin/Release'
+          # FFmpeg は同梱しない
+          $ffmpeg = Get-ChildItem $bin -Filter *.dll | Where-Object { $_.Name -match '^(avcodec|avformat|avutil|avfilter|avdevice|swresample|swscale|postproc)-\d+\.dll$' }
+          if ($ffmpeg) { throw "FFmpeg DLLs must not be in the output: $($ffmpeg.Name -join ', ')" }
+          foreach ($f in 'denpachan.exe', 'denpachan-engine.exe', 'denpachan-worker.exe', 'denpachan-rtmpd.exe',
+                         'denpachan-vcam.dll', 'srt.dll', 'licenses/denpachan.txt', 'licenses/libsrt.txt', 'licenses/README.md') {
+            if (-not (Test-Path "$bin/$f")) { throw "missing: $f" }
+          }
+          # FFmpeg が無ければ worker は専用の終了コード (0x0FF0) で終わる (遅延ロードと確認が効いている)
+          $p = Start-Process "$bin/denpachan-worker.exe" -ArgumentList '--ch', '4', '--cam', '0', '--port', '9104', '--log-file', "$env:RUNNER_TEMP/worker.log" -PassThru -Wait -NoNewWindow
+          if ($p.ExitCode -ne 0x0FF0) { Get-Content "$env:RUNNER_TEMP/worker.log"; throw "worker without FFmpeg exited with $($p.ExitCode)" }
+          # engine は FFmpeg が無くても起動して動き続ける
+          $engine = Start-Process "$bin/denpachan-engine.exe" -ArgumentList '--config', "$env:RUNNER_TEMP/config.json", '--log-file', "$env:RUNNER_TEMP/engine.log" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 5
+          if ($engine.HasExited) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw "engine exited with $($engine.ExitCode)" }
+          Stop-Process -Id $engine.Id -Force
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'ffmpeg.missing' -SimpleMatch -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
+          Write-Host 'OK: no FFmpeg DLLs in the output; worker and engine handle missing FFmpeg'
+
+      # 画面の文言: コードが使うキー (画面・C++ のメッセージ ID) と言語ファイル (Lang/*.json) が食い違っていないか
+      - name: UI text keys
+        shell: pwsh
+        run: ./tools/lang/check.ps1
+
+      # 画面の試験: 試験用の設定・状態を流し込んでスクリーンショットを撮り、画面の状態を確かめる (engine / FFmpeg 不要)。
+      # 撮った PNG は artifact "ui-screenshots" で見られる (失敗したときも上げる)
+      - name: UI screenshots
+        shell: pwsh
+        run: ./tools/ui_screenshots/run.ps1
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ui-screenshots
+          path: out/ui-screenshots
+          if-no-files-found: ignore
+
+      # zip の名前: タグのときは denpachan-X.Y.Z[-ラベル]-win64.zip、それ以外は版の後ろにコミットの短いハッシュを付ける
+      - name: Package
+        id: package
+        shell: pwsh
+        env:
+          LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { ./tools/package.ps1 -Suffix $env:LABEL } else { ./tools/package.ps1 }
+          $zip = Get-ChildItem out/dist -Filter '*-win64.zip' | Select-Object -First 1
+          $symbols = Get-ChildItem out/dist -Filter '*-win64-symbols.zip' | Select-Object -First 1
+          "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
+          "symbols=$($symbols.FullName)" >> $env:GITHUB_OUTPUT
+
+      # zip をそのまま (二重に圧縮せずに) 上げる。artifact の名前はファイル名になる
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.package.outputs.zip }}
+          archive: false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.package.outputs.symbols }}
+          archive: false
+
+      # リリースに付けるファイル (release ジョブが受け取る)
+      - name: Hand over the release files
+        if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-files
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.package.outputs.symbols }}
+          retention-days: 1
+
+  # タグのときだけ: GitHub Release を作り、配布用の zip と PDB の zip を付ける。
+  # リリースノートは前のタグからの PR・コミットで GitHub が作る (あとで画面から直せる)。ラベル付きのタグはプレリリースにする
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-files
+          path: release-files
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          flags=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "denpachan ${TAG#v}")
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" release-files/*.zip "${flags[@]}"

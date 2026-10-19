@@ -1,0 +1,75 @@
+<Window x:Class="Denpachan.Ui.Views.GeneralSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:Denpachan.Ui.Infrastructure"
+        Title="{l:Tr general.title}" Width="600" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource BgBrush}"
+        FontFamily="Segoe UI, Yu Gothic UI" FontSize="13">
+    <!-- ラベルの列は中身に合わせ (Auto)、画面の中の表すべてで同じ幅にそろえる (SharedSizeGroup="Label")。どの言語でも見切れないように -->
+    <StackPanel Margin="18" Grid.IsSharedSizeScope="True">
+        <GroupBox Header="{l:Tr general.display}" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Label Content="{l:Tr general.language}" VerticalAlignment="Center" />
+                <!-- 言語ファイル (src/ui/Denpachan.Ui/Lang/*.json) がある言語。「自動」は Windows の表示言語 -->
+                <ComboBox x:Name="LanguageBox" Grid.Column="1" MinWidth="220" Margin="0,3" HorizontalAlignment="Left"
+                          DisplayMemberPath="Label" SelectedValuePath="Value" />
+            </Grid>
+        </GroupBox>
+
+        <GroupBox Header="{l:Tr general.videoAudio}" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <CheckBox x:Name="AvSyncBox" Grid.ColumnSpan="2" Content="{l:Tr general.avSync}" />
+                <Label Grid.Row="1" Content="{l:Tr general.audioMargin}" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                    <TextBox x:Name="MarginBox" Width="100" Margin="0,3" />
+                    <TextBlock Text="{l:Tr general.audioMarginNote}" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" />
+                </StackPanel>
+                <Label Grid.Row="2" Content="{l:Tr general.stall}" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                    <TextBox x:Name="StallBox" Width="100" Margin="0,3" />
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <GroupBox Header="{l:Tr general.rtmpServer}" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Label Content="{l:Tr general.rtmpBind}" VerticalAlignment="Center" />
+                <TextBox x:Name="BindBox" Grid.Column="1" Margin="0,3" />
+                <Label Grid.Row="1" Content="{l:Tr general.rtmpPort}" VerticalAlignment="Center" />
+                <TextBox x:Name="RtmpPortBox" Grid.Row="1" Grid.Column="1" Width="100" Margin="0,3" HorizontalAlignment="Left" />
+                <Label Grid.Row="2" Content="{l:Tr general.rtmpIdle}" VerticalAlignment="Center" />
+                <TextBox x:Name="IdleBox" Grid.Row="2" Grid.Column="1" Width="100" Margin="0,3" HorizontalAlignment="Left" />
+            </Grid>
+        </GroupBox>
+
+        <TextBlock x:Name="ErrorText" Foreground="#FFF07178" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
+        <TextBlock Text="{l:Tr general.reconnectNote}" Style="{StaticResource DimText}"
+                   FontSize="12" Margin="0,10,0,0" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="{l:Tr common.cancel}" IsCancel="True" MinWidth="90" />
+            <Button x:Name="SaveButton" Content="{l:Tr common.save}" IsDefault="True" MinWidth="90" Style="{StaticResource PrimaryButton}" Click="Save_Click" Margin="0" />
+        </StackPanel>
+    </StackPanel>
+</Window>
