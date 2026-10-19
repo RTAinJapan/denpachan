@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Controls;
 using Denpachan.Ui.Infrastructure;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -14,8 +15,9 @@ namespace Denpachan.Ui;
 ///   --select N                         試験用: 起動時に選択するチャンネル
 ///   --settings N [--settings-tab T]    試験用: --screenshot で、チャンネル N の設定画面 (T 番目のタブ、0 から) を撮る
 ///   --general                          試験用: --screenshot で、全体の設定画面を撮る
-///   --size WxH                         試験用: --screenshot で、ウィンドウをこの大きさにする (枠なし・サイズ変更不可にして、
-///                                      CI の小さい画面でも Windows に縮められないようにする)。H が 0 なら中身の自然な高さ (設定画面)
+///   --size WxH                         試験用: --screenshot で、画面の中身をウィンドウから外してこの大きさで配置・描画する
+///                                      (ウィンドウは画面より大きくできないので、CI の小さい画面でも同じ絵にするため)。
+///                                      H が 0 なら中身の自然な高さ (設定画面)
 ///   --fixture PATH                     試験用: engine に繋がず、ファイルの設定と状態を画面に流し込む (UiFixture)。
 ///                                      --screenshot と使うと、PNG の隣に画面の状態 (PATH.txt) を書き、
 ///                                      fixture の expect と合わなければ終了コード 1
@@ -90,24 +92,6 @@ public partial class App : Application
                     break;
             }
         }
-        // 枠のあるウィンドウは画面より大きくできない (Windows が縮める) ので、撮影のときは枠なしにして大きさを決める
-        void ApplySize(Window w)
-        {
-            if (size is not { } s) return;
-            w.WindowStyle = WindowStyle.None;
-            w.ResizeMode = ResizeMode.NoResize;
-            w.Width = s.Width;
-            if (s.Height > 0)
-            {
-                w.SizeToContent = SizeToContent.Manual;
-                w.Height = s.Height;
-            }
-            else
-            {
-                w.SizeToContent = SizeToContent.Height;
-            }
-        }
-        if (screenshot != null) ApplySize(window);
         window.Show();
 
         if (screenshot != null)
@@ -122,20 +106,18 @@ public partial class App : Application
                     var settings = new Views.ChannelSettingsWindow(window.ViewModel, window.ViewModel.Channels[settingsFor - 1]) { Owner = window };
                     settings.Tabs.SelectedIndex = settingsTab;
                     target = settings;
-                    ApplySize(target);
                     target.Show();
                     target.UpdateLayout();
                 }
                 else if (general && window.ViewModel.GeneralConfig != null)
                 {
                     target = new Views.GeneralSettingsWindow(window.ViewModel, window.ViewModel.GeneralConfig) { Owner = window };
-                    ApplySize(target);
                     target.Show();
                     target.UpdateLayout();
                 }
                 Dispatcher.InvokeAsync(() =>
                 {
-                    SaveScreenshot(target, screenshot);
+                    SaveScreenshot(target, screenshot, size);
                     var exitCode = 0;
                     if (fixture != null)
                     {
@@ -150,17 +132,45 @@ public partial class App : Application
         }
     }
 
-    private static void SaveScreenshot(Window window, string path)
+    private static void SaveScreenshot(Window window, string path, Size? wanted)
     {
-        // ウィンドウの背景の上に中身を描く (中身だけを描くと背景が透明になるため)
-        var content = (FrameworkElement)window.Content;
         var dpi = VisualTreeHelper.GetDpi(window);
-        var size = new Size(content.ActualWidth, content.ActualHeight);
-        var visual = new DrawingVisual();
-        using (var dc = visual.RenderOpen())
+        var content = (FrameworkElement)window.Content;
+        Visual visual;
+        Size size;
+        if (wanted is { } s)
         {
-            dc.DrawRectangle(window.Background, null, new Rect(size));
-            dc.DrawRectangle(new VisualBrush(content), null, new Rect(size));
+            // ウィンドウは画面より大きくできない (Windows が縮める) ので、中身をウィンドウから外して
+            // 望む大きさで配置し直し、そのまま描く。ウィンドウから受け継いでいたものは持たせ直す
+            window.Content = null;
+            var host = new Border
+            {
+                Background = window.Background,
+                Child = content,
+                Width = s.Width,
+                DataContext = window.DataContext,
+                FontFamily = window.FontFamily,
+                FontSize = window.FontSize,
+                Foreground = window.Foreground,
+            };
+            if (s.Height > 0) host.Height = s.Height;
+            host.Measure(new Size(s.Width, s.Height > 0 ? s.Height : double.PositiveInfinity));
+            host.Arrange(new Rect(host.DesiredSize));
+            host.UpdateLayout();
+            visual = host;
+            size = new Size(host.ActualWidth, host.ActualHeight);
+        }
+        else
+        {
+            // ウィンドウの背景の上に中身を描く (中身だけを描くと背景が透明になるため)
+            size = new Size(content.ActualWidth, content.ActualHeight);
+            var drawing = new DrawingVisual();
+            using (var dc = drawing.RenderOpen())
+            {
+                dc.DrawRectangle(window.Background, null, new Rect(size));
+                dc.DrawRectangle(new VisualBrush(content), null, new Rect(size));
+            }
+            visual = drawing;
         }
         var bitmap = new RenderTargetBitmap((int)(size.Width * dpi.DpiScaleX), (int)(size.Height * dpi.DpiScaleY),
                                             dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
