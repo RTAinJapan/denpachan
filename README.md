@@ -45,7 +45,3 @@ SRT / RTMP で受けた映像と音声 (最大 4 チャンネル) を、OBS な�
 - 開発 (ビルド・試験・画面の文言の直し方): [docs/development.md](docs/development.md)
 - 設計: [docs/design.md](docs/design.md)
 - 依存関係・ライセンス: [docs/dependencies.md](docs/dependencies.md)
-
-## ライセンス
-
-MIT ([LICENSE](LICENSE))。同梱しているライブラリのライセンスは [docs/third_party_notices.md](docs/third_party_notices.md) (配布物では `licenses/`)。
