@@ -1,8 +1,8 @@
 #pragma once
 // ASIO の出力デバイス (Dante Virtual Soundcard の ASIO モードなど)。設計書 §6.4。
 //
-// ドライバの扱い (列挙、読み込み、コールバック、サンプル形式の変換、開き直し) は denpachan-asio.dll (GPL-3.0、src/asio/)
-// が行い、engine はその C の関数 (asio_plugin.h) を使う。
+// ドライバの扱い (列挙、読み込み、コールバック、サンプル形式の変換、開き直し) は denpachan-asio-driver.dll
+// (別のリポジトリ denpachan-asio-driver、GPL-3.0) が行い、engine はその C の関数 (asio_plugin.h) を使う。
 // WASAPI と同じく、チャンネルごとの音は ChannelSource が作る (遅延を一定に保つ・クロックずれの補正・フェード・ミュート)。
 // DLL が開いたら (opened) ChannelSource を作り、ドライバのコールバックごとに (render) ミックスに足し込む。
 

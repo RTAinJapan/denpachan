@@ -9,12 +9,6 @@ function(denpachan_copy_licenses)
         list(APPEND commands COMMAND ${CMAKE_COMMAND} -E copy_if_different "${root}/${pkg}/copyright" "${dest}/${pkg}.txt")
     endforeach()
     list(APPEND commands COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${dest}/denpachan.txt")
-    if(DENPACHAN_ASIO)
-        # denpachan-asio.dll (GPL-3.0、src/asio/LICENSE) と、それが使う ASIO SDK (cmake/FetchAsioSdk.cmake)
-        list(APPEND commands COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/src/asio/LICENSE"
-             "${dest}/denpachan-asio.txt")
-        list(APPEND commands COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ASIOSDK_LICENSE}" "${dest}/asiosdk.txt")
-    endif()
     list(APPEND commands COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/docs/third_party_notices.md"
          "${dest}/README.md")
     add_custom_target(denpachan_licenses ALL ${commands} COMMENT "Copying third-party licenses" VERBATIM)

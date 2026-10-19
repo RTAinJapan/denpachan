@@ -12,7 +12,7 @@ namespace denpachan::engine {
 
 namespace {
 
-constexpr wchar_t kDllName[] = L"denpachan-asio.dll";
+constexpr wchar_t kDllName[] = L"denpachan-asio-driver.dll";
 
 std::wstring exe_dir() {
     wchar_t buf[MAX_PATH];

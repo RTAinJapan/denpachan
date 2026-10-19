@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 #pragma once
-// denpachan-asio.dll (ASIO 出力。GPL-3.0、src/asio/) と engine (MIT) の間の C の受け渡し。設計書 §6.4。
+// denpachan-asio-driver.dll (ASIO 出力。GPL-3.0) と denpachan の engine (MIT) の間の C の受け渡し。
 //
+// このヘッダは denpachan-asio-driver (この DLL) と denpachan 本体 (src/engine/denpachan_asio.h) の両方に同じものを置く。
+// 変えるときは DENPACHAN_ASIO_ABI_VERSION を上げ、両方を合わせる (engine は版が違う DLL を読み込まない)。
 // engine は ASIO SDK のヘッダに触れず、実行ファイルと同じフォルダからこの DLL を読み込んで使う
-// (src/engine/asio_plugin.cpp)。DLL が無ければ ASIO の出力先は出ない。
+// (denpachan の src/engine/asio_plugin.cpp)。DLL が無ければ ASIO の出力先は出ない。
 // 受け渡す型は C のものだけ (SDK の型も C++ の型も渡さない)。このヘッダ自体は SDK の内容を含まないので MIT。
 //
 // 使い方 (engine 側):

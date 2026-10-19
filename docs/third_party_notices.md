@@ -1,11 +1,10 @@
 # 同梱しているソフトウェアとライセンス
 
 denpachan は MIT License で配布しています (`denpachan.txt`)。Copyright (c) 2026 RTA in Japan。
+ソースコードは https://github.com/RTAinJapan/denpachan で入手できます。
 
-ただし、ASIO 出力の `denpachan-asio.dll` だけは、Steinberg の ASIO SDK を GPL-3.0 で使っているため、
-GNU General Public License v3.0 (GPL-3.0) です (`denpachan-asio.txt`)。この DLL を含むこの配布物は、全体として GPL-3.0 の条件で配布しています。
-ソースコードは https://github.com/RTAinJapan/denpachan で入手できます (この版のタグ)。
-`denpachan-asio.dll` を消すと、ASIO の出力先が出なくなるだけで、他はそのまま動きます。
+ASIO 出力の `denpachan-asio-driver.dll` は、Steinberg の ASIO SDK を GPL-3.0 で使っているため、
+別のリポジトリ https://github.com/RTAinJapan/denpachan-asio-driver で GPL-3.0 として配っています。この配布物には入っていません。
 
 配布物には次のライブラリを同梱・組み込みしています。各ライセンス文はこのフォルダにあります。
 
@@ -16,9 +15,6 @@ GNU General Public License v3.0 (GPL-3.0) です (`denpachan-asio.txt`)。この
 | `spdlog.dll` | spdlog | 1.17.0 | MIT | `spdlog.txt` |
 | `fmt.dll` | {fmt} | 12.2.0 | MIT | `fmt.txt` |
 | (実行ファイルに組み込み) | JSON for Modern C++ (nlohmann/json) | 3.12.0 | MIT | `nlohmann-json.txt` |
-| (`denpachan-asio.dll` に組み込み) | ASIO SDK (Steinberg Media Technologies GmbH) | 2.3.4 | GPL-3.0 | `asiosdk.txt` |
-
-ASIO is a trademark and software of Steinberg Media Technologies GmbH.
 
 ## SRT (MPL-2.0) のソースコード
 

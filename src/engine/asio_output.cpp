@@ -22,7 +22,7 @@ void AsioOutput::start() {
     if (output_) return;
     const auto& plugin = asio_plugin();
     if (!plugin) {
-        spdlog::error("audio [{}]: ASIO output is not available (denpachan-asio.dll)", to_utf8(options_.name));
+        spdlog::error("audio [{}]: ASIO output is not available (denpachan-asio-driver.dll)", to_utf8(options_.name));
         return;
     }
     stopping_ = false;

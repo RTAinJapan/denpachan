@@ -1,7 +1,7 @@
 #pragma once
-// denpachan-asio.dll (ASIO 出力。GPL-3.0、src/asio/) の読み込み。設計書 §6.4。
+// denpachan-asio-driver.dll (ASIO 出力。別のリポジトリ denpachan-asio-driver、GPL-3.0) の読み込み。設計書 §6.4。
 //
-// engine は ASIO SDK に触れず、この DLL の C の関数 (src/asio/denpachan_asio.h) だけを使う。
+// engine は ASIO SDK に触れず、この DLL の C の関数 (denpachan_asio.h。向こうのリポジトリと同じもの) だけを使う。
 // DLL は engine と同じフォルダからだけ読み込む (PATH は探さない)。無い・ABI の版が違うときは ASIO の出力先を出さない。
 
 #include <optional>

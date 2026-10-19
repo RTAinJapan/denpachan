@@ -2,7 +2,6 @@
 #
 # - C++: vcpkg (baseline と同じコミット) + CMake プリセット。vcpkg のバイナリはキャッシュする
 # - FFmpeg: cmake/FetchFfmpeg.cmake が固定の URL と SHA256 で取る (ヘッダと import lib だけ使う)。取ったものはキャッシュする
-# - ASIO SDK: cmake/FetchAsioSdk.cmake が同様に取る (denpachan-asio.dll だけが使う。GPL-3.0)
 # - UI: .NET 10
 # - 配布用の zip (展開すればすぐ使える。FFmpeg は含まない) と PDB の zip を artifact にする (tools/package.ps1)
 # - タグ vX.Y.Z (プレリリースは vX.Y.Z-rc.1 など) を push すると、同じビルドで GitHub Release を作る (release ジョブ)。
@@ -74,11 +73,11 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-
 
-      - name: Cache FFmpeg and the ASIO SDK (build only)
+      - name: Cache FFmpeg (build only)
         uses: actions/cache@v6
         with:
           path: out/deps
-          key: deps-${{ hashFiles('cmake/FetchFfmpeg.cmake', 'cmake/FetchAsioSdk.cmake') }}
+          key: deps-${{ hashFiles('cmake/FetchFfmpeg.cmake') }}
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -99,8 +98,7 @@ jobs:
           $ffmpeg = Get-ChildItem $bin -Filter *.dll | Where-Object { $_.Name -match '^(avcodec|avformat|avutil|avfilter|avdevice|swresample|swscale|postproc)-\d+\.dll$' }
           if ($ffmpeg) { throw "FFmpeg DLLs must not be in the output: $($ffmpeg.Name -join ', ')" }
           foreach ($f in 'denpachan.exe', 'denpachan-engine.exe', 'denpachan-worker.exe', 'denpachan-rtmpd.exe',
-                         'denpachan-vcam.dll', 'denpachan-asio.dll', 'srt.dll', 'licenses/denpachan.txt', 'licenses/denpachan-asio.txt',
-                         'licenses/libsrt.txt', 'licenses/asiosdk.txt', 'licenses/README.md') {
+                         'denpachan-vcam.dll', 'srt.dll', 'licenses/denpachan.txt', 'licenses/libsrt.txt', 'licenses/README.md') {
             if (-not (Test-Path "$bin/$f")) { throw "missing: $f" }
           }
           # FFmpeg が無ければ worker は専用の終了コード (0x0FF0) で終わる (遅延ロードと確認が効いている)
