@@ -1,0 +1,6 @@
+{
+  // C++ のビルドは build.ps1 (タスク「ビルド (全体)」) で行う。CMake Tools が開いたときに勝手に configure すると、
+  // VCPKG_ROOT などが無いまま同じ out/build を触り、build.ps1 のビルドとぶつかるので止めておく
+  "cmake.configureOnOpen": false,
+  "cmake.automaticReconfigure": false
+}
