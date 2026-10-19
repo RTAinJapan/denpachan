@@ -1,5 +1,5 @@
 {
-  "_comment": "通常の運用: ch1 SRT 1080p60 受信中 + 録画、ch2 RTMP push 720p30 受信中、ch3 SRT caller 待ち受け、ch4 停止",
+  "_comment": "通常の運用: ch1 SRT 1080p60 受信中 + 録画、ch2 RTMP push 720p30 受信中、ch3 SRT caller 接続中 (まだ繋がっていない)、ch4 停止",
   "channels": [
     {
       "name": "Game A", "enabled": true, "vcam": 1,
@@ -87,7 +87,7 @@
     "channels": [
       { "statusText": "受信中", "softwareDecode": false, "transportKind": "ok", "audioKind": "ok", "recordKind": "recording", "isLocked": false, "previewMessage": "" },
       { "statusText": "受信中", "softwareDecode": false, "transportKind": "ok", "audioKind": "ok", "recordKind": "off", "previewMessage": "" },
-      { "statusText": "待ち受け中", "softwareDecode": false, "transportKind": "ok", "audioKind": "ok", "previewMessage": "NO SIGNAL" },
+      { "statusText": "接続中…", "softwareDecode": false, "transportKind": "ok", "audioKind": "ok", "previewMessage": "NO SIGNAL" },
       { "statusText": "停止", "enabled": false, "previewMessage": "停止中" }
     ]
   }

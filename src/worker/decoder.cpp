@@ -1,5 +1,8 @@
 #include "decoder.h"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -9,6 +12,32 @@
 namespace denpachan::worker {
 
 namespace {
+
+// URL のホスト名 (rtmp://host:1935/app/key → host)
+std::string url_host(const std::string& url) {
+    const size_t scheme = url.find("://");
+    if (scheme == std::string::npos) return {};
+    const size_t start = scheme + 3;
+    const size_t end = url.find_first_of(":/", start);
+    return url.substr(start, end == std::string::npos ? std::string::npos : end - start);
+}
+
+bool resolves(const std::string& host) {
+    addrinfo* res = nullptr;
+    if (getaddrinfo(host.c_str(), nullptr, nullptr, &res) != 0 || !res) return false;
+    freeaddrinfo(res);
+    return true;
+}
+
+// URL を開けなかった理由 (画面に出す)。利用者が何を確かめればよいかがわかる言葉にする
+std::string open_error_message(int err, bool timed_out, const std::string& host) {
+    if (timed_out || err == AVERROR(ETIMEDOUT)) {
+        return "応答がありません (サーバーが動いていない、アドレスが違う、ファイアウォール)";
+    }
+    if (err == AVERROR(ECONNREFUSED)) return "接続を拒否されました (サーバーが動いていない、ポートが違う)";
+    if (!host.empty() && !resolves(host)) return "名前を引けません (" + host + ")";
+    return "接続できません (" + av_error_string(err) + ")。URL (app とストリームキー) を確かめる";
+}
 
 constexpr int kIoBufferSize = 64 * 1024;
 // キーフレームのデコードがこれだけ続けて失敗したら HW デコードをやめる (本当に HW で読めないとき)。
@@ -76,7 +105,10 @@ int Decoder::interrupt_cb(void* opaque) {
         // URL を直接読んでいる間はこのスレッドが受信スレッドを兼ねる (ブロック中も頻繁に呼ばれる)
         self->metrics_.heartbeat_ingest();
         const int64_t deadline = self->io_deadline_qpc_.load();
-        if (deadline != 0 && qpc_now() > deadline) return 1;  // 届かなくなった
+        if (deadline != 0 && qpc_now() > deadline) {  // 届かなくなった
+            self->io_timed_out_ = true;
+            return 1;
+        }
     }
     return self->stop_ ? 1 : 0;
 }
@@ -321,9 +353,17 @@ bool Decoder::run_session(uint64_t session) {
         }
     };
 
+    // 繋がらない・届かない理由を画面に出す (URL を直接読むとき。SRT / RTMP push は受信側が出す)
+    auto set_error = [&](const std::string& message) {
+        if (!url_mode || stop_) return;
+        std::lock_guard lk(metrics_.mutex);
+        metrics_.last_error = message;
+    };
+
     int err;
     if (url_mode) {
         // RTMP pull など: URL を直接開く。届かなくなったら interrupt_cb が打ち切る。
+        io_timed_out_ = false;
         io_deadline_qpc_ = qpc_now() + qpc_from_ms(kOpenTimeoutMs);
         err = avformat_open_input(&fmt, url_.c_str(), nullptr, nullptr);
     } else {
@@ -331,6 +371,7 @@ bool Decoder::run_session(uint64_t session) {
     }
     if (err < 0) {
         if (!stop_) spdlog::warn("decoder: open input failed: {}", av_error_string(err));
+        set_error(open_error_message(err, io_timed_out_, url_mode ? url_host(url_) : std::string()));
         cleanup();
         return false;
     }
@@ -346,6 +387,8 @@ bool Decoder::run_session(uint64_t session) {
     err = avformat_find_stream_info(fmt, nullptr);
     if (err < 0) {
         if (!stop_) spdlog::warn("decoder: stream info failed: {}", av_error_string(err));
+        set_error(io_timed_out_ ? "サーバーには繋がったが、配信が届きません (配信元が送っていない、ストリームキーが違う)"
+                                : "配信を読めません (" + av_error_string(err) + ")");
         cleanup();
         return false;
     }
@@ -436,6 +479,7 @@ bool Decoder::run_session(uint64_t session) {
                 av_packet_unref(pkt.get());
                 if (qpc_now() > video_deadline) {
                     spdlog::warn("decoder: no video stream");
+                    set_error("音声しか届きません (配信に映像が入っていない)");
                     break;
                 }
                 continue;

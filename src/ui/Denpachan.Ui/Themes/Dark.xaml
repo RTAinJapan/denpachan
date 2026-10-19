@@ -145,6 +145,10 @@
             <DataTrigger Binding="{Binding StatusKind}" Value="restarting">
                 <Setter Property="Background" Value="{StaticResource ErrorBrush}" />
             </DataTrigger>
+            <!-- RTMP pull / SRT caller で相手に繋がらない -->
+            <DataTrigger Binding="{Binding StatusKind}" Value="unreachable">
+                <Setter Property="Background" Value="{StaticResource ErrorBrush}" />
+            </DataTrigger>
         </Style.Triggers>
     </Style>
 </ResourceDictionary>

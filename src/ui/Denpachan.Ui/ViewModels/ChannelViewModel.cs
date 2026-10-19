@@ -26,6 +26,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     // 前回の状態 (イベントログ用)
     private long _lastRestarts = -1;
     private string _lastVideoState = "";
+    private string _lastUnreachableReason = "";
     private bool? _lastConnected;
     private string _lastWorkerState = "";
 
@@ -90,6 +91,9 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     private string _transportLine = "";
     public string TransportLine { get => _transportLine; private set => SetProperty(ref _transportLine, value); }
+
+    /// <summary>こちらから接続しに行く方式 (RTMP pull / SRT caller) で繋がらない理由 (繋がっていれば空)</summary>
+    public string UnreachableReason { get; private set; } = "";
 
     private string _audioLine = "";
     public string AudioLine { get => _audioLine; private set => SetProperty(ref _audioLine, value); }
@@ -351,6 +355,12 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         var connected = video?.Bool("connected");
         Enabled = st.Bool("enabled");
 
+        // こちらから接続しに行く方式 (RTMP pull / SRT caller) は「待ち受け」ではないので、言葉を分け、
+        // 繋がらない理由 (worker の lastError) を出す
+        var source = st.At("source");
+        var outgoing = (source.Str("protocol"), source.Str("mode")) is ("rtmp", "pull") or ("srt", "caller");
+        var lastError = video.Str("lastError");
+        var unreachable = outgoing && connected != true && lastError.Length > 0;
         (StatusKind, StatusText) = workerState switch
         {
             "stopped" => ("stopped", "停止"),
@@ -359,8 +369,12 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             _ when video == null => ("starting", "起動中"),
             _ when videoState == "live" => ("live", "受信中"),
             _ when videoState == "hold" => ("hold", "途絶 (最後の映像を保持)"),
+            _ when unreachable => ("unreachable", "接続できません"),
+            _ when outgoing && connected == true => ("waiting", "映像を待っています"),
+            _ when outgoing => ("waiting", "接続中…"),
             _ => ("waiting", "待ち受け中"),
         };
+        UnreachableReason = unreachable ? lastError : "";
 
         // イベントログ
         var restarts = (long)worker.Num("restarts");
@@ -377,6 +391,9 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         {
             events.Add(videoState == "live" ? "映像を受信しています" : "映像が途絶えました (最後の映像を保持)");
         }
+        // 繋がらない理由は変わったときだけ出す (繋ぎ直しのたびには出さない)
+        if (UnreachableReason.Length > 0 && UnreachableReason != _lastUnreachableReason) events.Add($"接続できません: {UnreachableReason}");
+        _lastUnreachableReason = UnreachableReason;
         _lastRestarts = restarts;
         _lastWorkerState = workerState;
         _lastConnected = connected;
@@ -414,6 +431,12 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             TransportKind = "ok";
             _srtDropped.Reset();
             _tcpRetrans.Reset();
+        }
+        if (unreachable)
+        {
+            // 繋がらないあいだは経路の数字 (0 ばかり) の代わりに理由を出す
+            TransportLine = $"接続できません: {lastError}";
+            TransportKind = "error";
         }
         SrtRecommendedLatencyMs = srt.At("recommend").Int("latencyMs");
         SrtRecommendation = srt != null ? DescribeSrtRecommendation(srt) : "";
@@ -539,7 +562,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             Add("映像の遅延", $"{video.Num("delayMs"):0} ms (デコード後から仮想カメラまで)");
             Add("落としたフレーム", $"遅れ {video.Num("droppedLate"):0} / 溢れ {video.Num("droppedQueue"):0}");
             Add("デコードエラー", $"{video.Num("decodeErrors"):0}");
-            if (video.Str("lastError") is { Length: > 0 } err) Add("エラー", err);
+            if (video.Str("lastError") is { Length: > 0 } err) Add(UnreachableReason.Length > 0 ? "接続できない理由" : "エラー", err);
         }
         if (st.At("srt") is JsonNode srt)
         {

@@ -83,6 +83,7 @@ private:
     std::string url_;          // 空 = ByteQueue から読む
     std::string display_url_;  // ストリームキーを伏せたもの (ログ・メトリクス用)
     std::atomic<int64_t> io_deadline_qpc_{0};
+    std::atomic<bool> io_timed_out_{false};  // interrupt_cb が時間切れで打ち切った (繋がらない理由の表示用)
     int64_t last_pts_us_ = AV_NOPTS_VALUE;
 
     std::thread thread_;
