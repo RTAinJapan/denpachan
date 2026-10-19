@@ -60,10 +60,22 @@ foreach ($shot in $shots) {
     $case = Join-Path $cases "$($shot.Case).json"
     # 5 秒待つ: 状態バーの CPU 使用率は 2 回目の採取 (2 秒ごと) から出る
     $args = @('--fixture', $case, '--screenshot', $png, '--delay', '5') + @($shot.Args)
-    $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -NoNewWindow
-    if (-not $p.WaitForExit(60000)) {
+    # CI の画面ではまれに固まって終わらないことがある (手元では再現しない)。時間切れは 1 回だけやり直し、
+    # そのときのウィンドウのタイトル (ダイアログで止まっていればその名前) を残す
+    $p = $null
+    $timeouts = @()
+    foreach ($attempt in 1..2) {
+        $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -NoNewWindow
+        if ($p.WaitForExit(60000)) { break }
+        $p.Refresh()
+        $timeouts += "試行 $attempt で 60 秒で終わらなかった (ウィンドウ: '$($p.MainWindowTitle)')"
         $p.Kill()
-        $failed += "$($shot.Name): 60 秒で終わらなかった"
+        $p.WaitForExit(5000) | Out-Null
+        $p = $null
+    }
+    if ($timeouts.Count -gt 0) { $timeouts | ForEach-Object { Write-Host "warn: $($shot.Name): $_" } }
+    if (-not $p) {
+        $failed += "$($shot.Name): $($timeouts -join ' / ')"
         continue
     }
     $report = "$png.txt"
