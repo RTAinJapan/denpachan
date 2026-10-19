@@ -1,6 +1,6 @@
 # 依存関係
 
-denpachan 本体は MIT ライセンス。ライセンス上の制約が付かないように、**FFmpeg は同梱しない**。
+denpachan 本体は GPL-3.0 (ASIO SDK を GPL-3.0 で使うため)。**FFmpeg は同梱しない**。
 利用者が FFmpeg の shared 版を用意し、denpachan はその DLL を実行時に読み込む。
 
 ## 1. 利用者が用意するもの
@@ -13,7 +13,7 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 | **FFmpeg 9.x の shared 版** | 必須 | 受信した映像・音声のデコード、録画、48 kHz 以外の音声デバイスへのリサンプル。下記 §1.1 |
 | GPU のドライバ | 推奨 | ハードウェアデコード、録画の GPU エンコード (NVIDIA: NVDEC / NVENC、Intel: QSV、AMD: AMF) |
 | OBS など DirectShow の映像を取り込めるソフト | 用途による | 仮想カメラ (denpachan Cam 1〜4) の取り込み |
-| Dante Virtual Soundcard など | 用途による | 音声の出力先 |
+| Dante Virtual Soundcard など | 用途による | 音声の出力先 (WDM モードなら WASAPI のデバイス、ASIO モードなら ASIO のドライバとして使う) |
 
 ### 1.1 FFmpeg
 
@@ -32,8 +32,8 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 
 ### 1.2 なぜ FFmpeg を同梱しないか
 
-- FFmpeg 自体は LGPL (x264 などを含めると GPL)。同梱すると、配布物にそのライセンスの義務 (ソースの提供など) が付く。
-- 利用者が自分で入れた DLL を読み込む形なら、denpachan の配布物には FFmpeg が含まれない。
+- FFmpeg 自体は LGPL (x264 などを含めると GPL)。同梱すると、配布物に FFmpeg のソースの提供などの義務が付く。
+- 利用者が自分で入れた DLL を読み込む形なら、denpachan の配布物には FFmpeg が含まれない。版の合う FFmpeg を利用者が選べる。
 - GPL のエンコーダ (x264 / x265) は、利用者の ffmpeg.exe を別のプロセスとして呼び出すだけにする (denpachan のプロセスには読み込まない)。
 - H.264 / HEVC などの特許ライセンスは、これとは別の話 (GPU エンコーダでも同じ)。
 
@@ -47,10 +47,17 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 | `libcrypto-3-x64.dll` | OpenSSL | 3.6.5 | Apache-2.0 | srt.dll (暗号化) |
 | `spdlog.dll`, `fmt.dll` | spdlog / {fmt} | 1.17.0 / 12.2.0 | MIT | engine / worker / rtmpd |
 | (組み込み) | nlohmann/json | 3.12.0 | MIT | engine / worker / ctl |
+| (組み込み) | ASIO SDK (Steinberg) | 2.3.4 | GPL-3.0 | engine (ASIO 出力。インターフェースの定義のヘッダだけを使う) |
 
 - SRT は MPL-2.0 なので、ソースの入手先 (上流のタグと、ビルドに使った vcpkg のポート) を `third_party_notices.md` に書いている。
 - 仮想カメラの DLL (`denpachan-vcam.dll`) は外部のライブラリを使わない (DirectShow の基底クラスも使わず、CRT は静的リンク)。
 - 画面 (C# / WPF) は NuGet のパッケージを使っていない。
+
+### 2.1 ASIO SDK と denpachan のライセンス
+
+- ASIO SDK は GPL-3.0 と Steinberg 独自のライセンス (署名する契約) の二本立てで配られている。denpachan は GPL-3.0 で使い、そのため denpachan 本体も GPL-3.0 にしている。
+- 同梱・組み込みしているもの (SRT は MPL-2.0、OpenSSL は Apache-2.0、spdlog / fmt / nlohmann-json は MIT) は、どれも GPL-3.0 と両立する。
+- 「ASIO」の名前やロゴを使うときは Steinberg の商標の決まりに従う (`docs/third_party_notices.md` に商標の表記を入れている)。
 
 ## 3. ビルドに使うもの (配布しない)
 
@@ -61,6 +68,7 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 | vcpkg | baseline `bf19794383e8fb95eba5aa553235bc8ec2271688` | `vcpkg.json` (libsrt、spdlog、nlohmann-json。FFmpeg は入れない) |
 | .NET 10 SDK | | 画面 |
 | FFmpeg の shared 版 (gyan.dev) | 9.0.2 | **ヘッダと .def だけ**を使う (§3.1)。配布物には入れない |
+| ASIO SDK (Steinberg) | 2.3.4 | ヘッダだけを使う (§3.2) |
 
 ### 3.1 FFmpeg (ビルド用)
 
@@ -74,7 +82,14 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 - 開発中に動かすとき: `out/deps/ffmpeg-9.0.2-full_build-shared/bin` を PATH に足す (利用者と同じ配布版の DLL と ffmpeg.exe)。
   試験スクリプトは `tools/testsrc/dev_env.sh` でこれを行う。FFmpeg が無いときの動作は `tools/testsrc/ffmpeg_missing_test.sh` で確かめる。
 
-### 3.2 CI (GitHub Actions)
+### 3.2 ASIO SDK (ビルド用)
+
+- `cmake/FetchAsioSdk.cmake` が、Steinberg の配布物 `ASIO-SDK_2.3.4_2025-10-15.zip` を固定の URL と SHA256 で取り、`out/deps/` に展開する。
+  別の場所に展開済みのものを使うときは `-DDENPACHAN_ASIOSDK_DIR=<ASIOSDK フォルダ>`。
+- 使うのは `common/asio.h`・`common/iasiodrv.h` などインターフェースの定義だけ。ドライバの列挙と読み込みは engine が自分で行う (`src/engine/asio_output.cpp`)。
+- SDK のライセンス文は `licenses/asiosdk.txt` にコピーされる。
+
+### 3.3 CI (GitHub Actions)
 
 `.github/workflows/build.yml`。push と pull request でビルドする。
 
@@ -82,7 +97,7 @@ denpachan 本体は MIT ライセンス。ライセンス上の制約が付か�
 - ビルド後に確かめること: 出力に FFmpeg の DLL が無い、必要なファイルとライセンス文がある、FFmpeg が無い状態で worker は専用の終了コード (0x0FF0) で終わり、engine は起動して「FFmpeg が見つかりません」をログに出す。
 - artifact: `denpachan-win64` (配布物。FFmpeg を含まない) と `denpachan-win64-symbols` (PDB)。
 
-### 3.3 配布の形
+### 3.4 配布の形
 
 - 配布は zip (`tools/package.ps1` が `out/dist/denpachan-<版>-win64.zip` を作る。CI でも同じものを artifact にする)。展開すればインストールせずに使える。
   - 中身: 実行ファイルと同梱の DLL、`licenses/`、README.md、docs/ (設計・依存関係・開発・ライセンス。README からリンクしているもの)。PDB は別の zip。開発用の audio_probe.exe は入れない。FFmpeg が入っていたら作るのを止める。

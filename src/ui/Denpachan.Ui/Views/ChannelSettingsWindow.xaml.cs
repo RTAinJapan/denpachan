@@ -51,6 +51,13 @@ public partial class ChannelSettingsWindow : Window
         BufferBox.Text = c.Int("playoutBufferMs").ToString();
         var a = c.At("audio");
         Select(AudioModeBox, a.Str("mode", "shared"));
+        if (a.Str("device").StartsWith("ASIO: ", StringComparison.Ordinal))
+        {
+            // 共有 / 排他は WASAPI のデバイスのときだけ (ASIO はドライバを直接使う)
+            AudioModeBox.IsEnabled = false;
+            AudioModeBox.ToolTip = T("channel.audioModeAsio");
+            ToolTipService.SetShowOnDisabled(AudioModeBox, true);
+        }
         OffsetBox.Text = a.Int("offsetMs").ToString();
         FadeBox.IsChecked = a.Bool("fade", true);
 

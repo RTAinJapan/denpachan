@@ -73,11 +73,11 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-
 
-      - name: Cache FFmpeg (build only)
+      - name: Cache FFmpeg and the ASIO SDK (build only)
         uses: actions/cache@v6
         with:
           path: out/deps
-          key: ffmpeg-${{ hashFiles('cmake/FetchFfmpeg.cmake') }}
+          key: deps-${{ hashFiles('cmake/FetchFfmpeg.cmake', 'cmake/FetchAsioSdk.cmake') }}
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -98,7 +98,7 @@ jobs:
           $ffmpeg = Get-ChildItem $bin -Filter *.dll | Where-Object { $_.Name -match '^(avcodec|avformat|avutil|avfilter|avdevice|swresample|swscale|postproc)-\d+\.dll$' }
           if ($ffmpeg) { throw "FFmpeg DLLs must not be in the output: $($ffmpeg.Name -join ', ')" }
           foreach ($f in 'denpachan.exe', 'denpachan-engine.exe', 'denpachan-worker.exe', 'denpachan-rtmpd.exe',
-                         'denpachan-vcam.dll', 'srt.dll', 'licenses/denpachan.txt', 'licenses/libsrt.txt', 'licenses/README.md') {
+                         'denpachan-vcam.dll', 'srt.dll', 'licenses/denpachan.txt', 'licenses/libsrt.txt', 'licenses/asiosdk.txt', 'licenses/README.md') {
             if (-not (Test-Path "$bin/$f")) { throw "missing: $f" }
           }
           # FFmpeg が無ければ worker は専用の終了コード (0x0FF0) で終わる (遅延ロードと確認が効いている)

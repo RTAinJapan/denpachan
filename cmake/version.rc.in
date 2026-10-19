@@ -18,7 +18,7 @@ BEGIN
             VALUE "FileDescription", "@DENPACHAN_FILE_DESCRIPTION@"
             VALUE "FileVersion", "@denpachan_VERSION@"
             VALUE "InternalName", "@DENPACHAN_TARGET@"
-            VALUE "LegalCopyright", "Copyright (c) 2026 RTA in Japan. MIT License"
+            VALUE "LegalCopyright", "Copyright (c) 2026 RTA in Japan. GPL-3.0"
             VALUE "OriginalFilename", "@DENPACHAN_FILE_NAME@"
             VALUE "ProductName", "denpachan"
             VALUE "ProductVersion", "@DENPACHAN_PRODUCT_VERSION@"

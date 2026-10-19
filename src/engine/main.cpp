@@ -25,6 +25,7 @@
 #include "denpachan/win_util.h"
 #include "engine.h"
 #include "ipc_server.h"
+#include "output_devices.h"
 
 #include <timeapi.h>  // windows.h の後に置く
 
@@ -114,7 +115,7 @@ int wmain(int argc, wchar_t** argv) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     if (opts->list_devices) {
-        for (const auto& d : list_audio_devices(eRender)) {
+        for (const auto& d : list_output_devices()) {
             std::printf("%s\n    %d ch, %d Hz\n    %s\n", to_utf8(d.name).c_str(), d.channels, d.sample_rate,
                         to_utf8(d.id).c_str());
         }

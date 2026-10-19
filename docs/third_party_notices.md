@@ -1,6 +1,9 @@
 # 同梱しているソフトウェアとライセンス
 
-denpachan 本体は MIT ライセンスです (`denpachan.txt`)。配布物には次のライブラリを同梱しています。各ライセンス文はこのフォルダにあります。
+denpachan は GNU General Public License v3.0 (GPL-3.0) で配布しています (`denpachan.txt`)。
+Copyright (c) 2026 RTA in Japan。ソースコードは https://github.com/RTAinJapan/denpachan で入手できます。
+
+配布物には次のライブラリを同梱・組み込みしています。各ライセンス文はこのフォルダにあります。
 
 | ファイル | ソフトウェア | 版 | ライセンス | ライセンス文 |
 |---------|-------------|----|-----------|-------------|
@@ -9,6 +12,9 @@ denpachan 本体は MIT ライセンスです (`denpachan.txt`)。配布物に�
 | `spdlog.dll` | spdlog | 1.17.0 | MIT | `spdlog.txt` |
 | `fmt.dll` | {fmt} | 12.2.0 | MIT | `fmt.txt` |
 | (実行ファイルに組み込み) | JSON for Modern C++ (nlohmann/json) | 3.12.0 | MIT | `nlohmann-json.txt` |
+| (`denpachan-engine.exe` に組み込み) | ASIO SDK (Steinberg Media Technologies GmbH) | 2.3.4 | GPL-3.0 | `asiosdk.txt` |
+
+ASIO is a trademark and software of Steinberg Media Technologies GmbH.
 
 ## SRT (MPL-2.0) のソースコード
 

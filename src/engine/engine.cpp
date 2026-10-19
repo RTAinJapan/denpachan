@@ -6,6 +6,7 @@
 
 #include "audio_devices.h"
 #include "denpachan/ffmpeg_runtime.h"
+#include "output_devices.h"
 
 using nlohmann::json;
 
@@ -222,9 +223,9 @@ json Engine::handle(const std::string& method, const json& params) {
 
     if (method == "listAudioDevices") {
         json arr = json::array();
-        for (const auto& d : list_audio_devices(eRender)) {
+        for (const auto& d : list_output_devices()) {
             arr.push_back({{"id", to_utf8(d.id)}, {"name", to_utf8(d.name)}, {"channels", d.channels},
-                           {"sampleRate", d.sample_rate}});
+                           {"sampleRate", d.sample_rate}, {"api", d.asio ? "asio" : "wasapi"}});
         }
         return arr;
     }
