@@ -13,11 +13,11 @@ SRT / RTMP で受けた映像と音声 (最大 4 チャンネル) を、OBS な�
 | Windows 10 / 11 (x64) | |
 | .NET 10 デスクトップ ランタイム (x64) | https://dotnet.microsoft.com/download/dotnet/10.0 の「.NET Desktop Runtime」 |
 | Visual C++ 再頒布可能パッケージ (x64、最新版) | https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist |
-| **FFmpeg 9.x の shared 版** (同梱していない) | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) の「release full shared」、または [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) の `win64-gpl-shared-9.0` |
+| **FFmpeg 9.x の shared 版** | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) の「release full shared」、または [BtbN](https://github.com/BtbN/FFmpeg-Builds/releases) の `win64-gpl-shared-9.0` |
 
 - FFmpeg は、展開した `bin` フォルダを **PATH に通す**か、`bin` の中身を **denpachan と同じフォルダに置く**。
   見つからないときは、画面の上部に赤い帯で案内が出る (入れれば再起動しなくても動き出す)。
-- 録画を CPU (x264 / x265) でエンコードするときは、**gpl** 版の FFmpeg を使う (同じ `bin` にある ffmpeg.exe を使う)。
+- 録画を CPU (x264 / x265) でエンコードするときは、FFmpeg は **gpl** 版を入れる。
 - あると良いもの: GPU のドライバ (ハードウェアデコード・録画の GPU エンコード)、OBS など DirectShow の映像を取り込めるソフト、Dante Virtual Soundcard など。
 
 ### 2. 起動する
@@ -38,7 +38,7 @@ SRT / RTMP で受けた映像と音声 (最大 4 チャンネル) を、OBS な�
 ### 3. やめるとき
 
 1. メニューの「仮想カメラの登録を解除」を選ぶ。
-2. 画面を閉じる (受信も止まる)。Discord など、カメラを使うアプリも閉じる (仮想カメラの DLL を開いたままにするので、フォルダを消せない)。
+2. 画面を閉じる (受信も止まる)。OBS や Discord など、カメラを使うアプリも閉じる (denpachan Cam を使ったままだと、フォルダを消せない)。
 3. denpachan のフォルダを消す。設定も消すなら `%APPDATA%\denpachan` と `%LOCALAPPDATA%\denpachan` も消す。
 
 ## ドキュメント
