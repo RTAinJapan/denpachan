@@ -5,16 +5,17 @@
         Title="{l:Tr general.title}" Width="600" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner" Background="{StaticResource BgBrush}"
         FontFamily="Segoe UI, Yu Gothic UI" FontSize="13">
-    <StackPanel Margin="18">
+    <!-- ラベルの列は中身に合わせ (Auto)、画面の中の表すべてで同じ幅にそろえる (SharedSizeGroup="Label")。どの言語でも見切れないように -->
+    <StackPanel Margin="18" Grid.IsSharedSizeScope="True">
         <GroupBox Header="{l:Tr general.display}" Foreground="{StaticResource DimTextBrush}">
             <Grid Margin="6">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Label Content="{l:Tr general.language}" VerticalAlignment="Center" />
                 <!-- 言語ファイル (src/ui/Denpachan.Ui/Lang/*.json) がある言語。「自動」は Windows の表示言語 -->
-                <ComboBox x:Name="LanguageBox" Grid.Column="1" Width="220" Margin="0,3" HorizontalAlignment="Left"
+                <ComboBox x:Name="LanguageBox" Grid.Column="1" MinWidth="220" Margin="0,3" HorizontalAlignment="Left"
                           DisplayMemberPath="Label" SelectedValuePath="Value" />
             </Grid>
         </GroupBox>
@@ -22,7 +23,7 @@
         <GroupBox Header="{l:Tr general.videoAudio}" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
             <Grid Margin="6">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
@@ -46,7 +47,7 @@
         <GroupBox Header="{l:Tr general.rtmpServer}" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
             <Grid Margin="6">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
