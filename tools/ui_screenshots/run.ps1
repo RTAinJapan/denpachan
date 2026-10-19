@@ -9,19 +9,24 @@
   ここでは終了コードと、PNG がまともな大きさで書けたことを確かめる。
   出力は out/ui-screenshots/ (CI では artifact "ui-screenshots" になる)。
 
+  -Language を付けると、その言語 (Lang/*.json の言語コード) で撮る。期待値は日本語の文言で書いてあるので、
+  このときは期待値と比べず (合わないのは失敗にしない)、撮るだけにする。見切れなどは PNG を見て確かめる。
+
 .EXAMPLE
   ./tools/ui_screenshots/run.ps1
   ./tools/ui_screenshots/run.ps1 -Only degraded     # 名前に degraded を含む撮影だけ
+  ./tools/ui_screenshots/run.ps1 -Language en       # 英語で撮る (out/ui-screenshots-en/)
 #>
 param(
     [string]$Bin,
     [string]$Out,
-    [string]$Only = ''
+    [string]$Only = '',
+    [string]$Language = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $Bin) { $Bin = Join-Path $root 'out/build/bin/Release' }
-if (-not $Out) { $Out = Join-Path $root 'out/ui-screenshots' }
+if (-not $Out) { $Out = Join-Path $root ($(if ($Language) { "out/ui-screenshots-$Language" } else { 'out/ui-screenshots' })) }
 $exe = Join-Path $Bin 'denpachan.exe'
 if (-not (Test-Path $exe)) { throw "先に build.ps1 でビルドする ($exe)" }
 $cases = Join-Path $PSScriptRoot 'cases'
@@ -61,6 +66,7 @@ foreach ($shot in $shots) {
     $case = Join-Path $cases "$($shot.Case).json"
     # 5 秒待つ: 状態バーの CPU 使用率は 2 回目の採取 (2 秒ごと) から出る
     $args = @('--fixture', $case, '--screenshot', $png, '--delay', '5') + @($shot.Args)
+    if ($Language) { $args += @('--language', $Language) }
     # CI の画面ではまれに固まって終わらないことがある (手元では再現しない)。時間切れは 1 回だけやり直し、
     # そのときのウィンドウのタイトル (ダイアログで止まっていればその名前) を残す
     $p = $null
@@ -80,7 +86,8 @@ foreach ($shot in $shots) {
         continue
     }
     $report = "$png.txt"
-    if ($p.ExitCode -ne 0) {
+    # 終了コード 1 = 期待値と合わない。-Language のときは期待値 (日本語) と比べないので失敗にしない
+    if ($p.ExitCode -ne 0 -and -not ($Language -and $p.ExitCode -eq 1)) {
         $detail = if (Test-Path $report) { (Get-Content $report -Raw) } else { '(状態の書き出しなし)' }
         $failed += "$($shot.Name): 終了コード $($p.ExitCode)`n$detail"
         continue

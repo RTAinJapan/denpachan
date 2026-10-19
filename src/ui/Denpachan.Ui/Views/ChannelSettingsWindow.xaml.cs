@@ -187,28 +187,28 @@ public partial class ChannelSettingsWindow : Window
         return "127.0.0.1";
     }
 
-    /// <summary>数値の欄を読む。読めなければ、欄の名前 (ラベルと同じ文言のキー) を出してエラーにする</summary>
-    private static bool TryInt(TextBox box, string labelKey, out int value, List<string> errors)
+    /// <summary>数値の欄を読む。読めなければ、その欄のエラー文 (欄ごとのキー。ラベルは流用しない) を足す</summary>
+    private static bool TryInt(TextBox box, string errorKey, out int value, List<string> errors)
     {
         if (int.TryParse(box.Text.Trim(), out value)) return true;
-        errors.Add(F("channel.notNumber", ("field", T(labelKey))));
+        errors.Add(T(errorKey));
         return false;
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         var errors = new List<string>();
-        TryInt(PortBox, "channel.port", out var port, errors);
-        TryInt(LatencyBox, "channel.latency", out var latency, errors);
-        TryInt(BufferBox, "channel.playoutBuffer", out var buffer, errors);
-        TryInt(OffsetBox, "channel.audioOffset", out var offset, errors);
-        TryInt(GapBox, "record.gap", out var gap, errors);
-        TryInt(MaxSegmentBox, "record.maxSegment", out var maxSegment, errors);
-        TryInt(MinFreeBox, "record.minFree", out var minFree, errors);
-        TryInt(BitrateBox, "record.bitrate", out var bitrate, errors);
-        TryInt(QpBox, "record.qp", out var qp, errors);
-        TryInt(GopBox, "record.gop", out var gop, errors);
-        TryInt(AudioBitrateBox, "record.audioBitrate", out var audioBitrate, errors);
+        TryInt(PortBox, "channel.invalid.port", out var port, errors);
+        TryInt(LatencyBox, "channel.invalid.latency", out var latency, errors);
+        TryInt(BufferBox, "channel.invalid.playoutBuffer", out var buffer, errors);
+        TryInt(OffsetBox, "channel.invalid.audioOffset", out var offset, errors);
+        TryInt(GapBox, "channel.invalid.gap", out var gap, errors);
+        TryInt(MaxSegmentBox, "channel.invalid.maxSegment", out var maxSegment, errors);
+        TryInt(MinFreeBox, "channel.invalid.minFree", out var minFree, errors);
+        TryInt(BitrateBox, "channel.invalid.bitrate", out var bitrate, errors);
+        TryInt(QpBox, "channel.invalid.qp", out var qp, errors);
+        TryInt(GopBox, "channel.invalid.gop", out var gop, errors);
+        TryInt(AudioBitrateBox, "channel.invalid.audioBitrate", out var audioBitrate, errors);
         if (errors.Count > 0)
         {
             ShowError(string.Join("\n", errors));

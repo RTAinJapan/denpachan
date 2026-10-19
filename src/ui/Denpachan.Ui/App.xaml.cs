@@ -21,6 +21,7 @@ namespace Denpachan.Ui;
 ///   --size WxH                         試験用: --screenshot で、画面の中身をウィンドウから外してこの大きさで配置・描画する
 ///                                      (ウィンドウは画面より大きくできないので、CI の小さい画面でも同じ絵にするため)。
 ///                                      H が 0 なら中身の自然な高さ (設定画面)
+///   --language CODE                    試験用: 画面の言語 (Lang/*.json の言語コード)。fixture の language より優先
 ///   --fixture PATH                     試験用: engine に繋がず、ファイルの設定と状態を画面に流し込む (UiFixture)。
 ///                                      --screenshot と使うと、PNG の隣に画面の状態 (PATH.txt) を書き、
 ///                                      fixture の expect と合わなければ終了コード 1
@@ -75,10 +76,12 @@ public partial class App : Application
         var general = false;
         Size? size = null;
         JsonNode? fixture = null;
+        string? language = null;
         for (var i = 0; i < e.Args.Length; i++)
         {
             switch (e.Args[i])
             {
+                case "--language" when i + 1 < e.Args.Length: language = e.Args[++i]; break;
                 case "--fixture" when i + 1 < e.Args.Length:
                     fixture = UiFixture.Load(e.Args[++i]);
                     UiFixture.Apply(window.ViewModel, fixture);
@@ -98,6 +101,7 @@ public partial class App : Application
                     break;
             }
         }
+        if (language != null) Loc.Instance.SetLanguage(language);
         window.Show();
 
         // --settings / --general の画面を開く (開けなければメイン画面のまま)
