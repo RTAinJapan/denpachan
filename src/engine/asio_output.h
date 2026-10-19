@@ -83,6 +83,7 @@ private:
     int64_t next_first_hear_ = 0;  // 次のバッファの先頭が鳴る時刻 (予測。0 = まだ測っていない)
     uint64_t callbacks_ = 0;       // 診断: コールバックの回数
     int64_t callbacks_since_qpc_ = 0;
+    std::atomic<int64_t> last_callback_qpc_{0};  // 診断: 最後にコールバックが来た時刻 (0 = 開いてからまだ来ていない)
     std::vector<long> sample_types_;    // チャンネルごとの ASIOSampleType
     std::vector<void*> buffers_[2];     // チャンネルごとのダブルバッファ
     std::vector<float> mix_;            // channels_ x buffer_frames_ (インターリーブ)

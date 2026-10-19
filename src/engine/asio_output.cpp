@@ -21,6 +21,7 @@ namespace {
 
 constexpr double kPreferredRate = 48000.0;  // 48 kHz ならリサンプルせずにそのまま出せる (ChannelSource)
 constexpr int64_t kReanchorMs = 200;        // 予測した時刻と呼ばれた時刻がこれ以上ずれたら測り直す
+constexpr int64_t kStallMs = 2000;          // コールバックがこれだけ来なければ「止まっている」とログに出す
 constexpr int64_t kFollowDivisor = 32;      // 呼ばれた時刻へ寄せる割合 (コールバックごとに 1/32)
 
 // コールバックには「どの出力か」を渡す引数が無いので、開いている出力を 1 つだけ覚えておく
@@ -412,6 +413,7 @@ void AsioOutput::on_buffer_switch(long index) {
     // 診断: デバイスが実時間どおりに音を消費しているか (コールバックの回数を 5 秒ごとに数え、2% 以上ずれていればログ)
     ++callbacks_;
     const int64_t now = qpc_now();
+    last_callback_qpc_.store(now);
     if (callbacks_since_qpc_ == 0) callbacks_since_qpc_ = now;
     if (now - callbacks_since_qpc_ >= qpc_from_ms(5000)) {
         const double per_sec = double(callbacks_) * double(qpc_freq()) / double(now - callbacks_since_qpc_);
@@ -444,10 +446,27 @@ void AsioOutput::run() {
         }
         open_failures_ = 0;
         ResetEvent(reset_event_.get());
+        // 診断: 開始したのにコールバックが来ない (止まった) ときはログに出す。
+        // ドライバの先が動いていない (Voicemeeter なら出力 A1 のデバイスが無いなど) ときに起こる。来始めたらそれも出す
+        last_callback_qpc_.store(0);
+        const int64_t started_qpc = qpc_now();
+        bool stalled = false;
         while (!stop_) {
             HANDLE handles[2] = {stop_event_.get(), reset_event_.get()};
             const DWORD w = MsgWaitForMultipleObjects(2, handles, FALSE, 500, QS_ALLINPUT);
             if (w == WAIT_OBJECT_0 || w == WAIT_OBJECT_0 + 1) break;
+            const int64_t last = last_callback_qpc_.load();
+            const bool silent = qpc_now() - (last ? last : started_qpc) > qpc_from_ms(kStallMs);
+            if (silent != stalled) {
+                stalled = silent;
+                if (stalled) {
+                    spdlog::warn("audio [{}]: the driver has not called back for {} ms (the driver is not running; "
+                                 "for Voicemeeter, check that it has an output device)",
+                                 to_utf8(options_.name), kStallMs);
+                } else {
+                    spdlog::info("audio [{}]: the driver calls back again", to_utf8(options_.name));
+                }
+            }
             MSG msg;
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                 TranslateMessage(&msg);
