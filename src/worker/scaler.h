@@ -1,6 +1,6 @@
 #pragma once
 // デコード済みフレームを、vcam が要求する解像度の NV12 に変換する (アスペクト比維持、黒帯)。
-// TODO(M1 以降): D3D11 Video Processor で GPU 上に移す (設計書 §5.3)
+// 今後: D3D11 Video Processor で GPU 上に移す (設計書 §13)
 
 #include <cstdint>
 

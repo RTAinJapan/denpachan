@@ -1,6 +1,6 @@
 // denpachan-worker: 1 チャンネル分の受信 → デコード → 仮想カメラ出力。
 //
-// M1 では単体で起動する (エンジンからの起動・監視は M3)。
+// 普段は engine が起動・監視する。試験や調べものでは単体でも起動できる。
 //   denpachan-worker --ch 1 --cam 1 --port 9001
 //   denpachan-worker --ch 2 --cam 2 --srt-mode caller --host 203.0.113.10 --port 5000 --passphrase xxxxxxxxxx
 
@@ -267,7 +267,7 @@ private:
 
 }  // namespace
 
-// 仮想カメラの表示を NO SIGNAL に戻す (M3 以降は UI → エンジンから行う)
+// 仮想カメラの表示を NO SIGNAL に戻す (試験用。普段は画面 → engine の resetCam で行う)
 int reset_cam(std::string_view arg) {
     const auto cam = to_int(arg);
     if (!cam || *cam < 1 || *cam > vcam::kNumCams) {
