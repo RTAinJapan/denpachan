@@ -1,0 +1,94 @@
+{
+  "_comment": "通常の運用: ch1 SRT 1080p60 受信中 + 録画、ch2 RTMP push 720p30 受信中、ch3 SRT caller 待ち受け、ch4 停止",
+  "channels": [
+    {
+      "name": "Game A", "enabled": true, "vcam": 1,
+      "source": { "protocol": "srt", "mode": "listener", "port": 9001, "latencyMs": 120 },
+      "audio": { "device": "Dante Virtual Soundcard", "startChannel": 1 },
+      "record": { "enabled": true, "dir": "D:\\rec", "mode": "passthrough" }
+    },
+    {
+      "name": "Game B", "enabled": true, "vcam": 2,
+      "source": { "protocol": "rtmp", "mode": "push", "app": "live", "key": "gameb" },
+      "audio": { "device": "Dante Virtual Soundcard", "startChannel": 3 }
+    },
+    {
+      "name": "Game C", "enabled": true, "vcam": 3,
+      "source": { "protocol": "srt", "mode": "caller", "host": "192.168.1.20", "port": 9000, "latencyMs": 200 },
+      "audio": { "device": "Dante Virtual Soundcard", "startChannel": 5 }
+    },
+    { "name": "CH4", "enabled": false, "vcam": 0 }
+  ],
+  "state": {
+    "channels": [
+      {
+        "id": 1, "name": "Game A", "enabled": true, "vcam": 1,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9001 },
+        "worker": { "state": "running", "pid": 4120, "restarts": 0, "uptimeSec": 98765, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.10:51234", "codec": "h264", "width": 1920, "height": 1080,
+                   "hwDecode": true, "bitrateMbps": 12.3, "decodeFps": 60, "outputFps": 60, "delayMs": 48, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 120, "rttMs": 18.2, "rcvBufMs": 140, "recvMbps": 12.4, "lost": 3, "retrans": 3, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 110, "multiplier": 4, "rttMs": 22.1, "lossPct": 0.02, "drops": 0, "windowSec": 60 } },
+        "audioIn": { "peakDb": [-12.5, -14.1], "delayMs": 52, "avOffsetMs": 1, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 1, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": 0.12, "slips": 14, "underruns": 0, "resyncs": 0, "peakDb": [-12.5, -14.1] },
+        "record": { "state": "recording", "file": "D:\\rec\\1 - 202610\\19 10-00-00.mkv", "seconds": 5432, "bytes": 8451234567, "dropped": 0, "error": "" }
+      },
+      {
+        "id": 2, "name": "Game B", "enabled": true, "vcam": 2,
+        "source": { "protocol": "rtmp", "mode": "push", "app": "live" },
+        "worker": { "state": "running", "pid": 4124, "restarts": 0, "uptimeSec": 98700, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.11:40022", "codec": "h264", "width": 1280, "height": 720,
+                   "hwDecode": true, "bitrateMbps": 6.1, "decodeFps": 30, "outputFps": 30, "delayMs": 41, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "tcp": { "rttMs": 1.2, "retransBytes": 0 },
+        "audioIn": { "peakDb": [-18.0, -18.2], "delayMs": 60, "avOffsetMs": -2, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 3, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": -0.05, "slips": 9, "underruns": 0, "resyncs": 0, "peakDb": [-18.0, -18.2] },
+        "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
+      },
+      {
+        "id": 3, "name": "Game C", "enabled": true, "vcam": 3,
+        "source": { "protocol": "srt", "mode": "caller", "host": "192.168.1.20", "port": 9000 },
+        "worker": { "state": "running", "pid": 4130, "restarts": 0, "uptimeSec": 300, "lastEvent": "" },
+        "video": { "state": "none", "connected": false, "connections": 0, "peer": "", "codec": "", "width": 0, "height": 0,
+                   "hwDecode": false, "bitrateMbps": 0, "decodeFps": 0, "outputFps": 0, "delayMs": 0, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 200, "rttMs": 0, "rcvBufMs": 0, "recvMbps": 0, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 200,
+                 "recommend": { "latencyMs": 0, "multiplier": 0, "rttMs": 0, "lossPct": 0, "drops": 0, "windowSec": 0 } },
+        "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 5, "mute": false,
+                      "playing": false, "latencyMs": 21.5, "errorMs": 0, "slips": 0, "underruns": 0, "resyncs": 0, "peakDb": [-100, -100] },
+        "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
+      },
+      {
+        "id": 4, "name": "CH4", "enabled": false, "vcam": 0,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9004 },
+        "worker": { "state": "stopped", "pid": 0, "restarts": 0, "uptimeSec": 0, "lastEvent": "" },
+        "audioOut": null
+      }
+    ],
+    "rtmpServer": { "state": "running", "pid": 4100, "restarts": 0, "uptimeSec": 98800, "lastEvent": "", "port": 1935 },
+    "audioDevices": [],
+    "ffmpeg": { "ok": true, "message": "" }
+  },
+  "repeat": 150,
+  "testPattern": [1, 2],
+  "select": 1,
+  "events": [
+    { "text": "engine に接続しました", "warning": false },
+    { "text": "Game A: 接続されました (192.168.1.10:51234)", "warning": false },
+    { "text": "Game A: 映像を受信しています", "warning": false },
+    { "text": "Game A: 録画を開始しました (19 10-00-00.mkv)", "warning": false },
+    { "text": "Game B: 接続されました (192.168.1.11:40022)", "warning": false },
+    { "text": "Game B: 映像を受信しています", "warning": false }
+  ],
+  "expect": {
+    "connected": true,
+    "ffmpegMissing": false,
+    "channels": [
+      { "statusText": "受信中", "softwareDecode": false, "transportKind": "ok", "audioKind": "ok", "recordKind": "recording", "isLocked": false, "previewMessage": "" },
+      { "statusText": "受信中", "softwareDecode": false, "transportKind": "ok", "audioKind": "ok", "recordKind": "off", "previewMessage": "" },
+      { "statusText": "待ち受け中", "softwareDecode": false, "transportKind": "ok", "audioKind": "ok", "previewMessage": "NO SIGNAL" },
+      { "statusText": "停止", "enabled": false, "previewMessage": "停止中" }
+    ]
+  }
+}

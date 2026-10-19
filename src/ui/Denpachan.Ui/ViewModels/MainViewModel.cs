@@ -55,10 +55,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void Start()
     {
-        EnsureVcamRegistered();
-        _client.Start();
+        if (!FixtureMode)
+        {
+            EnsureVcamRegistered();
+            _client.Start();
+        }
         _previewTimer.Start();
     }
+
+    // ---- 試験用 (UiFixture): engine に繋がずに設定と状態を流し込む ----
+
+    /// <summary>試験用の状態を流し込んでいる (engine に繋がず、画面の設定も保存しない)</summary>
+    public bool FixtureMode { get; set; }
+
+    internal void SetConnectedFromFixture(bool connected) => Connected = connected;
+    internal void SetGeneralConfigFromFixture(JsonNode general) => GeneralConfig = general;
+    internal void ApplyStateFromFixture(JsonNode state) => OnState(state);
 
     // ---- 仮想カメラの登録 (zip を展開してすぐ使えるように、このユーザーに自動で登録する) ----
 
@@ -373,7 +385,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public void SaveUiSettings()
     {
-        if (_loadingUiSettings) return;
+        if (_loadingUiSettings || FixtureMode) return;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(UiSettingsPath)!);

@@ -179,6 +179,31 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (_preview.Poll()) PreviewHasFrame = true;
     }
 
+    /// <summary>試験用: プレビューにカラーバーを出す (worker が無くても画面を確かめられるように)</summary>
+    public void ShowTestPattern(int seed)
+    {
+        var bmp = _preview.Bitmap;
+        int w = bmp.PixelWidth, h = bmp.PixelHeight;
+        var px = new byte[w * h * 4];
+        (byte R, byte G, byte B)[] bars = [(192, 192, 192), (192, 192, 0), (0, 192, 192), (0, 192, 0), (192, 0, 192), (192, 0, 0), (0, 0, 192)];
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var bar = bars[(x * bars.Length / w + seed) % bars.Length];
+                var dark = y >= h * 3 / 4 ? 0.25 : 1.0;  // 下 1/4 は暗く
+                var o = (y * w + x) * 4;
+                px[o] = (byte)(bar.B * dark);
+                px[o + 1] = (byte)(bar.G * dark);
+                px[o + 2] = (byte)(bar.R * dark);
+                px[o + 3] = 255;
+            }
+        }
+        bmp.WritePixels(new System.Windows.Int32Rect(0, 0, w, h), px, w * 4, 0);
+        PreviewHasFrame = true;
+        UpdatePreviewMessage();
+    }
+
     private void UpdatePreviewMessage()
     {
         PreviewMessage = !PreviewEnabled ? "プレビュー オフ" : !Enabled ? "停止中" : PreviewHasFrame ? "" : "NO SIGNAL";

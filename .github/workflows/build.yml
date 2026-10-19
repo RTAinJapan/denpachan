@@ -85,6 +85,19 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'FFmpeg 9.x' -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
           Write-Host 'OK: no FFmpeg DLLs in the output; worker and engine handle missing FFmpeg'
 
+      # 画面の試験: 試験用の設定・状態を流し込んでスクリーンショットを撮り、画面の状態を確かめる (engine / FFmpeg 不要)。
+      # 撮った PNG は artifact "ui-screenshots" で見られる (失敗したときも上げる)
+      - name: UI screenshots
+        shell: pwsh
+        run: ./tools/ui_screenshots/run.ps1
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ui-screenshots
+          path: out/ui-screenshots
+          if-no-files-found: ignore
+
       - name: Package
         id: package
         shell: pwsh

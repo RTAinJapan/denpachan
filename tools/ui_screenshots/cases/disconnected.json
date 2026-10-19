@@ -1,0 +1,24 @@
+{
+  "_comment": "engine に繋がっていない (起動を待っている)。状態は届かないので全チャンネル停止表示、操作は無効",
+  "connected": false,
+  "channels": [
+    { "name": "Game A", "enabled": true, "vcam": 1 },
+    { "name": "Game B", "enabled": true, "vcam": 2 },
+    { "name": "CH3" },
+    { "name": "CH4" }
+  ],
+  "select": 1,
+  "events": [
+    { "text": "engine との接続が切れました", "warning": true }
+  ],
+  "expect": {
+    "connected": false,
+    "ffmpegMissing": false,
+    "channels": [
+      { "statusText": "停止" },
+      { "statusText": "停止" },
+      { "statusText": "停止" },
+      { "statusText": "停止" }
+    ]
+  }
+}

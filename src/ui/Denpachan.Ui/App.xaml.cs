@@ -1,5 +1,7 @@
 using System.IO;
+using System.Text.Json.Nodes;
 using System.Windows;
+using Denpachan.Ui.Infrastructure;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -12,6 +14,9 @@ namespace Denpachan.Ui;
 ///   --select N                         試験用: 起動時に選択するチャンネル
 ///   --settings N [--settings-tab T]    試験用: --screenshot で、チャンネル N の設定画面 (T 番目のタブ、0 から) を撮る
 ///   --general                          試験用: --screenshot で、全体の設定画面を撮る
+///   --fixture PATH                     試験用: engine に繋がず、ファイルの設定と状態を画面に流し込む (UiFixture)。
+///                                      --screenshot と使うと、PNG の隣に画面の状態 (PATH.txt) を書き、
+///                                      fixture の expect と合わなければ終了コード 1
 /// </summary>
 public partial class App : Application
 {
@@ -19,6 +24,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         MainWindow? window = null;
+        string? screenshot = null;
         var inHandler = false;
         var lastError = "";
         var lastErrorAt = DateTime.MinValue;
@@ -33,6 +39,13 @@ public partial class App : Application
             try
             {
                 var message = args.Exception.Message;
+                if (window?.ViewModel.FixtureMode == true)
+                {
+                    // 試験 (CI) ではダイアログを待つ人がいない: 例外を書き出して終わる
+                    if (screenshot != null) File.WriteAllText(screenshot + ".txt", "{\"result\": \"exception\", \"error\": " + System.Text.Json.JsonSerializer.Serialize(args.Exception.ToString()) + "}");
+                    Shutdown(2);
+                    return;
+                }
                 var repeated = message == lastError && DateTime.Now - lastErrorAt < TimeSpan.FromMinutes(1);
                 lastError = message;
                 lastErrorAt = DateTime.Now;
@@ -46,15 +59,19 @@ public partial class App : Application
         };
 
         window = new MainWindow();
-        string? screenshot = null;
         var delay = 6.0;
         var settingsFor = 0;  // 試験用: このチャンネルの設定画面を撮る (0 = メイン画面)
         var settingsTab = 0;
         var general = false;
+        JsonNode? fixture = null;
         for (var i = 0; i < e.Args.Length; i++)
         {
             switch (e.Args[i])
             {
+                case "--fixture" when i + 1 < e.Args.Length:
+                    fixture = UiFixture.Load(e.Args[++i]);
+                    UiFixture.Apply(window.ViewModel, fixture);
+                    break;
                 case "--screenshot" when i + 1 < e.Args.Length: screenshot = e.Args[++i]; break;
                 case "--delay" when i + 1 < e.Args.Length: delay = double.Parse(e.Args[++i]); break;
                 case "--settings" when i + 1 < e.Args.Length: settingsFor = int.Parse(e.Args[++i]); break;
@@ -92,7 +109,14 @@ public partial class App : Application
                 Dispatcher.InvokeAsync(() =>
                 {
                     SaveScreenshot(target, screenshot);
-                    Shutdown();
+                    var exitCode = 0;
+                    if (fixture != null)
+                    {
+                        var failures = UiFixture.Check(window.ViewModel, fixture["expect"]);
+                        File.WriteAllText(screenshot + ".txt", UiFixture.Report(window.ViewModel, failures));
+                        exitCode = failures.Count == 0 ? 0 : 1;
+                    }
+                    Shutdown(exitCode);
                 }, DispatcherPriority.ContextIdle);
             };
             timer.Start();
