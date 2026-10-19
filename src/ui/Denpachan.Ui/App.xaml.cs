@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using Denpachan.Ui.Infrastructure;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -143,16 +144,10 @@ public partial class App : Application
             // ウィンドウは画面より大きくできない (Windows が縮める) ので、中身をウィンドウから外して
             // 望む大きさで配置し直し、そのまま描く。ウィンドウから受け継いでいたものは持たせ直す
             window.Content = null;
-            var host = new Border
-            {
-                Background = window.Background,
-                Child = content,
-                Width = s.Width,
-                DataContext = window.DataContext,
-                FontFamily = window.FontFamily,
-                FontSize = window.FontSize,
-                Foreground = window.Foreground,
-            };
+            var host = new Border { Background = window.Background, Child = content, Width = s.Width, DataContext = window.DataContext };
+            TextElement.SetFontFamily(host, window.FontFamily);
+            TextElement.SetFontSize(host, window.FontSize);
+            TextElement.SetForeground(host, window.Foreground);
             if (s.Height > 0) host.Height = s.Height;
             host.Measure(new Size(s.Width, s.Height > 0 ? s.Height : double.PositiveInfinity));
             host.Arrange(new Rect(host.DesiredSize));
