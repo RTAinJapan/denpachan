@@ -10,7 +10,8 @@ namespace Denpachan.Ui.ViewModels;
 
 public sealed record Option<T>(T Value, string Label);
 
-public sealed record DetailRow(string Label, string Value);
+/// <summary>詳細パネルの 1 行。Tip は行にマウスを載せたときの説明 (無ければ null)</summary>
+public sealed record DetailRow(string Label, string Value, string? Tip = null);
 
 /// <summary>イベントログに出す出来事 (Warning は黄色で出す)</summary>
 public sealed record ChannelEvent(string Text, bool Warning = false);
@@ -586,7 +587,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private List<DetailRow> BuildDetails(JsonNode st)
     {
         var rows = new List<DetailRow>();
-        void Add(string labelKey, string value) => rows.Add(new DetailRow(T(labelKey), value));
+        void Add(string labelKey, string value, string? tipKey = null) => rows.Add(new DetailRow(T(labelKey), value, tipKey != null ? T(tipKey) : null));
         var worker = st.At("worker");
         var video = st.At("video");
         Add("detail.status", StatusText);
@@ -599,7 +600,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
                                   ("width", video.Int("width")), ("height", video.Int("height"))));
             Add("detail.bitrate", $"{video.Num("bitrateMbps"):0.00} Mbps");
             Add("detail.fps", $"{video.Num("decodeFps"):0} / {video.Num("outputFps"):0} fps");
-            Add("detail.delay", F("detail.delayValue", ("ms", $"{video.Num("delayMs"):0}")));
+            Add("detail.delay", $"{video.Num("delayMs"):0} ms", "detail.delayTip");
             Add("detail.dropped", F("detail.droppedValue", ("late", $"{video.Num("droppedLate"):0}"), ("queue", $"{video.Num("droppedQueue"):0}")));
             Add("detail.decodeErrors", $"{video.Num("decodeErrors"):0}");
             if (Message(video.At("lastError")) is { Length: > 0 } err) Add(UnreachableReason.Length > 0 ? "detail.unreachableReason" : "detail.error", err);

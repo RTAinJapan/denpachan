@@ -35,7 +35,7 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 
 ## 画面の文言
 
-画面に出る文は、すべて言語ファイル `src/ui/Denpachan.Ui/Lang/ja.json` にある (キーと文の組)。文言を直すときはこのファイルだけを直す。
+画面に出る文は、すべて言語ファイル `src/ui/Denpachan.Ui/Lang/ja.json` (基準) と `en.json` にある (キーと文の組)。文言を直すときはこれらだけを直す。キーを足したら両方に足す (en.json に無いキーは英語の画面で日本語のまま出る)。英語の画面は `./tools/ui_screenshots/run.ps1 -Language en` で撮って見られる。
 
 - キーは「画面.場所.もの」(例: `main.menu.file`、`channel.port`)。XAML では `{l:Tr main.menu.file}`、C# では `Loc.T("...")`。
 - 文の中の `{name}` は引数で置き換わる (`Loc.F("event.connected", ("peer", peer))`)。数値の書式は C# 側で整えて渡す。

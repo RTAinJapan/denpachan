@@ -578,7 +578,7 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
 - イベントログ: 接続・切断、映像の途絶・復帰、worker / rtmpd の再起動、操作の失敗。
 - 操作ロック: タイル右上の鍵アイコンで、チャンネルごとに操作ボタンとルーティングのプルダウンを使えなくする (運用中の誤操作の防止)。クリックでロック (確認なし)、ロック中は 1 秒長押しで解除。長押しの間は鍵の色が右から左へ灰色になっていき、解除すると開いた鍵になる。途中で離す・アイコンの外に出ると解除しない。
 - プレビューのオン・オフと操作ロックはチャンネルごとに、言語は全体で `%APPDATA%\denpachan\ui.json` に覚える。
-- 文言の集約と多言語: 画面に出る文はすべて言語ファイル `src/ui/Denpachan.Ui/Lang/<言語コード>.json` (キーと文の組、exe に埋め込む) に置き、`Infrastructure/Loc.cs` が引く。XAML は `{l:Tr キー}`、C# は `Loc.T` / `Loc.F` (文の中の `{name}` を引数で置き換える)。今は日本語 (`ja.json`) だけで、他の言語は ja.json を写して訳したファイルを足せば全体設定の「言語」に出る (既定は「自動」= Windows の表示言語。言語ファイルが無ければ日本語)。訳していないキーは日本語で出る。言語を変えるとその場で切り替わる (XAML はバインディング、C# で組み立てる文は最後の状態から作り直す。イベントログに出た行はそのまま)。
+- 文言の集約と多言語: 画面に出る文はすべて言語ファイル `src/ui/Denpachan.Ui/Lang/<言語コード>.json` (キーと文の組、exe に埋め込む) に置き、`Infrastructure/Loc.cs` が引く。XAML は `{l:Tr キー}`、C# は `Loc.T` / `Loc.F` (文の中の `{name}` を引数で置き換える)。今は日本語 (`ja.json`、基準) と英語 (`en.json`)。他の言語は ja.json を写して訳したファイルを足せば全体設定の「言語」に出る (既定は「自動」= Windows の表示言語。言語ファイルが無ければ日本語)。訳していないキーは日本語で出る。言語を変えるとその場で切り替わる (XAML はバインディング、C# で組み立てる文は最後の状態から作り直す。イベントログに出た行はそのまま)。
 - worker / engine (C++) は文を作らず、画面に出すメッセージを ID と引数で送る (`src/common/include/denpachan/ui_message.h`)。状態の `video.lastError`、`record.error`、`worker.lastEvent`、`rtmpServer.lastEvent`、`ffmpeg.message`、`audioOut.error` は `{"id": "net.dns", "host": "..."}` の形 (無ければ null)。画面は言語ファイルの `msg.<ID>` で文にする。worker の共有メモリにはこれを JSON の文字列で置く (引数の値は 96 バイトで切る)。ログは ID と引数のまま。
 - コードが使うキーと言語ファイルの食い違い (無いキー、使っていないキー、他の言語での引数の違い) は `tools/lang/check.ps1` で調べる (CI でも実行)。
 - 試験用に `--screenshot PATH [--delay SEC] [--select N] [--settings N]` で画面を PNG に保存して終了できる (`tools/testsrc/ui_test.sh`)。

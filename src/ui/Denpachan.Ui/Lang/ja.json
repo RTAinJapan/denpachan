@@ -222,7 +222,7 @@
   "detail.bitrate": "ビットレート",
   "detail.fps": "デコード / 出力",
   "detail.delay": "映像遅延",
-  "detail.delayValue": "{ms} ms (デコード後から仮想カメラまで)",
+  "detail.delayTip": "デコード後から仮想カメラまで",
   "detail.dropped": "ドロップフレーム",
   "detail.droppedValue": "遅れ {late} / 溢れ {queue}",
   "detail.decodeErrors": "デコードエラー",
