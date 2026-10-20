@@ -148,7 +148,6 @@
   "general.language": "Language",
   "general.languageAuto": "Auto (Windows display language)",
   "general.channelCount": "Channels",
-  "general.channelCountNote": "Shown on screen (Cam 1-8 always usable)",
   "general.videoAudio": "Video and audio",
   "general.avSync": "Synchronize video and audio",
   "general.audioMargin": "Audio margin (ms)",

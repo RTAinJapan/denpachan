@@ -148,7 +148,6 @@
   "general.language": "言語",
   "general.languageAuto": "自動 (Windows の表示言語)",
   "general.channelCount": "チャンネル数",
-  "general.channelCountNote": "画面に出すチャンネルの数 (仮想カメラは 8 台とも使える)",
   "general.videoAudio": "映像・音声",
   "general.avSync": "映像と音声の同期",
   "general.audioMargin": "音声の余裕 (ms)",
