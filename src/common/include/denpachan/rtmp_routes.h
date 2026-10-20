@@ -15,7 +15,7 @@
 namespace denpachan::rtmp_routes {
 
 inline constexpr uint32_t kMagic = 0x52525044;  // "DPRR"
-inline constexpr uint32_t kLayoutVersion = 2;  // 2: チャンネル 8 つ分
+inline constexpr uint32_t kLayoutVersion = 2;   // 2: チャンネル 8 つ分
 inline constexpr int kMaxRoutes = kMaxChannels;
 
 struct Route {

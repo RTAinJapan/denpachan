@@ -45,9 +45,7 @@ std::vector<std::string> encoder_candidates(const RecordConfig& c) {
     return {codec + "_nvenc", codec + "_qsv", codec + "_amf"};  // 自動は GPU だけ (CPU は明示的に選んだときだけ)
 }
 
-int preset_index(const std::string& p) {
-    return p.size() == 2 && p[0] == 'p' && p[1] >= '1' && p[1] <= '7' ? p[1] - '0' : 4;
-}
+int preset_index(const std::string& p) { return p.size() == 2 && p[0] == 'p' && p[1] >= '1' && p[1] <= '7' ? p[1] - '0' : 4; }
 
 // p1 (速い) 〜 p7 (高画質) を x264 / x265 のプリセット名に
 const char* x264_preset(const std::string& p) {
@@ -80,8 +78,8 @@ std::vector<std::string> external_args(const RecordConfig& c, const std::string&
             else a.insert(a.end(), {"-qp", std::to_string(c.qp)});
         } else {
             const int max_kbps = c.rate_control == "vbr" ? c.bitrate_kbps * 3 / 2 : c.bitrate_kbps;
-            a.insert(a.end(), {"-b:v", kbps, "-maxrate", std::to_string(max_kbps) + "k", "-bufsize",
-                               std::to_string(c.bitrate_kbps * 2) + "k"});
+            a.insert(a.end(),
+                     {"-b:v", kbps, "-maxrate", std::to_string(max_kbps) + "k", "-bufsize", std::to_string(c.bitrate_kbps * 2) + "k"});
             if (hevc) a.insert(a.end(), {"-x265-params", "log-level=error"});
         }
         a.insert(a.end(), {"-pix_fmt", "yuv420p"});
@@ -389,9 +387,8 @@ void Recorder::reap_external() {
 bool Recorder::same_params(const StreamInfo& a, const StreamInfo& b) const {
     auto same = [](const AVCodecParameters* x, const AVCodecParameters* y) {
         if (!x || !y) return x == y;
-        return x->codec_id == y->codec_id && x->width == y->width && x->height == y->height &&
-               x->sample_rate == y->sample_rate && x->ch_layout.nb_channels == y->ch_layout.nb_channels &&
-               x->extradata_size == y->extradata_size &&
+        return x->codec_id == y->codec_id && x->width == y->width && x->height == y->height && x->sample_rate == y->sample_rate &&
+               x->ch_layout.nb_channels == y->ch_layout.nb_channels && x->extradata_size == y->extradata_size &&
                (x->extradata_size == 0 || memcmp(x->extradata, y->extradata, size_t(x->extradata_size)) == 0);
     };
     return same(a.video, b.video) && same(a.audio, b.audio);
@@ -403,11 +400,10 @@ void Recorder::process(Item& item) {
         const RecordConfig& n = item.config;
         const RecordConfig& o = config_;
         // 書き出し方が変わるならファイルを閉じる (次に映像が来たら新しい設定で開く)
-        const bool output_changed = !n.enabled || n.mode != o.mode || n.container != o.container || n.dir != o.dir ||
-                                    n.tmpl != o.tmpl || n.video_codec != o.video_codec ||
-                                    n.video_encoder != o.video_encoder || n.rate_control != o.rate_control ||
-                                    n.bitrate_kbps != o.bitrate_kbps || n.qp != o.qp || n.preset != o.preset ||
-                                    n.gop_sec != o.gop_sec || n.audio_bitrate_kbps != o.audio_bitrate_kbps;
+        const bool output_changed = !n.enabled || n.mode != o.mode || n.container != o.container || n.dir != o.dir || n.tmpl != o.tmpl ||
+                                    n.video_codec != o.video_codec || n.video_encoder != o.video_encoder ||
+                                    n.rate_control != o.rate_control || n.bitrate_kbps != o.bitrate_kbps || n.qp != o.qp ||
+                                    n.preset != o.preset || n.gop_sec != o.gop_sec || n.audio_bitrate_kbps != o.audio_bitrate_kbps;
         if (segment_ && output_changed) close_segment(n.enabled ? "settings changed" : "recording turned off");
         if (n.enabled && !o.enabled) spdlog::info("record: enabled ({}, {})", n.mode, n.container);
         config_ = n;
@@ -519,8 +515,7 @@ void Recorder::housekeeping() {
     if (segment_ && now - last_video_qpc_ > qpc_from_ms(int64_t(config_.gap_timeout_sec) * 1000)) {
         close_segment("no video");
     }
-    if (segment_ && config_.max_segment_min > 0 &&
-        now - segment_->started_qpc > qpc_from_ms(int64_t(config_.max_segment_min) * 60'000)) {
+    if (segment_ && config_.max_segment_min > 0 && now - segment_->started_qpc > qpc_from_ms(int64_t(config_.max_segment_min) * 60'000)) {
         close_segment("maximum length reached");
         need_keyframe_ = true;
     }
@@ -559,10 +554,10 @@ void Recorder::housekeeping() {
         metrics_.rec_bytes = uint64_t(std::max<int64_t>(0, avio_tell(segment_->oc->pb)));
     }
     if (!finishing_.empty()) reap_external();
-    RecState state = !config_.enabled                          ? RecState::Off
-                     : segment_                                ? RecState::Recording
-                     : disk_full_ || retry_open_qpc_ != 0      ? RecState::Error
-                                                               : RecState::Waiting;
+    RecState state = !config_.enabled                     ? RecState::Off
+                     : segment_                           ? RecState::Recording
+                     : disk_full_ || retry_open_qpc_ != 0 ? RecState::Error
+                                                          : RecState::Waiting;
     metrics_.rec_state = uint32_t(state);
 }
 
@@ -872,8 +867,8 @@ void Recorder::encode_video(const AVFrame* frame, int64_t out_us) {
             seg.converted->height = enc->height;
             av_frame_get_buffer(seg.converted.get(), 0);
         }
-        seg.sws = sws_getCachedContext(seg.sws, frame->width, frame->height, AVPixelFormat(frame->format), enc->width,
-                                       enc->height, enc->pix_fmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
+        seg.sws = sws_getCachedContext(seg.sws, frame->width, frame->height, AVPixelFormat(frame->format), enc->width, enc->height,
+                                       enc->pix_fmt, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!seg.sws || av_frame_make_writable(seg.converted.get()) < 0) return;
         sws_scale(seg.sws, frame->data, frame->linesize, 0, frame->height, seg.converted->data, seg.converted->linesize);
         av_frame_ref(f.get(), seg.converted.get());

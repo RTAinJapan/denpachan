@@ -1,0 +1,44 @@
+# ファイルの形式 (どのエディタで保存しても同じになるように)。VS Code は EditorConfig の拡張機能で読む
+# (.vscode/extensions.json)。改行コードは .gitattributes でも LF に固定している。
+# 確かめる: tools/format/check.ps1 (CI でも確かめる)
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# JSON・YAML・MSBuild・SVG は 2 桁
+[*.{json,yml,yaml,csproj,props,targets,svg}]
+indent_size = 2
+
+# PowerShell: Windows PowerShell 5.1 は BOM の無い UTF-8 を ANSI (日本語環境では Shift_JIS) として読み、
+# 日本語のコメントや文字列が壊れるので BOM を付ける
+[*.ps1]
+charset = utf-8-bom
+
+[*.ico]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+
+# C# の書式 (C# 拡張機能・dotnet format が読む)。今の書き方に合わせたもの
+[*.cs]
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_preserve_single_line_statements = true
+csharp_preserve_single_line_blocks = true
+# 短いオブジェクト初期化子は 1 行に書いてよい (new JsonObject { ["a"] = 1, ["b"] = 2 })
+csharp_new_line_before_members_in_object_initializers = false
+csharp_new_line_before_members_in_anonymous_types = false
+dotnet_sort_system_directives_first = true

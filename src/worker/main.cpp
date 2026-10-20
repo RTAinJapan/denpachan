@@ -44,7 +44,7 @@ namespace {
 
 struct Options {
     int ch = 1;
-    int cam = 1;  // 0 = vcam に出さない
+    int cam = 1;                // 0 = vcam に出さない
     std::string input = "srt";  // srt / rtmp-push / url
     std::string url;            // input = url のとき (rtmp:// など)
     SrtOptions srt;
@@ -191,13 +191,11 @@ public:
                 "{} {} {}x{} {} | {:.2f} Mbps | dec {} fps, out {} fps, delay {} ms | drop late {} queue {} | "
                 "err {} | audio {} Hz peak {:.1f}/{:.1f} dBFS gaps {} delay {} ms a/v {:+} ms | "
                 "srt latency {} ms rtt {:.1f} ms buf {} ms lost {} retrans {} drop {}",
-                peer, codec, m_.width.load(), m_.height.load(), m_.hw_decode ? "hw" : "sw",
-                double(bytes - last_bytes_) * 8 / 1e6, decoded - last_decoded_, presented - last_presented_,
-                m_.delay_us.load() / 1000, m_.frames_dropped_late.load(), m_.frames_dropped_queue.load(),
-                m_.decode_errors.load(), audio_frames - last_audio_frames_, dbfs(peak_l), dbfs(peak_r),
-                m_.audio_gaps.load(), m_.audio_delay_us.load() / 1000, m_.av_offset_us.load() / 1000,
-                srt.tsbpd_delay_ms, srt.rtt_ms, srt.rcv_buf_ms, srt.lost_total,
-                srt.retrans_total, srt.dropped_total);
+                peer, codec, m_.width.load(), m_.height.load(), m_.hw_decode ? "hw" : "sw", double(bytes - last_bytes_) * 8 / 1e6,
+                decoded - last_decoded_, presented - last_presented_, m_.delay_us.load() / 1000, m_.frames_dropped_late.load(),
+                m_.frames_dropped_queue.load(), m_.decode_errors.load(), audio_frames - last_audio_frames_, dbfs(peak_l), dbfs(peak_r),
+                m_.audio_gaps.load(), m_.audio_delay_us.load() / 1000, m_.av_offset_us.load() / 1000, srt.tsbpd_delay_ms, srt.rtt_ms,
+                srt.rcv_buf_ms, srt.lost_total, srt.retrans_total, srt.dropped_total);
         }
 
         if (m_.status) {

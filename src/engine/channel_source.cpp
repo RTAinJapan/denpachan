@@ -18,10 +18,10 @@ constexpr double kSlipThresholdSec = 0.002;    // 48kHz デバイス: これ以�
 // 48kHz デバイス: 重複 / 間引きは 10ms に 1 回まで (最大約 2000ppm のクロック差まで追従できる)。
 // 実際に起きる回数はクロック差の分だけ (例: 50ppm なら 2〜3 回/秒)。
 constexpr int kMinSlipIntervalFrames = 480;
-constexpr double kMaxCompensation = 0.005;     // 48kHz 以外: リサンプル補正の上限 (±0.5%)
-constexpr double kCorrectionPerSec = 0.5;      // 48kHz 以外: ずれのうち 1 秒あたりに詰める割合
-constexpr double kErrorSmoothingSec = 1.0;     // ずれの平滑化 (スレッドの起床の揺れで反応しないように)
-constexpr int kReadChunk = 256;                // リサンプル時にリングから一度に読むフレーム数
+constexpr double kMaxCompensation = 0.005;  // 48kHz 以外: リサンプル補正の上限 (±0.5%)
+constexpr double kCorrectionPerSec = 0.5;   // 48kHz 以外: ずれのうち 1 秒あたりに詰める割合
+constexpr double kErrorSmoothingSec = 1.0;  // ずれの平滑化 (スレッドの起床の揺れで反応しないように)
+constexpr int kReadChunk = 256;             // リサンプル時にリングから一度に読むフレーム数
 // 書き手が上書きしている途中の領域を読まないよう、リング末尾はこれだけ避ける
 constexpr uint64_t kRingSafety = 4096;
 
@@ -57,8 +57,7 @@ bool ChannelSource::ensure_swr() {
     last_swr_attempt_ = now;
     if (!ffmpeg_available()) return false;
     AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
-    swr_alloc_set_opts2(&swr_, &stereo, AV_SAMPLE_FMT_FLT, int(device_rate_), &stereo, AV_SAMPLE_FMT_FLT,
-                        int(kSampleRate), 0, nullptr);
+    swr_alloc_set_opts2(&swr_, &stereo, AV_SAMPLE_FMT_FLT, int(device_rate_), &stereo, AV_SAMPLE_FMT_FLT, int(kSampleRate), 0, nullptr);
     if (swr_ && swr_init(swr_) < 0) swr_free(&swr_);
     return swr_ != nullptr;
 }
@@ -160,8 +159,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
     const double src_per_out = double(kSampleRate) / device_rate_;
     const double need = frames * src_per_out;
     // デバイスでこのバッファの先頭が鳴る瞬間に、鳴っているべきサンプル番号
-    const double ideal =
-        double(map_frame) + double(first_hear_qpc - delay - map_due) * kSampleRate / double(qpc_freq());
+    const double ideal = double(map_frame) + double(first_hear_qpc - delay - map_due) * kSampleRate / double(qpc_freq());
     const double oldest = double(write_pos) - double(kCapacityFrames - kRingSafety);
 
     int slip = 0;
@@ -176,11 +174,11 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
 
         if (!resync_pending_) {
             // 合わせ直しの理由 (統計に残す)
-            const char* reason = !has_map                                          ? "no time map"
-                                 : epoch != epoch_                                 ? "new epoch"
+            const char* reason = !has_map                                              ? "no time map"
+                                 : epoch != epoch_                                     ? "new epoch"
                                  : std::abs(error) > kResyncThresholdSec * kSampleRate ? "position error"
-                                 : double(read_pos_) < oldest                      ? "overrun"
-                                                                                   : nullptr;
+                                 : double(read_pos_) < oldest                          ? "overrun"
+                                                                                       : nullptr;
             if (reason) {
                 resync_pending_ = true;  // このバッファでフェードアウトしてから合わせ直す
                 std::lock_guard lk(stats_.reason_mutex);
@@ -192,7 +190,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
                 const double threshold = kSlipThresholdSec * kSampleRate;
                 frames_since_slip_ = std::min(frames_since_slip_ + frames, kMinSlipIntervalFrames);  // 溢れさせない
                 if (frames_since_slip_ >= kMinSlipIntervalFrames) {
-                    if (error_avg_ > threshold) slip = 1;        // 早く鳴っている → 1 サンプル重複
+                    if (error_avg_ > threshold) slip = 1;         // 早く鳴っている → 1 サンプル重複
                     else if (error_avg_ < -threshold) slip = -1;  // 遅れている → 1 サンプル間引き
                 }
                 if (slip != 0) frames_since_slip_ = 0;
@@ -200,8 +198,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
             } else {
                 // 早く鳴っている (error > 0) なら出力サンプルを増やしてゆっくり進める
                 const double max_delta = device_rate_ * kMaxCompensation;
-                const double delta =
-                    std::clamp(error_avg_ / src_per_out * kCorrectionPerSec, -max_delta, max_delta);
+                const double delta = std::clamp(error_avg_ / src_per_out * kCorrectionPerSec, -max_delta, max_delta);
                 swr_set_compensation(swr_, int(std::lround(delta)), int(device_rate_));
                 stats_.ratio_ppm = delta / device_rate_ * 1e6;
             }
@@ -239,8 +236,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
         float l = tmp_[2 * size_t(i)];
         float r = tmp_[2 * size_t(i) + 1];
         if (fading) {
-            fade_ = fade_ < fade_target ? std::min(fade_target, fade_ + fade_step)
-                                        : std::max(fade_target, fade_ - fade_step);
+            fade_ = fade_ < fade_target ? std::min(fade_target, fade_ + fade_step) : std::max(fade_target, fade_ - fade_step);
             float g = fade_;
             if (i >= fade_out_start) g *= float(std::max(0, got - i)) / float(got - fade_out_start);
             l *= g;

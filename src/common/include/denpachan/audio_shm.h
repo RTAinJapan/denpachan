@@ -60,9 +60,7 @@ static_assert(sizeof(Header) <= kHeaderBytes);
 
 inline std::wstring mapping_name(int ch) { return L"Local\\denpachan_audio_" + std::to_wstring(ch); }
 
-inline float* ring_data(void* base) {
-    return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + kHeaderBytes);
-}
+inline float* ring_data(void* base) { return reinterpret_cast<float*>(static_cast<uint8_t*>(base) + kHeaderBytes); }
 
 // 書き手専用 (書き手は 1 つ)
 inline void write_time_map(Header* h, uint64_t frame, int64_t due_qpc) {

@@ -16,9 +16,7 @@ struct OutputFormat {
     PixelFormat pix = PixelFormat::NV12;
 
     REFERENCE_TIME frame_duration() const { return 10'000'000LL * fmt.fps_den / fmt.fps_num; }
-    size_t image_bytes() const {
-        return pix == PixelFormat::NV12 ? fmt.nv12_bytes() : size_t(fmt.width) * fmt.height * 2;
-    }
+    size_t image_bytes() const { return pix == PixelFormat::NV12 ? fmt.nv12_bytes() : size_t(fmt.width) * fmt.height * 2; }
     bool operator==(const OutputFormat&) const = default;
 };
 

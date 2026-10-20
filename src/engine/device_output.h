@@ -58,9 +58,9 @@ private:
     Microsoft::WRL::ComPtr<IAudioClient> client_;
     Microsoft::WRL::ComPtr<IAudioRenderClient> render_;
     UniqueHandle event_;
-    int open_failures_ = 0;          // 続けて開けなかった回数 (ログを毎秒出さないため)
-    bool exclusive_ = false;         // いま排他モードで開いているか
-    bool exclusive_failed_ = false;  // 排他モードの周期に追いつけなかった (以後は共有モード)
+    int open_failures_ = 0;                // 続けて開けなかった回数 (ログを毎秒出さないため)
+    bool exclusive_ = false;               // いま排他モードで開いているか
+    bool exclusive_failed_ = false;        // 排他モードの周期に追いつけなかった (以後は共有モード)
     REFERENCE_TIME exclusive_period_ = 0;  // 0 = デバイスの最小周期
     SampleType sample_type_ = SampleType::Float32;
     int channels_ = 0;
@@ -75,9 +75,9 @@ private:
     int64_t heard_time_locked(int64_t now, uint32_t lead_frames);
     Microsoft::WRL::ComPtr<IAudioClock> clock_;
     uint64_t clock_freq_ = 0;
-    uint64_t written_frames_ = 0;          // デバイスのバッファに書いたフレーム数 (開いてから)
-    int64_t position_offset_qpc_ = 0;      // GetPosition による時刻 - padding による時刻 (測り終えたら固定)
-    bool position_ready_ = false;          // 差を測り終えた
+    uint64_t written_frames_ = 0;      // デバイスのバッファに書いたフレーム数 (開いてから)
+    int64_t position_offset_qpc_ = 0;  // GetPosition による時刻 - padding による時刻 (測り終えたら固定)
+    bool position_ready_ = false;      // 差を測り終えた
     int64_t calibrate_until_qpc_ = 0;
     std::vector<int64_t> calibrate_samples_;
 
@@ -91,7 +91,6 @@ public:
     int64_t take_max_gap_us() { return max_gap_us_.exchange(0); }
 
 private:
-
     std::mutex sources_mutex_;
     std::vector<std::unique_ptr<ChannelSource>> sources_;
 

@@ -39,9 +39,9 @@ private:
         std::vector<RouteOptions> routes;
         std::unique_ptr<AudioOutput> output;  // WASAPI (DeviceOutput) または ASIO (AsioOutput)
     };
-    std::map<std::wstring, Device> devices_;  // デバイス ID ごと
-    std::map<int, std::string> missing_;      // チャンネル → 見つからないデバイス名
-    std::map<int, std::string> asio_busy_;    // チャンネル → 使えない ASIO ドライバ (別の ASIO ドライバを使っている)
+    std::map<std::wstring, Device> devices_;     // デバイス ID ごと
+    std::map<int, std::string> missing_;         // チャンネル → 見つからないデバイス名
+    std::map<int, std::string> asio_busy_;       // チャンネル → 使えない ASIO ドライバ (別の ASIO ドライバを使っている)
     std::map<int, std::string> logged_missing_;  // ログに出した missing_ (変わったときだけ出す)
 };
 

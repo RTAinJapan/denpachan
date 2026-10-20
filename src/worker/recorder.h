@@ -37,17 +37,17 @@ struct RecordConfig {
     bool enabled = false;
     std::string dir;
     std::string tmpl = "{ch} - {YYYY}{MM}/{DD} {hh}-{mm}-{ss}";
-    std::string container = "mkv";      // mkv / ts
-    std::string mode = "passthrough";   // passthrough / encode
+    std::string container = "mkv";     // mkv / ts
+    std::string mode = "passthrough";  // passthrough / encode
     int gap_timeout_sec = 10;
-    int max_segment_min = 0;            // 0 = 無制限
-    std::string replacement = "-";      // ファイル名に使えない文字の置き換え
+    int max_segment_min = 0;        // 0 = 無制限
+    std::string replacement = "-";  // ファイル名に使えない文字の置き換え
     int min_free_gb = 5;
-    std::string name;                   // {name} (チャンネル名)
+    std::string name;  // {name} (チャンネル名)
     // 再エンコード
-    std::string video_codec = "h264";   // h264 / hevc / av1
-    std::string video_encoder = "auto"; // auto / nvenc / qsv / amf (GPU)、cpu (外部 ffmpeg)
-    std::string rate_control = "cbr";   // cbr / vbr / cqp
+    std::string video_codec = "h264";    // h264 / hevc / av1
+    std::string video_encoder = "auto";  // auto / nvenc / qsv / amf (GPU)、cpu (外部 ffmpeg)
+    std::string rate_control = "cbr";    // cbr / vbr / cqp
     int bitrate_kbps = 12000;
     int qp = 23;
     std::string preset = "p4";
@@ -116,7 +116,7 @@ private:
     ChannelMetrics& metrics_;
 
     std::atomic<bool> enabled_{false};
-    std::atomic<bool> packets_{true};  // uses_packets(設定)
+    std::atomic<bool> packets_{true};         // uses_packets(設定)
     std::atomic<bool> need_keyframe_{false};  // キューから捨てたので次のキーフレームまで待つ
 
     std::mutex mutex_;
@@ -135,7 +135,7 @@ private:
     std::unique_ptr<Segment> segment_;
     bool continuation_pending_ = false;  // 新しいセッションの最初の映像でタイムスタンプをつなぐ
     int64_t offset_us_ = 0;
-    int64_t last_video_out_us_ = 0;      // 書いた映像の最後の時刻 (パススルーは dts)
+    int64_t last_video_out_us_ = 0;  // 書いた映像の最後の時刻 (パススルーは dts)
     int64_t last_video_qpc_ = 0;
     int64_t last_disk_check_qpc_ = 0;
     bool disk_full_ = false;

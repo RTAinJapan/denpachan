@@ -9,8 +9,7 @@ namespace denpachan::worker {
 
 using namespace denpachan::flv_ring;
 
-FlvRingIngest::FlvRingIngest(int ch, ByteQueue& queue, ChannelMetrics& metrics)
-    : ch_(ch), queue_(queue), metrics_(metrics) {}
+FlvRingIngest::FlvRingIngest(int ch, ByteQueue& queue, ChannelMetrics& metrics) : ch_(ch), queue_(queue), metrics_(metrics) {}
 
 FlvRingIngest::~FlvRingIngest() { stop(); }
 
@@ -31,8 +30,8 @@ void FlvRingIngest::run() {
     UniqueHandle event;
     std::vector<uint8_t> chunk(64 * 1024);
 
-    uint64_t session = 0;    // 読んでいるセッション
-    bool active = false;     // ByteQueue のセッションを開いているか
+    uint64_t session = 0;  // 読んでいるセッション
+    bool active = false;   // ByteQueue のセッションを開いているか
     uint64_t read_pos = 0;
     int64_t last_stats = 0;
 

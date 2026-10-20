@@ -90,8 +90,7 @@ HRESULT format_to_media_type(const OutputFormat& f, AM_MEDIA_TYPE& mt) {
     const auto bytes = static_cast<DWORD>(f.image_bytes());
     vih->AvgTimePerFrame = f.frame_duration();
     // 4K60 の非圧縮は DWORD を超えるので頭打ちにする
-    vih->dwBitRate = static_cast<DWORD>(
-        std::min<uint64_t>(uint64_t(bytes) * 8 * f.fmt.fps_num / f.fmt.fps_den, MAXDWORD));
+    vih->dwBitRate = static_cast<DWORD>(std::min<uint64_t>(uint64_t(bytes) * 8 * f.fmt.fps_num / f.fmt.fps_den, MAXDWORD));
     vih->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     vih->bmiHeader.biWidth = LONG(f.fmt.width);
     vih->bmiHeader.biHeight = LONG(f.fmt.height);

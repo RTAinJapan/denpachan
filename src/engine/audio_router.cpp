@@ -19,8 +19,7 @@ namespace {
 bool same_routes(const std::vector<RouteOptions>& a, const std::vector<RouteOptions>& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i) {
-        if (a[i].ch != b[i].ch || a[i].start_channel != b[i].start_channel || a[i].offset_ms != b[i].offset_ms ||
-            a[i].fade != b[i].fade) {
+        if (a[i].ch != b[i].ch || a[i].start_channel != b[i].start_channel || a[i].offset_ms != b[i].offset_ms || a[i].fade != b[i].fade) {
             return false;
         }
     }
@@ -83,8 +82,7 @@ void AudioRouter::apply(const Config& config) {
     // 不要になった / 変わったデバイスを止める (ASIO を別のドライバに替えるときは、先に止めてから開く)
     for (auto it = devices_.begin(); it != devices_.end();) {
         auto p = plans.find(it->first);
-        if (p == plans.end() || !same_options(p->second.options, it->second.options) ||
-            !same_routes(p->second.routes, it->second.routes)) {
+        if (p == plans.end() || !same_options(p->second.options, it->second.options) || !same_routes(p->second.routes, it->second.routes)) {
             spdlog::info("audio [{}]: stopping (routing changed)", to_utf8(it->second.options.name));
             it->second.output->stop();
             it = devices_.erase(it);

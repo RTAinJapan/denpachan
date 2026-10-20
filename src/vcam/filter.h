@@ -116,10 +116,10 @@ public:
     STDMETHODIMP GetStreamCaps(int iIndex, AM_MEDIA_TYPE** ppmt, BYTE* pSCC) override;
 
     // IKsPropertySet
-    STDMETHODIMP Set(REFGUID guidPropSet, DWORD dwPropID, LPVOID pInstanceData, DWORD cbInstanceData,
-                     LPVOID pPropData, DWORD cbPropData) override;
-    STDMETHODIMP Get(REFGUID guidPropSet, DWORD dwPropID, LPVOID pInstanceData, DWORD cbInstanceData,
-                     LPVOID pPropData, DWORD cbPropData, DWORD* pcbReturned) override;
+    STDMETHODIMP Set(REFGUID guidPropSet, DWORD dwPropID, LPVOID pInstanceData, DWORD cbInstanceData, LPVOID pPropData,
+                     DWORD cbPropData) override;
+    STDMETHODIMP Get(REFGUID guidPropSet, DWORD dwPropID, LPVOID pInstanceData, DWORD cbInstanceData, LPVOID pPropData, DWORD cbPropData,
+                     DWORD* pcbReturned) override;
     STDMETHODIMP QuerySupported(REFGUID guidPropSet, DWORD dwPropID, DWORD* pTypeSupport) override;
 
     // フィルタの状態遷移から呼ぶ (lock_ 保持中)

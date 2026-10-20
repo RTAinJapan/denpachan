@@ -117,6 +117,15 @@ jobs:
         shell: pwsh
         run: ./tools/lang/check.ps1
 
+      # ファイルの形式 (.editorconfig・.clang-format・.gitattributes。VS Code で保存したときと同じ形か)。
+      # clang-format は VS Code の C++ 拡張機能に付属のものと同じ版にそろえる
+      - name: File format
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --quiet clang-format==23.1.0
+          $cf = python -c "import clang_format, os; print(os.path.join(os.path.dirname(clang_format.__file__), 'data', 'bin', 'clang-format.exe'))"
+          ./tools/format/check.ps1 -ClangFormat $cf
+
       # 画面の試験: 試験用の設定・状態を流し込んでスクリーンショットを撮り、画面の状態を確かめる (engine / FFmpeg 不要)。
       # 撮った PNG は artifact "ui-screenshots" で見られる (失敗したときも上げる)
       - name: UI screenshots

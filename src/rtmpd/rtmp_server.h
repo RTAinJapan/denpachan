@@ -62,8 +62,7 @@ private:
     bool read_chunk();
     bool handle_message(uint8_t type, uint32_t stream_id, uint32_t timestamp, std::vector<uint8_t>& payload);
     bool handle_command(const std::vector<AmfValue>& args);
-    bool send_message(uint32_t csid, uint8_t type, uint32_t stream_id, uint32_t timestamp, const uint8_t* data,
-                      size_t size);
+    bool send_message(uint32_t csid, uint8_t type, uint32_t stream_id, uint32_t timestamp, const uint8_t* data, size_t size);
     bool send_control(uint8_t type, uint32_t value);
     bool send_command(uint32_t csid, uint32_t stream_id, const AmfWriter& w);
     bool send_all(const uint8_t* data, size_t size);

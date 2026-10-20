@@ -42,10 +42,10 @@ struct ChannelMetrics {
 
     // audio
     std::atomic<uint64_t> audio_frames{0};
-    std::atomic<uint64_t> audio_gaps{0};  // 無音で埋めた抜け
+    std::atomic<uint64_t> audio_gaps{0};     // 無音で埋めた抜け
     std::atomic<int64_t> audio_delay_us{0};  // 到着から鳴らすべき時刻まで
     std::atomic<int64_t> av_offset_us{0};    // 同じ時刻の映像に対する音声の遅れ (正: 音声が遅い)
-    std::atomic<float> audio_peak_l{0};   // 出力ごとにリセットする
+    std::atomic<float> audio_peak_l{0};      // 出力ごとにリセットする
     std::atomic<float> audio_peak_r{0};
 
     // playout

@@ -57,8 +57,7 @@ std::string normalize_key(std::string key) {
 
 }  // namespace
 
-Connection::Connection(Server& server, SOCKET sock, std::string peer)
-    : server_(server), sock_(sock), peer_(std::move(peer)) {}
+Connection::Connection(Server& server, SOCKET sock, std::string peer) : server_(server), sock_(sock), peer_(std::move(peer)) {}
 
 Connection::~Connection() {
     if (sock_ != INVALID_SOCKET) closesocket(sock_);
@@ -130,15 +129,14 @@ bool Connection::handshake() {
     std::vector<uint8_t> s(1 + 2 * kHandshakeSize, 0);
     s[0] = 3;
     std::mt19937 rng(std::random_device{}());
-    for (size_t i = 9; i < 1 + kHandshakeSize; ++i) s[i] = uint8_t(rng());  // S1: time(4) zero(4) random
+    for (size_t i = 9; i < 1 + kHandshakeSize; ++i) s[i] = uint8_t(rng());   // S1: time(4) zero(4) random
     memcpy(s.data() + 1 + kHandshakeSize, c0c1.data() + 1, kHandshakeSize);  // S2 = C1
     if (!send_all(s.data(), s.size())) return false;
     std::vector<uint8_t> c2(kHandshakeSize);
     return recv_exact(c2.data(), c2.size());
 }
 
-bool Connection::send_message(uint32_t csid, uint8_t type, uint32_t stream_id, uint32_t timestamp, const uint8_t* data,
-                              size_t size) {
+bool Connection::send_message(uint32_t csid, uint8_t type, uint32_t stream_id, uint32_t timestamp, const uint8_t* data, size_t size) {
     std::vector<uint8_t> out;
     out.reserve(size + 32);
     const bool ext = timestamp >= 0xFFFFFF;
@@ -322,10 +320,14 @@ bool Connection::handle_command(const std::vector<AmfValue>& args) {
         w.string("_result").number(txn);
         w.begin_object().key("fmsVer").string("FMS/3,0,1,123").key("capabilities").number(31).end_object();
         w.begin_object()
-            .key("level").string("status")
-            .key("code").string("NetConnection.Connect.Success")
-            .key("description").string("Connection succeeded.")
-            .key("objectEncoding").number(0)
+            .key("level")
+            .string("status")
+            .key("code")
+            .string("NetConnection.Connect.Success")
+            .key("description")
+            .string("Connection succeeded.")
+            .key("objectEncoding")
+            .number(0)
             .end_object();
         return send_command(3, 0, w);
     }
@@ -351,9 +353,12 @@ bool Connection::handle_command(const std::vector<AmfValue>& args) {
             AmfWriter w;
             w.string("onStatus").number(0).null();
             w.begin_object()
-                .key("level").string("error")
-                .key("code").string("NetStream.Publish.BadName")
-                .key("description").string("Unknown stream key.")
+                .key("level")
+                .string("error")
+                .key("code")
+                .string("NetStream.Publish.BadName")
+                .key("description")
+                .string("Unknown stream key.")
                 .end_object();
             send_command(5, kPublishStreamId, w);
             return false;
@@ -365,9 +370,12 @@ bool Connection::handle_command(const std::vector<AmfValue>& args) {
         AmfWriter w;
         w.string("onStatus").number(0).null();
         w.begin_object()
-            .key("level").string("status")
-            .key("code").string("NetStream.Publish.Start")
-            .key("description").string("Publishing.")
+            .key("level")
+            .string("status")
+            .key("code")
+            .string("NetStream.Publish.Start")
+            .key("description")
+            .string("Publishing.")
             .end_object();
         return send_command(5, kPublishStreamId, w);
     }
@@ -386,8 +394,7 @@ void Connection::run() {
     last_data_qpc_ = qpc_now();
     try {
         if (handshake()) {
-            while (read_chunk()) {
-            }
+            while (read_chunk()) {}
         }
     } catch (const std::exception& e) {
         spdlog::warn("RTMP: {} error: {}", peer_, e.what());

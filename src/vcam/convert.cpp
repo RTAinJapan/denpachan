@@ -51,7 +51,7 @@ void nv12_to_yuy2(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst, ui
             const uint32_t sx1 = same ? x + 1 : xm[x + 1];
             const uint32_t cx = (sx0 / 2) * 2;
             d[2 * x + 0] = sY[sx0];
-            d[2 * x + 1] = sUV[cx];      // U
+            d[2 * x + 1] = sUV[cx];  // U
             d[2 * x + 2] = sY[sx1];
             d[2 * x + 3] = sUV[cx + 1];  // V
         }
@@ -90,8 +90,7 @@ const Glyph* find_glyph(char c) {
 }
 
 // Y 平面に文字列を中央揃えで描く。1 文字 = 6x8 セル x scale
-void draw_text(uint8_t* y_plane, uint32_t w, uint32_t h, std::string_view text, uint32_t scale, uint32_t center_y,
-               uint8_t luma) {
+void draw_text(uint8_t* y_plane, uint32_t w, uint32_t h, std::string_view text, uint32_t scale, uint32_t center_y, uint8_t luma) {
     const uint32_t text_w = uint32_t(text.size()) * 6 * scale;
     if (text_w >= w || 8 * scale >= h) return;
     const uint32_t x0 = (w - text_w) / 2;
@@ -129,7 +128,7 @@ void convert_nv12(const uint8_t* src, uint32_t src_w, uint32_t src_h, uint8_t* d
 std::vector<uint8_t> make_slate_nv12(uint32_t width, uint32_t height, int cam) {
     std::vector<uint8_t> buf(size_t(width) * height * 3 / 2);
     uint8_t* y = buf.data();
-    memset(y, 32, size_t(width) * height);                    // 暗いグレー (limited range)
+    memset(y, 32, size_t(width) * height);                                         // 暗いグレー (limited range)
     memset(y + size_t(width) * height, 128, buf.size() - size_t(width) * height);  // 無彩色
 
     // 注: small は Windows ヘッダのマクロなので変数名に使えない

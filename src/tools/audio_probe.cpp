@@ -84,8 +84,7 @@ int wmain(int argc, wchar_t** argv) {
     auto dev = open_audio_device(info->id);
     ComPtr<IAudioClient> client;
     WAVEFORMATEX* mix = nullptr;
-    if (!dev || FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client)) ||
-        FAILED(client->GetMixFormat(&mix)) ||
+    if (!dev || FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client)) || FAILED(client->GetMixFormat(&mix)) ||
         FAILED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 2'000'000, 0, mix, nullptr))) {
         std::fprintf(stderr, "cannot open capture device\n");
         return 1;
@@ -128,8 +127,8 @@ int wmain(int argc, wchar_t** argv) {
     const int cr = std::min(o.start, channels - 1);
     auto at = [&](size_t frame, int ch) { return samples[frame * size_t(channels) + size_t(ch)]; };
 
-    std::printf("device: %s (%d ch, %d Hz), captured %.2f s, capture discontinuities %d\n",
-                to_utf8(info->name).c_str(), channels, rate, double(total) / rate, discontinuities);
+    std::printf("device: %s (%d ch, %d Hz), captured %.2f s, capture discontinuities %d\n", to_utf8(info->name).c_str(), channels, rate,
+                double(total) / rate, discontinuities);
 
     // 有音 / 無音の区間 (10ms 単位)
     const size_t block = size_t(rate / 100);

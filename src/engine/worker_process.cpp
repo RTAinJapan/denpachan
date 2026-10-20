@@ -14,10 +14,10 @@ namespace denpachan::engine {
 
 namespace {
 
-constexpr int64_t kStartupGraceMs = 5000;   // 起動直後は固まり判定をしない
-constexpr int64_t kHangTimeoutMs = 5000;    // ハートビートがこれだけ途絶えたら固まったとみなす
-constexpr int64_t kHealthyRunMs = 60'000;   // これだけ動けば連続失敗の回数をリセットする
-constexpr int64_t kStopTimeoutMs = 3000;    // 停止要求からこれだけ待って止まらなければ強制終了
+constexpr int64_t kStartupGraceMs = 5000;  // 起動直後は固まり判定をしない
+constexpr int64_t kHangTimeoutMs = 5000;   // ハートビートがこれだけ途絶えたら固まったとみなす
+constexpr int64_t kHealthyRunMs = 60'000;  // これだけ動けば連続失敗の回数をリセットする
+constexpr int64_t kStopTimeoutMs = 3000;   // 停止要求からこれだけ待って止まらなければ強制終了
 constexpr int64_t kBackoffMs[] = {500, 1000, 2000, 5000};
 
 std::wstring lower(std::wstring s) {
@@ -120,8 +120,7 @@ bool WorkerProcess::spawn_locked() {
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(exe_.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
-                        &pi)) {
+    if (!CreateProcessW(exe_.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
         started_qpc_ = 0;  // 前のプロセスの起動時刻を「60 秒動いた」と数えない (間隔が 500 ms に張り付く)
         schedule_restart_locked(ui_message("worker.cannotStart", {{"error", std::to_string(GetLastError())}}));
         return false;

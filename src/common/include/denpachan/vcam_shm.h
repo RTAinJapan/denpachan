@@ -62,16 +62,15 @@ struct Format {
     uint32_t fps_den = 0;
 
     bool valid() const {
-        return width >= 16 && height >= 16 && width <= kMaxWidth && height <= kMaxHeight && width % 2 == 0 &&
-               height % 2 == 0 && fps_num > 0 && fps_den > 0;
+        return width >= 16 && height >= 16 && width <= kMaxWidth && height <= kMaxHeight && width % 2 == 0 && height % 2 == 0 &&
+               fps_num > 0 && fps_den > 0;
     }
     uint64_t pack() const {
-        return (uint64_t(width & 0xFFFF) << 48) | (uint64_t(height & 0xFFFF) << 32) |
-               (uint64_t(fps_num & 0xFFFF) << 16) | uint64_t(fps_den & 0xFFFF);
+        return (uint64_t(width & 0xFFFF) << 48) | (uint64_t(height & 0xFFFF) << 32) | (uint64_t(fps_num & 0xFFFF) << 16) |
+               uint64_t(fps_den & 0xFFFF);
     }
     static Format unpack(uint64_t v) {
-        return Format{uint32_t(v >> 48) & 0xFFFF, uint32_t(v >> 32) & 0xFFFF, uint32_t(v >> 16) & 0xFFFF,
-                      uint32_t(v) & 0xFFFF};
+        return Format{uint32_t(v >> 48) & 0xFFFF, uint32_t(v >> 32) & 0xFFFF, uint32_t(v >> 16) & 0xFFFF, uint32_t(v) & 0xFFFF};
     }
     size_t nv12_bytes() const { return size_t(width) * height * 3 / 2; }
     bool operator==(const Format&) const = default;
@@ -124,13 +123,10 @@ static_assert(std::atomic<int64_t>::is_always_lock_free);
 inline std::wstring mapping_name(int cam) { return L"Local\\denpachan_vcam_" + std::to_wstring(cam); }
 
 inline std::wstring reader_event_name(int cam, int slot, uint32_t generation) {
-    return L"Local\\denpachan_vcam_" + std::to_wstring(cam) + L"_r" + std::to_wstring(slot) + L"_g" +
-           std::to_wstring(generation);
+    return L"Local\\denpachan_vcam_" + std::to_wstring(cam) + L"_r" + std::to_wstring(slot) + L"_g" + std::to_wstring(generation);
 }
 
-inline uint8_t* slot_data(void* base, int slot) {
-    return static_cast<uint8_t*>(base) + kHeaderBytes + kSlotStride * size_t(slot);
-}
+inline uint8_t* slot_data(void* base, int slot) { return static_cast<uint8_t*>(base) + kHeaderBytes + kSlotStride * size_t(slot); }
 
 inline bool heartbeat_alive(int64_t heartbeat_qpc, int64_t timeout_ms, int64_t now = qpc_now()) {
     return heartbeat_qpc != 0 && now - heartbeat_qpc < qpc_from_ms(timeout_ms);

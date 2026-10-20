@@ -1,0 +1,10 @@
+{
+  // Markdown の書き方の確かめ (VS Code の markdownlint 拡張機能)。指摘するだけで、保存時に書き換えはしない
+  "default": true,
+  // 日本語の文は 1 行が長くなるので、行の長さは見ない
+  "MD013": false,
+  // 表の中の <br> などの HTML は使ってよい
+  "MD033": false,
+  // 同じ見出しは、同じ親の下でなければよい (各章の「確かめること」など)
+  "MD024": { "siblings_only": true }
+}

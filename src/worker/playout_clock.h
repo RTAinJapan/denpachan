@@ -73,8 +73,8 @@ public:
             anchor_qpc_ -= slack_qpc;
             ++audio_late_count_;
             grow_headroom_locked(audio_headroom_, -slack_qpc, kAudioHeadroomMaxMs, now, last_audio_late_qpc_);
-            spdlog::info("playout: audio arrived {:.1f} ms late; delay increased, audio headroom {:.0f} ms",
-                         qpc_to_us(-slack_qpc) / 1000.0, qpc_to_us(audio_headroom_) / 1000.0);
+            spdlog::info("playout: audio arrived {:.1f} ms late; delay increased, audio headroom {:.0f} ms", qpc_to_us(-slack_qpc) / 1000.0,
+                         qpc_to_us(audio_headroom_) / 1000.0);
         } else {
             min_audio_slack_ = std::min(min_audio_slack_, slack_qpc);
         }
@@ -170,12 +170,12 @@ private:
     }
 
     static constexpr int64_t kSettleMs = 500;
-    static constexpr int64_t kMaxStepMs = 1;             // 鳴り始めてから 1 回 (1 秒) に動かす上限
-    static constexpr int64_t kDeadbandMs = 2;            // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
-    static constexpr int64_t kAudioHeadroomMinMs = 10;   // 音声の揺れの備え (最初の値と下限)
+    static constexpr int64_t kMaxStepMs = 1;            // 鳴り始めてから 1 回 (1 秒) に動かす上限
+    static constexpr int64_t kDeadbandMs = 2;           // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
+    static constexpr int64_t kAudioHeadroomMinMs = 10;  // 音声の揺れの備え (最初の値と下限)
     static constexpr int64_t kAudioHeadroomMaxMs = 200;
     static constexpr int64_t kVideoHeadroomMaxMs = 200;
-    static constexpr int64_t kHeadroomGrowMaxMs = 50;    // 1 回の遅れで増やす上限 (一時的な大きな途切れで増やしすぎない)
+    static constexpr int64_t kHeadroomGrowMaxMs = 50;  // 1 回の遅れで増やす上限 (一時的な大きな途切れで増やしすぎない)
     // 遅れがこの間なければ備えを 1 ms 減らす。速く減らすと、減っては次の小さな遅れで増える、を繰り返して時間軸が
     // 動き続け、engine がそれを追うサンプルの重複・間引きも増える (5 秒では 1 秒に十数回)
     static constexpr int64_t kHeadroomDecayMs = 30'000;

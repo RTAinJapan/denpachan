@@ -10,8 +10,8 @@ namespace denpachan::worker {
 
 using namespace std::chrono_literals;
 
-Playout::Playout(PlayoutOptions options, PlayoutClock& clock, FrameQueue& queue, VcamWriter* writer,
-                 PreviewWriter* preview, ChannelMetrics& metrics)
+Playout::Playout(PlayoutOptions options, PlayoutClock& clock, FrameQueue& queue, VcamWriter* writer, PreviewWriter* preview,
+                 ChannelMetrics& metrics)
     : options_(options), clock_(clock), queue_(queue), writer_(writer), preview_(preview), metrics_(metrics) {
     timer_.reset(CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS));
     if (!timer_) timer_.reset(CreateWaitableTimerW(nullptr, FALSE, nullptr));
@@ -93,8 +93,7 @@ void Playout::run() {
         // 送出停止時にデマクサ内に残っていた末尾が切断後に出てくるもので、出すと保持中の絵が
         // 一瞬だけ切り替わって live 扱いになる。
         const int64_t gap_us = f->pts_us - last_pts_us;
-        if (f->session == last_session && gap_us > 0 && gap_us < 1'000'000 &&
-            f->arrival_qpc - last_arrival_qpc > stall) {
+        if (f->session == last_session && gap_us > 0 && gap_us < 1'000'000 && f->arrival_qpc - last_arrival_qpc > stall) {
             last_arrival_qpc = f->arrival_qpc;
             last_pts_us = f->pts_us;
             ++metrics_.frames_dropped_late;
@@ -103,8 +102,7 @@ void Playout::run() {
         last_arrival_qpc = f->arrival_qpc;
 
         // 時間軸の取り直し: タイムスタンプの飛び (1 秒以上)。新しい接続は due() が取り直す。
-        if (f->session == last_session && clock_.anchored_for(f->session) &&
-            (gap_us < -1'000'000 || gap_us > 1'000'000)) {
+        if (f->session == last_session && clock_.anchored_for(f->session) && (gap_us < -1'000'000 || gap_us > 1'000'000)) {
             spdlog::info("playout: re-anchor (gap {} ms)", gap_us / 1000);
             clock_.reanchor(f->session, f->pts_us, f->arrival_qpc);
         } else if (gap_us > 0 && gap_us < 100'000) {

@@ -117,7 +117,8 @@ json default_record_json() {
         {"invalidCharReplacement", "-"},
         {"minFreeGb", 5},
         {"encode",
-         {{"video", {{"codec", "h264"}, {"encoder", "auto"}, {"rc", "cbr"}, {"bitrateKbps", 12000}, {"qp", 23}, {"preset", "p4"}, {"gopSec", 2}}},
+         {{"video",
+           {{"codec", "h264"}, {"encoder", "auto"}, {"rc", "cbr"}, {"bitrateKbps", 12000}, {"qp", 23}, {"preset", "p4"}, {"gopSec", 2}}},
           {"audio", {{"bitrateKbps", 192}}}}},
     };
 }
@@ -138,9 +139,8 @@ Config default_config() {
 
 json to_json(const ChannelConfig& c, JsonForm form) {
     json source = {
-        {"protocol", c.source.protocol}, {"mode", c.source.mode},         {"host", c.source.host},
-        {"port", c.source.port},         {"latencyMs", c.source.latency_ms}, {"pbkeylen", c.source.pbkeylen},
-        {"streamId", c.source.streamid},
+        {"protocol", c.source.protocol},    {"mode", c.source.mode},         {"host", c.source.host},         {"port", c.source.port},
+        {"latencyMs", c.source.latency_ms}, {"pbkeylen", c.source.pbkeylen}, {"streamId", c.source.streamid},
     };
     source["app"] = c.source.app;
     switch (form) {

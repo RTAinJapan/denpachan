@@ -45,7 +45,7 @@ public:
     void write(uint64_t session, int64_t pts_us, int64_t arrival_qpc, const float* data, int frames);
 
 private:
-    void append(const float* data, int frames);  // data == nullptr なら無音
+    void append(const float* data, int frames);                                    // data == nullptr なら無音
     int64_t update_clock(int64_t pts_us, int64_t arrival_qpc);                     // 低遅延
     int64_t update_synced(uint64_t session, int64_t pts_us, int64_t arrival_qpc);  // A/V 同期
 
