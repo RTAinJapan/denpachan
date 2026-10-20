@@ -11,20 +11,28 @@ namespace Denpachan.Ui.Infrastructure;
 /// </summary>
 public static class VcamRegistration
 {
-    // src/vcam/guids.h の kCamClsid と同じ
+    // src/vcam/guids.h の kCamClsid と同じ (denpachan Cam 1〜8)
     private static readonly string[] Clsids =
     [
         "{E952D5CE-ACFF-40F2-836E-000EAA95AC9E}",
         "{29E655A0-F1A2-48E5-9E45-2EEAFE2D401D}",
         "{5501670B-4CC8-42CC-97B3-6C03854B0905}",
         "{8A06D91E-DCE9-4E3E-A184-71AD2423AA35}",
+        "{6733DC91-3CF1-48CE-9D45-A9128349341F}",
+        "{5CE915A3-F183-4276-809A-B611332B29AC}",
+        "{150D7CF5-4F9B-4DE7-A1BD-97FF281F3274}",
+        "{A58F4C03-AF31-4ED6-8DDC-6C667F40CFF4}",
     ];
+
+    /// <summary>仮想カメラの数 (チャンネル数の上限と同じ。src/common/include/denpachan/channels.h)</summary>
+    public static int Count => Clsids.Length;
 
     private const string VideoInputCategory = "{860BB310-5D01-11d0-BD3B-00A0C911CE86}";
 
     public static string DllPath => Path.Combine(AppContext.BaseDirectory, "denpachan-vcam.dll");
 
-    /// <summary>4 台とも、この DLL で登録されているか (HKLM と HKCU を合わせた見え方で)</summary>
+    /// <summary>全台、この DLL で登録されているか (HKLM と HKCU を合わせた見え方で)。
+    /// 台数を増やした版に入れ替えたときも、足りない分があれば登録し直す</summary>
     public static bool IsRegistered()
     {
         foreach (var clsid in Clsids)

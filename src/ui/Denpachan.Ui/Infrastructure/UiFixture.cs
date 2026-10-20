@@ -162,6 +162,7 @@ public static class UiFixture
 
     private static JsonObject DefaultGeneral() => new()
     {
+        ["channelCount"] = 4,
         ["stallMs"] = 2000,
         ["audioMarginMs"] = 10,
         ["avSync"] = true,

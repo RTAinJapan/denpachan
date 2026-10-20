@@ -44,6 +44,8 @@ $shots = @(
     @{ Name = 'main-ffmpeg-missing';  Case = 'ffmpeg-missing';  Args = $main },
     @{ Name = 'main-disconnected';    Case = 'disconnected';    Args = $main },
     @{ Name = 'main-unreachable';     Case = 'unreachable';     Args = $main },
+    @{ Name = 'main-eight';           Case = 'eight';           Args = $main },
+    @{ Name = 'settings-general-eight'; Case = 'eight';         Args = $dialog + @('--general') },
     @{ Name = 'settings-input';       Case = 'normal';          Args = $dialog + @('--settings', '1') },
     @{ Name = 'settings-record';      Case = 'normal';          Args = $dialog + @('--settings', '1', '--settings-tab', '1') },
     @{ Name = 'settings-general';     Case = 'normal';          Args = $dialog + @('--general') }

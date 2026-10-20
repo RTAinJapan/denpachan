@@ -32,7 +32,7 @@ extern "C" {
 namespace denpachan::engine {
 
 struct RouteOptions {
-    int ch = 1;             // denpachan のチャンネル (1-4)
+    int ch = 1;             // denpachan のチャンネル (1-8)
     int start_channel = 1;  // デバイスの出力チャンネル (1 始まり、L を置く位置)
     int offset_ms = 0;      // 音声の遅延に足す (A/V 合わせ用。負も可)
     bool fade = true;       // 開始・途絶・合わせ直し・ミュート切替の瞬間のフェード

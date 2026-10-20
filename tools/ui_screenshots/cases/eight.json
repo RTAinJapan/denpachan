@@ -1,0 +1,123 @@
+{
+  "_comment": "8 チャンネル (全体設定のチャンネル数 8、タイルは 4x2): ch1〜ch6 受信中 (SRT 4 本、RTMP 2 本)、ch7 接続中、ch8 停止",
+  "general": { "channelCount": 8 },
+  "channels": [
+    { "name": "Game A", "enabled": true, "vcam": 1, "source": { "protocol": "srt", "mode": "listener", "port": 9001 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 1 } },
+    { "name": "Game B", "enabled": true, "vcam": 2, "source": { "protocol": "srt", "mode": "listener", "port": 9002 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 3 } },
+    { "name": "Game C", "enabled": true, "vcam": 3, "source": { "protocol": "rtmp", "mode": "push", "app": "live", "key": "gamec" }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 5 } },
+    { "name": "Game D", "enabled": true, "vcam": 4, "source": { "protocol": "rtmp", "mode": "push", "app": "live", "key": "gamed" }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 7 } },
+    { "name": "Game E", "enabled": true, "vcam": 5, "source": { "protocol": "srt", "mode": "listener", "port": 9005 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 9 } },
+    { "name": "Game F", "enabled": true, "vcam": 6, "source": { "protocol": "srt", "mode": "listener", "port": 9006 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 11 } },
+    { "name": "Game G", "enabled": true, "vcam": 7, "source": { "protocol": "srt", "mode": "caller", "host": "192.168.1.27", "port": 9000 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 13 } },
+    { "name": "CH8", "enabled": false, "vcam": 8 }
+  ],
+  "state": {
+    "channels": [
+      {
+        "id": 1, "name": "Game A", "enabled": true, "vcam": 1,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9001 },
+        "worker": { "state": "running", "pid": 4120, "restarts": 0, "uptimeSec": 9876, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.21:51234", "codec": "h264", "width": 1920, "height": 1080,
+                   "hwDecode": true, "bitrateMbps": 8.1, "decodeFps": 60, "outputFps": 60, "delayMs": 48, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 120, "rttMs": 12.0, "rcvBufMs": 130, "recvMbps": 8.2, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 100, "multiplier": 4, "rttMs": 12.0, "lossPct": 0, "drops": 0, "windowSec": 60 } },
+        "audioIn": { "peakDb": [-12.5, -14.1], "delayMs": 52, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 1, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": 0.1, "slips": 2, "underruns": 0, "resyncs": 0, "peakDb": [-12.5, -14.1] }
+      },
+      {
+        "id": 2, "name": "Game B", "enabled": true, "vcam": 2,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9002 },
+        "worker": { "state": "running", "pid": 4121, "restarts": 0, "uptimeSec": 9870, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.22:51234", "codec": "hevc", "width": 1920, "height": 1080,
+                   "hwDecode": true, "bitrateMbps": 6.0, "decodeFps": 60, "outputFps": 60, "delayMs": 51, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 120, "rttMs": 15.0, "rcvBufMs": 130, "recvMbps": 6.1, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 100, "multiplier": 4, "rttMs": 15.0, "lossPct": 0, "drops": 0, "windowSec": 60 } },
+        "audioIn": { "peakDb": [-16.0, -16.2], "delayMs": 50, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 3, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": 0.0, "slips": 1, "underruns": 0, "resyncs": 0, "peakDb": [-16.0, -16.2] }
+      },
+      {
+        "id": 3, "name": "Game C", "enabled": true, "vcam": 3,
+        "source": { "protocol": "rtmp", "mode": "push", "app": "live" },
+        "worker": { "state": "running", "pid": 4122, "restarts": 0, "uptimeSec": 9860, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.23:40022", "codec": "h264", "width": 1280, "height": 720,
+                   "hwDecode": true, "bitrateMbps": 4.0, "decodeFps": 30, "outputFps": 30, "delayMs": 60, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "tcp": { "rttMs": 1.2, "retransBytes": 0 },
+        "audioIn": { "peakDb": [-18.0, -18.2], "delayMs": 70, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 5, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": 0.0, "slips": 0, "underruns": 0, "resyncs": 0, "peakDb": [-18.0, -18.2] }
+      },
+      {
+        "id": 4, "name": "Game D", "enabled": true, "vcam": 4,
+        "source": { "protocol": "rtmp", "mode": "push", "app": "live" },
+        "worker": { "state": "running", "pid": 4123, "restarts": 0, "uptimeSec": 9850, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.24:40022", "codec": "h264", "width": 1280, "height": 720,
+                   "hwDecode": true, "bitrateMbps": 3.0, "decodeFps": 30, "outputFps": 30, "delayMs": 62, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "tcp": { "rttMs": 1.5, "retransBytes": 0 },
+        "audioIn": { "peakDb": [-20.0, -20.2], "delayMs": 72, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 7, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": 0.0, "slips": 0, "underruns": 0, "resyncs": 0, "peakDb": [-20.0, -20.2] }
+      },
+      {
+        "id": 5, "name": "Game E", "enabled": true, "vcam": 5,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9005 },
+        "worker": { "state": "running", "pid": 4124, "restarts": 0, "uptimeSec": 9840, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.25:51234", "codec": "h264", "width": 1920, "height": 1080,
+                   "hwDecode": true, "bitrateMbps": 8.0, "decodeFps": 60, "outputFps": 60, "delayMs": 49, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 120, "rttMs": 20.0, "rcvBufMs": 130, "recvMbps": 8.0, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 100, "multiplier": 4, "rttMs": 20.0, "lossPct": 0, "drops": 0, "windowSec": 60 } },
+        "audioIn": { "peakDb": [-14.0, -14.2], "delayMs": 52, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 9, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": 0.0, "slips": 1, "underruns": 0, "resyncs": 0, "peakDb": [-14.0, -14.2] }
+      },
+      {
+        "id": 6, "name": "Game F", "enabled": true, "vcam": 6,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9006 },
+        "worker": { "state": "running", "pid": 4125, "restarts": 0, "uptimeSec": 9830, "lastEvent": "" },
+        "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.26:51234", "codec": "h264", "width": 1920, "height": 1080,
+                   "hwDecode": true, "bitrateMbps": 7.5, "decodeFps": 60, "outputFps": 60, "delayMs": 50, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 120, "rttMs": 25.0, "rcvBufMs": 130, "recvMbps": 7.6, "lost": 1, "retrans": 1, "dropped": 0, "configuredLatencyMs": 120,
+                 "recommend": { "latencyMs": 110, "multiplier": 4, "rttMs": 25.0, "lossPct": 0.01, "drops": 0, "windowSec": 60 } },
+        "audioIn": { "peakDb": [-15.0, -15.2], "delayMs": 51, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 11, "mute": false,
+                      "playing": true, "latencyMs": 21.5, "errorMs": 0.0, "slips": 1, "underruns": 0, "resyncs": 0, "peakDb": [-15.0, -15.2] }
+      },
+      {
+        "id": 7, "name": "Game G", "enabled": true, "vcam": 7,
+        "source": { "protocol": "srt", "mode": "caller", "host": "192.168.1.27", "port": 9000 },
+        "worker": { "state": "running", "pid": 4126, "restarts": 0, "uptimeSec": 300, "lastEvent": "" },
+        "video": { "state": "none", "connected": false, "connections": 0, "peer": "", "codec": "", "width": 0, "height": 0,
+                   "hwDecode": false, "bitrateMbps": 0, "decodeFps": 0, "outputFps": 0, "delayMs": 0, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+        "srt": { "latencyMs": 200, "rttMs": 0, "rcvBufMs": 0, "recvMbps": 0, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 200,
+                 "recommend": { "latencyMs": 0, "multiplier": 0, "rttMs": 0, "lossPct": 0, "drops": 0, "windowSec": 0 } },
+        "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 0 },
+        "audioOut": { "device": "Dante Virtual Soundcard", "deviceId": "x", "open": true, "exclusive": true, "startChannel": 13, "mute": false,
+                      "playing": false, "latencyMs": 21.5, "errorMs": 0, "slips": 0, "underruns": 0, "resyncs": 0, "peakDb": [-100, -100] }
+      },
+      {
+        "id": 8, "name": "CH8", "enabled": false, "vcam": 8,
+        "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9008 },
+        "worker": { "state": "stopped", "pid": 0, "restarts": 0, "uptimeSec": 0, "lastEvent": "" },
+        "audioOut": null
+      }
+    ],
+    "rtmpServer": { "state": "running", "pid": 4100, "restarts": 0, "uptimeSec": 9900, "lastEvent": "", "port": 1935 },
+    "audioDevices": [],
+    "ffmpeg": { "ok": true, "message": "" }
+  },
+  "repeat": 60,
+  "testPattern": [1, 2, 3, 4, 5, 6],
+  "select": 5,
+  "events": [
+    { "text": "engine に接続しました", "warning": false }
+  ],
+  "expect": {
+    "connected": true,
+    "channels": [
+      { "statusText": "受信中" }, { "statusText": "受信中" }, { "statusText": "受信中" }, { "statusText": "受信中" },
+      { "statusText": "受信中" }, { "statusText": "受信中" }, { "statusText": "接続中…", "previewMessage": "NO SIGNAL" },
+      { "statusText": "停止", "enabled": false, "previewMessage": "停止中" }
+    ]
+  }
+}

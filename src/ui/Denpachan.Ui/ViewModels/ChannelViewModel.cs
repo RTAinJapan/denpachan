@@ -224,8 +224,9 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     // ---- ルーティング (プルダウン) ----
 
+    // 仮想カメラは使うチャンネル数によらず全台から選べる (Cam 1〜8)
     public IReadOnlyList<Option<int>> VcamOptions =>
-        [new(0, T("common.none")), new(1, "Cam 1"), new(2, "Cam 2"), new(3, "Cam 3"), new(4, "Cam 4")];
+        [new(0, T("common.none")), .. Enumerable.Range(1, VcamRegistration.Count).Select(n => new Option<int>(n, $"Cam {n}"))];
 
     private int _vcam;
     public int Vcam

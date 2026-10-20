@@ -31,16 +31,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
-        for (var i = 1; i <= 4; i++) Channels.Add(new ChannelViewModel(this, i));
+        // チャンネルは上限の数だけ作っておき、画面には使う数 (全体設定の channelCount) だけ出す
+        for (var i = 1; i <= VcamRegistration.Count; i++) Channels.Add(new ChannelViewModel(this, i));
         LoadUiSettings();
-        Selected = Channels[0];
+        UpdateVisibleChannels();
 
         _client.ConnectionChanged += c => _dispatcher.InvokeAsync(() => OnConnectionChanged(c));
         _client.StateReceived += s => _dispatcher.InvokeAsync(() => OnState(s));
 
         _previewTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(66), DispatcherPriority.Render, (_, _) =>
         {
-            foreach (var ch in Channels) ch.PollPreview();
+            foreach (var ch in VisibleChannels) ch.PollPreview();
         }, _dispatcher);
 
         // PC の様子 (CPU、メモリ、録画先の空き) は 2 秒ごと。読むだけなので軽いが、録画先がネットワーク
@@ -126,10 +127,42 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Log(error == null ? T("event.vcamUnregistered") : F("event.vcamUnregisterFailed", ("error", error)), error != null);
     }
 
+    /// <summary>全チャンネル (上限の数。番号 - 1 で引く)</summary>
     public ObservableCollection<ChannelViewModel> Channels { get; } = [];
+    /// <summary>画面に出すチャンネル (先頭から全体設定の channelCount 個)</summary>
+    public ObservableCollection<ChannelViewModel> VisibleChannels { get; } = [];
     public ObservableCollection<EventItem> Events { get; } = [];
     public List<AudioDeviceItem> AudioDevices { get; private set; } = [];
-    public JsonNode? GeneralConfig { get; private set; }
+
+    private JsonNode? _generalConfig;
+    public JsonNode? GeneralConfig
+    {
+        get => _generalConfig;
+        private set
+        {
+            _generalConfig = value;
+            UpdateVisibleChannels();
+        }
+    }
+
+    /// <summary>使うチャンネル数 (全体設定の channelCount。engine の設定がまだ無ければ 4)</summary>
+    public int ChannelCount => Math.Clamp(GeneralConfig.Int("channelCount", 4), 1, Channels.Count);
+
+    // タイルの並べ方: 1 → 1x1、2 → 2x1、3〜4 → 2x2、5〜6 → 3x2、7〜8 → 4x2
+    public int TileColumns => ChannelCount switch { 1 => 1, <= 4 => 2, <= 6 => 3, _ => 4 };
+    public int TileRows => ChannelCount <= 2 ? 1 : 2;
+
+    private void UpdateVisibleChannels()
+    {
+        var count = ChannelCount;
+        if (VisibleChannels.Count == count) return;
+        VisibleChannels.Clear();
+        foreach (var ch in Channels.Take(count)) VisibleChannels.Add(ch);
+        if (Selected == null || Selected.Id > count) Selected = Channels[0];
+        OnPropertyChanged(nameof(ChannelCount));
+        OnPropertyChanged(nameof(TileColumns));
+        OnPropertyChanged(nameof(TileRows));
+    }
 
     public ICommand RefreshDevicesCommand { get; }
     public ICommand GeneralSettingsCommand { get; }

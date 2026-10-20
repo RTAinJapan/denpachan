@@ -277,11 +277,12 @@
             </DockPanel>
         </Border>
 
-        <!-- 4ch のタイル -->
-        <ItemsControl ItemsSource="{Binding Channels}" ItemTemplate="{StaticResource ChannelTile}" Margin="0,0,0,0">
+        <!-- チャンネルのタイル (全体設定のチャンネル数だけ。並べ方は数で決まる: MainViewModel.TileColumns / TileRows) -->
+        <ItemsControl ItemsSource="{Binding VisibleChannels}" ItemTemplate="{StaticResource ChannelTile}" Margin="0,0,0,0">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <UniformGrid Columns="2" Rows="2" />
+                    <UniformGrid Columns="{Binding DataContext.TileColumns, RelativeSource={RelativeSource AncestorType=Window}}"
+                                 Rows="{Binding DataContext.TileRows, RelativeSource={RelativeSource AncestorType=Window}}" />
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
         </ItemsControl>

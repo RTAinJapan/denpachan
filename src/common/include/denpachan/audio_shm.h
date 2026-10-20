@@ -18,13 +18,14 @@
 #include <cstdint>
 #include <string>
 
+#include "denpachan/channels.h"
 #include "denpachan/win_util.h"
 
 namespace denpachan::audio {
 
 inline constexpr uint32_t kMagic = 0x41505044;  // "DPPA"
 inline constexpr uint32_t kLayoutVersion = 1;
-inline constexpr int kNumChannels = 4;
+inline constexpr int kNumChannels = kMaxChannels;
 inline constexpr uint32_t kSampleRate = 48000;
 inline constexpr uint32_t kChannels = 2;
 inline constexpr uint32_t kCapacityFrames = 1u << 17;  // 約 2.7 秒 (2 の累乗)

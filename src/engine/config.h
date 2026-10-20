@@ -12,9 +12,12 @@
 #include <optional>
 #include <string>
 
+#include "denpachan/channels.h"
+
 namespace denpachan::engine {
 
-inline constexpr int kChannelCount = 4;
+using denpachan::kMaxChannels;
+inline constexpr int kDefaultChannelCount = 4;
 
 struct SourceConfig {
     std::string protocol = "srt";   // srt / rtmp
@@ -59,6 +62,9 @@ struct ChannelConfig {
 nlohmann::json default_record_json();
 
 struct GeneralConfig {
+    // 使うチャンネル数 (1〜kMaxChannels)。画面にはこの数だけ出す。これより後ろのチャンネルは止めておく
+    // (設定は残す)。設定ファイルには常に kMaxChannels 個のチャンネルを書く
+    int channel_count = kDefaultChannelCount;
     int stall_ms = 2000;
     int audio_margin_ms = 10;
     bool av_sync = true;
@@ -70,8 +76,11 @@ struct GeneralConfig {
 
 struct Config {
     GeneralConfig general;
-    std::array<ChannelConfig, kChannelCount> channels;
+    std::array<ChannelConfig, kMaxChannels> channels;
 };
+
+// 使うチャンネル数より後ろのチャンネルを止める (enabled = false)。止めたものがあれば true
+bool stop_unused_channels(Config& c);
 
 enum class JsonForm {
     File,      // 保存用 (パスフレーズは DPAPI で暗号化)
