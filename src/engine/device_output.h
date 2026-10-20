@@ -6,6 +6,7 @@
 //   その間は他のアプリがこのデバイスを使えない。デバイスからの呼び出しが周期に追いつかなければ
 //   周期を延ばし、それでもだめなら共有モードに切り替える。
 // - デバイスが消えたら (DVS の再起動など) 1 秒ごとに開き直す。その間も他のデバイスは止まらない。
+// - バッファがいつ鳴るかは、再生位置 (IAudioClock::GetPosition) から求める (設計書 §6.3)。
 
 #include <audioclient.h>
 #include <mmdeviceapi.h>
@@ -67,6 +68,18 @@ private:
     uint32_t buffer_frames_ = 0;
     int64_t base_delay_qpc_ = 0;
     std::vector<float> mix_;
+
+    // 鳴る時刻の測り方 (render)。GetCurrentPadding (「今 + 溜まっている量」) は仮想デバイスなどで数 ms 揺れるので、
+    // IAudioClock::GetPosition (再生位置とその時刻) から求める。平均の時刻 (遅延) は今までと変えないよう、
+    // 開いた直後に padding との差を測っておいて差し引く。
+    int64_t heard_time_locked(int64_t now, uint32_t lead_frames);
+    Microsoft::WRL::ComPtr<IAudioClock> clock_;
+    uint64_t clock_freq_ = 0;
+    uint64_t written_frames_ = 0;          // デバイスのバッファに書いたフレーム数 (開いてから)
+    int64_t position_offset_qpc_ = 0;      // GetPosition による時刻 - padding による時刻 (測り終えたら固定)
+    bool position_ready_ = false;          // 差を測り終えた
+    int64_t calibrate_until_qpc_ = 0;
+    std::vector<int64_t> calibrate_samples_;
 
     // 診断: デバイスからの呼び出し回数と最大間隔
     int64_t last_render_qpc_ = 0;

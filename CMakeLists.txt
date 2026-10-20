@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(denpachan LANGUAGES CXX VERSION 0.1.0)
+project(denpachan LANGUAGES CXX VERSION 0.1.1)
 
 if(NOT WIN32)
     message(FATAL_ERROR "denpachan supports Windows only")
