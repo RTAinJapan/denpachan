@@ -24,7 +24,6 @@
                 <Label Grid.Row="1" Content="{l:Tr general.channelCount}" VerticalAlignment="Center" />
                 <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
                     <ComboBox x:Name="ChannelCountBox" MinWidth="80" Margin="0,3" />
-                    <TextBlock Text="{l:Tr general.channelCountNote}" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" />
                 </StackPanel>
             </Grid>
         </GroupBox>
