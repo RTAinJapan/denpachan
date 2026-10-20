@@ -7,10 +7,17 @@
 // 時間軸の調整:
 // - 最初に来たフレーム (映像でも音声でも) の到着時刻 + 再生バッファに合わせる。
 // - 映像・音声それぞれ「到着から出すべき時刻までの余裕 (slack)」を報告してもらい、
-//   1 秒ごとに、余裕の最も小さかった側が目標 (映像: 再生バッファ、音声: 0) になるように動かす。
-//   ずれが 3 フレームを超えれば一度に、それ以下なら 1ms ずつ動かす。
+//   1 秒ごとに、余裕の最も小さかった側が目標 (映像: 再生バッファ + 揺れの備え、音声: 揺れの備え) になるように動かす。
+// - 時間軸が動くと、engine は鳴らす位置を合わせ直す。大きく動くと音が途切れる (フェードして合わせ直す) ので、
+//   鳴り始めてからは 1 秒に 1 ms までしか動かさない (engine はサンプルの重複・間引きで追える)。
+//   一度に動かすのは、時間軸を作った直後の最初の調整と、遅れて届いたときだけ。
 // - 音声が遅れて届いた (余裕が負) ときは、届く前に鳴らすことはできないので即座に遅らせる。
-//   映像はその分待たされる (A/V 同期を保つため)。
+//   映像はその分待たされる (A/V 同期を保つため)。映像が 3 フレームを超えて遅れたときも一度に遅らせる。
+// - 揺れの備え (headroom): 遅れて届くたびに、その遅れの分だけ増やす (同じ大きさの揺れが次は間に合う)。
+//   遅れがしばらくなければ少しずつ減らす。これがないと、余裕を 0 まで詰めては次の揺れで遅れて
+//   時間軸が飛ぶ (音が途切れる) のを繰り返す (RTMP では約 1 分に 1 回)。
+
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <climits>
@@ -58,13 +65,19 @@ public:
     // 音声チャンクの余裕 (鳴らすべき時刻から出力遅延を引いたもの - 到着時刻) を報告する
     void report_audio(int64_t slack_qpc) {
         std::lock_guard lk(mutex_);
-        if (qpc_now() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
+        const int64_t now = qpc_now();
+        if (now < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
         if (slack_qpc < 0) {
-            anchor_qpc_ -= slack_qpc;  // 遅れて届いた: 即座に遅らせる
+            // 遅れて届いた: 即座に遅らせ、同じ大きさの揺れが次は間に合うよう備えを増やす。
+            // このかたまりは窓の最小には入れない (入れると、増やした備えとの差で次の調整がもう一度動かす)
+            anchor_qpc_ -= slack_qpc;
             ++audio_late_count_;
-            slack_qpc = 0;
+            grow_headroom_locked(audio_headroom_, -slack_qpc, kAudioHeadroomMaxMs, now, last_audio_late_qpc_);
+            spdlog::info("playout: audio arrived {:.1f} ms late; delay increased, audio headroom {:.0f} ms",
+                         qpc_to_us(-slack_qpc) / 1000.0, qpc_to_us(audio_headroom_) / 1000.0);
+        } else {
+            min_audio_slack_ = std::min(min_audio_slack_, slack_qpc);
         }
-        min_audio_slack_ = std::min(min_audio_slack_, slack_qpc);
         adjust_if_due_locked();
     }
 
@@ -110,14 +123,26 @@ private:
     void adjust_if_due_locked() {
         const int64_t now = qpc_now();
         if (now - window_start_qpc_ < qpc_from_ms(1000)) return;
+        decay_headroom_locked(video_headroom_, 0, now, last_video_late_qpc_);
+        decay_headroom_locked(audio_headroom_, kAudioHeadroomMinMs, now, last_audio_late_qpc_);
         // 目標からの余り (正: 遅延が大きすぎる / 負: 小さすぎる)。報告のなかった側は無視する。
-        int64_t error = LLONG_MAX;
-        if (min_video_slack_ != LLONG_MAX) error = std::min(error, min_video_slack_ - buffer_);
-        if (min_audio_slack_ != LLONG_MAX) error = std::min(error, min_audio_slack_);
+        const int64_t video_error = min_video_slack_ != LLONG_MAX ? min_video_slack_ - buffer_ - video_headroom_ : LLONG_MAX;
+        const int64_t audio_error = min_audio_slack_ != LLONG_MAX ? min_audio_slack_ - audio_headroom_ : LLONG_MAX;
+        const int64_t error = std::min(video_error, audio_error);
         if (error != LLONG_MAX) {
-            const int64_t step = std::abs(error) > qpc_from_us(frame_us_ * 3)
-                                     ? error
-                                     : std::clamp(error, -qpc_from_ms(1), qpc_from_ms(1));
+            const int64_t jump = qpc_from_us(frame_us_ * 3);
+            const int64_t limit = qpc_from_ms(kMaxStepMs);
+            int64_t step = std::clamp(error, -limit, limit);
+            if (!settled_) {
+                // 時間軸を作った直後 (まだ鳴らしていない): 大きなずれは一度に合わせる
+                if (std::abs(error) > jump) step = error;
+            } else if (video_error < -jump && video_error <= audio_error) {
+                // 映像が 3 フレームを超えて遅れた: 一度に遅らせ、備えを増やす (音声は合わせ直しになる)
+                step = video_error;
+                grow_headroom_locked(video_headroom_, -video_error, kVideoHeadroomMaxMs, now, last_video_late_qpc_);
+                spdlog::info("playout: video arrived {:.1f} ms late; delay increased, video headroom {:.0f} ms",
+                             qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0);
+            }
             anchor_qpc_ -= step;
             settled_ = true;
         }
@@ -126,7 +151,27 @@ private:
         min_audio_slack_ = LLONG_MAX;
     }
 
+    // 揺れの備えを、遅れた分 (1 回に kHeadroomGrowMaxMs まで) 増やす
+    static void grow_headroom_locked(int64_t& headroom, int64_t late, int64_t max_ms, int64_t now, int64_t& last_late) {
+        headroom = std::min(headroom + std::min(late, qpc_from_ms(kHeadroomGrowMaxMs)), qpc_from_ms(max_ms));
+        last_late = now;
+    }
+
+    // 遅れがしばらくなければ、揺れの備えを少しずつ減らす (遅延はそれに合わせて 1 秒に 1 ms ずつ詰まる)
+    static void decay_headroom_locked(int64_t& headroom, int64_t min_ms, int64_t now, int64_t& last_late) {
+        if (headroom <= qpc_from_ms(min_ms)) return;
+        if (now - last_late < qpc_from_ms(kHeadroomDecayMs)) return;
+        headroom = std::max(headroom - qpc_from_ms(1), qpc_from_ms(min_ms));
+        last_late = now;  // 次に減らすのはまた kHeadroomDecayMs 後
+    }
+
     static constexpr int64_t kSettleMs = 500;
+    static constexpr int64_t kMaxStepMs = 1;             // 鳴り始めてから 1 回 (1 秒) に動かす上限
+    static constexpr int64_t kAudioHeadroomMinMs = 10;   // 音声の揺れの備え (最初の値と下限)
+    static constexpr int64_t kAudioHeadroomMaxMs = 200;
+    static constexpr int64_t kVideoHeadroomMaxMs = 200;
+    static constexpr int64_t kHeadroomGrowMaxMs = 50;    // 1 回の遅れで増やす上限 (一時的な大きな途切れで増やしすぎない)
+    static constexpr int64_t kHeadroomDecayMs = 5'000;   // 遅れがこの間なければ備えを 1 ms 減らす
 
     const int64_t buffer_;
     std::mutex mutex_;
@@ -142,6 +187,12 @@ private:
     int64_t min_audio_slack_ = LLONG_MAX;
     int64_t frame_us_ = 16'667;
     uint64_t audio_late_count_ = 0;
+
+    // 揺れの備え (接続をまたいで覚えておく: 同じ送出元の揺れ方は変わらないことが多い)
+    int64_t audio_headroom_ = qpc_from_ms(kAudioHeadroomMinMs);
+    int64_t video_headroom_ = 0;
+    int64_t last_audio_late_qpc_ = 0;
+    int64_t last_video_late_qpc_ = 0;
 };
 
 }  // namespace denpachan::worker
