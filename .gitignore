@@ -3,6 +3,9 @@ bin/
 obj/
 /build/
 /vcpkg_installed/
+# CI がこのフォルダの中に取る vcpkg とそのキャッシュ (.github/workflows/build.yml)
+/vcpkg/
+/vcpkg-cache/
 .vs/
 *.user
 CMakeUserPresets.json

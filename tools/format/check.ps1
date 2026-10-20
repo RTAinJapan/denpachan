@@ -36,7 +36,8 @@ $files = git -C $root ls-files --cached --others --exclude-standard | Sort-Objec
 foreach ($rel in $files) {
     if ($rel -match $binary) { continue }
     $path = Join-Path $root $rel
-    if (-not (Test-Path $path)) { continue }
+    # 別の git リポジトリ (CI で取る vcpkg など) はフォルダとして出てくるので見ない
+    if (-not (Test-Path $path -PathType Leaf)) { continue }
     $bytes = [System.IO.File]::ReadAllBytes($path)
     $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
     $wantBom = $rel -like '*.ps1'
