@@ -12,7 +12,7 @@ denpachan は MIT。ASIO 出力は別のリポジトリ (GPL-3.0) の DLL で、
 | .NET 10 デスクトップ ランタイム | 必須 | 画面 (denpachan.exe) |
 | **FFmpeg 9.x の shared 版** | 必須 | 受信した映像・音声のデコード、録画、48 kHz 以外の音声デバイスへのリサンプル。下記 §1.1 |
 | GPU のドライバ | 推奨 | ハードウェアデコード、録画の GPU エンコード (NVIDIA: NVDEC / NVENC、Intel: QSV、AMD: AMF) |
-| OBS など DirectShow の映像を取り込めるソフト | 用途による | 仮想カメラ (denpachan Cam 1〜4) の取り込み |
+| OBS など DirectShow の映像を取り込めるソフト | 用途による | 仮想カメラ (denpachan Cam 1〜8) の取り込み |
 | Dante Virtual Soundcard など | 用途による | 音声の出力先 (WDM モードなら WASAPI のデバイス、ASIO モードなら ASIO のドライバとして使う) |
 | [denpachan-asio-driver](https://github.com/RTAinJapan/denpachan-asio-driver) の `denpachan-asio-driver.dll` | ASIO に出すなら | ASIO のドライバへの出力。GPL-3.0 なので別のリポジトリで配っている。`denpachan-engine.exe` と同じフォルダに置く (§2.1) |
 

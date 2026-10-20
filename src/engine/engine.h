@@ -50,7 +50,7 @@ private:
     const std::wstring worker_exe_;
     const std::wstring log_dir_;
     Config config_;
-    std::array<std::unique_ptr<WorkerProcess>, kChannelCount> workers_;
+    std::array<std::unique_ptr<WorkerProcess>, kMaxChannels> workers_;
     std::unique_ptr<WorkerProcess> rtmpd_;
     SharedMapping routes_mapping_;
     rtmp_routes::Header* routes_ = nullptr;

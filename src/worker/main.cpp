@@ -59,7 +59,7 @@ void print_usage() {
     std::fputs(
         "usage: denpachan-worker [options]\n"
         "  --ch N              channel number (log label)         [1]\n"
-        "  --cam N             virtual camera 1-4, 0 = none       [1]\n"
+        "  --cam N             virtual camera 1-8, 0 = none       [1]\n"
         "  --input I           srt | rtmp-push (from rtmpd) | url  [srt]\n"
         "  --url URL           input = url: e.g. rtmp://host/app/key (RTMP pull)\n"
         "  --srt-mode M        listener | caller                  [listener]\n"

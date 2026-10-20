@@ -13,10 +13,19 @@
                     <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Label Content="{l:Tr general.language}" VerticalAlignment="Center" />
                 <!-- 言語ファイル (src/ui/Denpachan.Ui/Lang/*.json) がある言語。「自動」は Windows の表示言語 -->
                 <ComboBox x:Name="LanguageBox" Grid.Column="1" MinWidth="220" Margin="0,3" HorizontalAlignment="Left"
                           DisplayMemberPath="Label" SelectedValuePath="Value" />
+                <Label Grid.Row="1" Content="{l:Tr general.channelCount}" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                    <ComboBox x:Name="ChannelCountBox" MinWidth="80" Margin="0,3" />
+                    <TextBlock Text="{l:Tr general.channelCountNote}" Style="{StaticResource DimText}" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" />
+                </StackPanel>
             </Grid>
         </GroupBox>
 

@@ -124,7 +124,7 @@ json default_record_json() {
 
 Config default_config() {
     Config c;
-    for (int i = 0; i < kChannelCount; ++i) {
+    for (int i = 0; i < kMaxChannels; ++i) {
         auto& ch = c.channels[size_t(i)];
         ch.id = i + 1;
         ch.name = "CH" + std::to_string(i + 1);
@@ -181,7 +181,8 @@ json to_json(const ChannelConfig& c, JsonForm form) {
 }
 
 json to_json(const GeneralConfig& g) {
-    return {{"stallMs", g.stall_ms},
+    return {{"channelCount", g.channel_count},
+            {"stallMs", g.stall_ms},
             {"audioMarginMs", g.audio_margin_ms},
             {"avSync", g.av_sync},
             {"rtmpServer", {{"bind", g.rtmp_bind}, {"port", g.rtmp_port}, {"idleTimeoutMs", g.rtmp_idle_timeout_ms}}}};
@@ -239,6 +240,7 @@ ChannelConfig channel_from_json(const json& j, int id) {
 GeneralConfig general_from_json(const json& j) {
     GeneralConfig def;
     GeneralConfig g;
+    g.channel_count = get_or(j, "channelCount", def.channel_count);  // 無い (0.1.x までの設定) なら 4
     g.stall_ms = get_or(j, "stallMs", def.stall_ms);
     g.audio_margin_ms = get_or(j, "audioMarginMs", def.audio_margin_ms);
     g.av_sync = get_or(j, "avSync", def.av_sync);
@@ -258,14 +260,26 @@ Config config_from_json(const json& j) {
     if (j.contains("channels") && j.at("channels").is_array()) {
         for (const auto& ch : j.at("channels")) {
             const int id = get_or(ch, "id", 0);
-            if (id >= 1 && id <= kChannelCount) c.channels[size_t(id - 1)] = channel_from_json(ch, id);
+            if (id >= 1 && id <= kMaxChannels) c.channels[size_t(id - 1)] = channel_from_json(ch, id);
         }
     }
     return c;
 }
 
+bool stop_unused_channels(Config& c) {
+    bool stopped = false;
+    for (auto& ch : c.channels) {
+        if (ch.id > c.general.channel_count && ch.enabled) {
+            ch.enabled = false;
+            stopped = true;
+        }
+    }
+    return stopped;
+}
+
 std::optional<std::string> validate(const Config& c) {
     auto in = [](int v, int lo, int hi) { return v >= lo && v <= hi; };
+    if (!in(c.general.channel_count, 1, kMaxChannels)) return "channelCount must be 1-" + std::to_string(kMaxChannels);
     if (!in(c.general.stall_ms, 100, 60'000)) return "stallMs must be 100-60000";
     if (!in(c.general.audio_margin_ms, 0, 500)) return "audioMarginMs must be 0-500";
 
@@ -286,7 +300,7 @@ std::optional<std::string> validate(const Config& c) {
     for (const auto& ch : c.channels) {
         const std::string p = "ch" + std::to_string(ch.id) + ": ";
         const auto& s = ch.source;
-        if (!in(ch.vcam, 0, 4)) return p + "vcam must be 0-4";
+        if (!in(ch.vcam, 0, kMaxChannels)) return p + "vcam must be 0-" + std::to_string(kMaxChannels);
         if (ch.vcam != 0 && !vcams.insert(ch.vcam).second) return p + "vcam " + std::to_string(ch.vcam) + " is already used";
         if (!in(ch.playout_buffer_ms, 0, 2000)) return p + "playoutBufferMs must be 0-2000";
         if (!in(ch.audio.start_channel, 1, 64)) return p + "audio.startChannel must be 1-64";

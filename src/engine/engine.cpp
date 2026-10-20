@@ -50,7 +50,7 @@ json message_json(std::string_view s) {
 
 int channel_param(const json& params) {
     const int ch = params.at("ch").get<int>();
-    if (ch < 1 || ch > kChannelCount) throw std::runtime_error("ch must be 1-4");
+    if (ch < 1 || ch > kMaxChannels) throw std::runtime_error("ch must be 1-" + std::to_string(kMaxChannels));
     return ch;
 }
 
@@ -77,7 +77,7 @@ void Engine::check_ffmpeg_locked() {
 
 Engine::Engine(std::wstring config_path, std::wstring worker_exe, std::wstring log_dir)
     : config_path_(std::move(config_path)), worker_exe_(std::move(worker_exe)), log_dir_(std::move(log_dir)) {
-    for (int i = 0; i < kChannelCount; ++i) workers_[size_t(i)] = std::make_unique<WorkerProcess>(i + 1, worker_exe_);
+    for (int i = 0; i < kMaxChannels; ++i) workers_[size_t(i)] = std::make_unique<WorkerProcess>(i + 1, worker_exe_);
     const std::wstring dir = worker_exe_.substr(0, worker_exe_.find_last_of(L"\\/"));
     rtmpd_ = std::make_unique<WorkerProcess>(0, dir + L"\\denpachan-rtmpd.exe", "rtmpd");
 }
@@ -100,6 +100,8 @@ void Engine::init() {
         config_ = default_config();
         save_locked();
     }
+    // 使うチャンネル数より後ろのチャンネルは動かさない (設定ファイルを手で直したときなど)
+    if (stop_unused_channels(config_)) save_locked();
 
     // 仮想カメラの共有メモリを保持する (誰も開いていないと最後のフレームが消えるため)
     for (int cam = 1; cam <= vcam::kNumCams; ++cam) {
@@ -232,6 +234,10 @@ json Engine::handle(const std::string& method, const json& params) {
 
     if (method == "startChannel" || method == "stopChannel") {
         const int ch = channel_param(params);
+        if (method == "startChannel" && ch > config_.general.channel_count) {
+            throw std::runtime_error("ch" + std::to_string(ch) + " is not in use (channelCount is " +
+                                     std::to_string(config_.general.channel_count) + ")");
+        }
         config_.channels[size_t(ch - 1)].enabled = method == "startChannel";
         save_locked();
         apply_rtmp_locked();
@@ -262,6 +268,7 @@ json Engine::handle(const std::string& method, const json& params) {
         Config candidate = config_;
         candidate.general = general_from_json(j);
         if (auto err = validate(candidate)) throw std::runtime_error(*err);
+        stop_unused_channels(candidate);  // 使うチャンネル数を減らしたら、外れたチャンネルは止める
         config_ = candidate;
         save_locked();
         apply_rtmp_locked();

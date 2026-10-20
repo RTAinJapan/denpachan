@@ -20,13 +20,14 @@
 #include <cstdint>
 #include <string>
 
+#include "denpachan/channels.h"
 #include "denpachan/win_util.h"
 
 namespace denpachan::vcam {
 
 inline constexpr uint32_t kMagic = 0x43565044;  // "DPVC"
 inline constexpr uint32_t kLayoutVersion = 1;
-inline constexpr int kNumCams = 4;
+inline constexpr int kNumCams = kMaxChannels;
 inline constexpr uint32_t kMaxWidth = 3840;
 inline constexpr uint32_t kMaxHeight = 2160;
 inline constexpr int kNumSlots = 3;

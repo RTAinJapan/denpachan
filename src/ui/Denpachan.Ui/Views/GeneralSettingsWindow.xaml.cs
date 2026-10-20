@@ -21,6 +21,8 @@ public partial class GeneralSettingsWindow : Window
             .ToList();
         LanguageBox.SelectedValue = main.Language;
         if (LanguageBox.SelectedIndex < 0) LanguageBox.SelectedIndex = 0;
+        ChannelCountBox.ItemsSource = Enumerable.Range(1, VcamRegistration.Count).ToList();
+        ChannelCountBox.SelectedItem = main.ChannelCount;
         AvSyncBox.IsChecked = general.Bool("avSync", true);
         MarginBox.Text = general.Int("audioMarginMs", 10).ToString();
         StallBox.Text = general.Int("stallMs", 2000).ToString();
@@ -38,10 +40,20 @@ public partial class GeneralSettingsWindow : Window
             ShowError(T("general.notNumber"));
             return;
         }
+        // チャンネル数を減らして、外れるチャンネルが受信中なら止めてよいか聞く (engine が止める。既定はキャンセル)
+        var count = ChannelCountBox.SelectedItem is int n ? n : _main.ChannelCount;
+        var stopping = _main.Channels.Where(c => c.Id > count && c.Enabled).Select(c => c.Name).ToList();
+        if (stopping.Count > 0)
+        {
+            var answer = MessageBox.Show(this, F("dialog.channelCountStop", ("channels", string.Join(T("common.listSeparator"), stopping))),
+                "denpachan", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+            if (answer != MessageBoxResult.OK) return;
+        }
         // 言語はその場で変える (engine の設定が保存できなくても、画面の言語は変わる)
         if (LanguageBox.SelectedValue is string language) _main.Language = language;
         var patch = new JsonObject
         {
+            ["channelCount"] = count,
             ["avSync"] = AvSyncBox.IsChecked == true,
             ["audioMarginMs"] = margin,
             ["stallMs"] = stall,
