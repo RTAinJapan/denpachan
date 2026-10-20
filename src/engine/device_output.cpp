@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "audio_devices.h"
@@ -20,6 +21,8 @@ namespace {
 constexpr REFERENCE_TIME kMinExclusivePeriod = 30'000;     // 3ms (100ns 単位)
 constexpr REFERENCE_TIME kRetryExclusivePeriod = 100'000;  // 周期に追いつけなかったら 10ms から試し直す
 constexpr REFERENCE_TIME kMaxExclusivePeriod = 200'000;    // 20ms を超えるなら共有モードにする
+constexpr int64_t kCalibrateMs = 1000;       // 開いた直後、GetPosition と padding の差をこの間測る (中央値を使う)
+constexpr int64_t kPositionMaxOffMs = 30;    // 差がいつもよりこれ以上ずれたら (位置のリセットなど) 測り直す
 
 struct CoTaskMemDeleter {
     void operator()(void* p) const { CoTaskMemFree(p); }
@@ -184,9 +187,21 @@ bool DeviceOutput::open() {
 
     // 無音で埋めてから開始する
     BYTE* data = nullptr;
+    written_frames_ = 0;
     if (SUCCEEDED(render_->GetBuffer(buffer_frames_, &data))) {
         render_->ReleaseBuffer(buffer_frames_, AUDCLNT_BUFFERFLAGS_SILENT);
+        written_frames_ = buffer_frames_;
     }
+    // 鳴る時刻は再生位置から求める (取れなければ padding のまま)
+    clock_.Reset();
+    clock_freq_ = 0;
+    if (FAILED(client_->GetService(IID_PPV_ARGS(&clock_))) || FAILED(clock_->GetFrequency(&clock_freq_)) || clock_freq_ == 0) {
+        clock_.Reset();
+        spdlog::info("audio [{}]: no audio clock; using the buffer padding for timing", name);
+    }
+    position_ready_ = false;
+    calibrate_until_qpc_ = 0;
+    calibrate_samples_.clear();
 
     // 音声の基本遅延 = 書いてから鳴り終わるまでの最大 + 余裕。
     // 共有モード: 書く量 + 先行して鳴る量 = バッファ 1 つ分
@@ -226,6 +241,7 @@ bool DeviceOutput::open() {
 
 void DeviceOutput::close() {
     if (client_) client_->Stop();
+    clock_.Reset();
     render_.Reset();
     client_.Reset();
     event_.reset();
@@ -267,6 +283,46 @@ void DeviceOutput::write_samples(BYTE* dst, int frames) {
     }
 }
 
+// これから書くバッファの先頭のフレームが鳴る時刻 (QPC)。lead_frames: そのフレームより前にまだ鳴っていない量
+int64_t DeviceOutput::heard_time_locked(int64_t now, uint32_t lead_frames) {
+    // padding による時刻: 「今 + 溜まっている量」。仮想デバイス (VB-Cable、VoiceMeeter など) は音をまとめて取るので、
+    // 呼ばれた時刻との関係が数 ms 揺れ (1 回だけ 10 ms 近く外れることもある)、ずれの補正が 1 秒に何十回も働いてしまう
+    const int64_t by_padding = now + qpc_from_us(int64_t(lead_frames) * 1'000'000 / rate_);
+    if (!clock_) return by_padding;
+
+    // 再生位置による時刻: 位置 pos のフレームが qpc_pos に鳴っていたので、書いた量との差の分だけ後に鳴る。
+    // 揺れが 1 ms 未満で、デバイスのクロックにも追従する
+    UINT64 pos = 0, qpc_pos = 0;
+    if (FAILED(clock_->GetPosition(&pos, &qpc_pos)) || qpc_pos == 0) return by_padding;
+    const double pos_frames = double(pos) * rate_ / double(clock_freq_);
+    const int64_t at = qpc_from_us(int64_t(qpc_pos / 10));  // qpc_pos は 100ns 単位に直した QPC
+    const int64_t by_position = at + qpc_from_us(int64_t((double(written_frames_) - pos_frames) * 1'000'000 / rate_));
+
+    // 平均の時刻 (= 遅延) は今までと同じにする: 開いた直後の 1 秒で padding との差 (中央値) を測って差し引く
+    const int64_t diff = by_position - by_padding;
+    if (!position_ready_) {
+        if (calibrate_until_qpc_ == 0) calibrate_until_qpc_ = now + qpc_from_ms(kCalibrateMs);
+        calibrate_samples_.push_back(diff);
+        if (now < calibrate_until_qpc_) return by_padding;
+        std::nth_element(calibrate_samples_.begin(), calibrate_samples_.begin() + ptrdiff_t(calibrate_samples_.size() / 2),
+                         calibrate_samples_.end());
+        position_offset_qpc_ = calibrate_samples_[calibrate_samples_.size() / 2];
+        calibrate_samples_.clear();
+        position_ready_ = true;
+        spdlog::info("audio [{}]: timing from the audio clock (offset {:+.2f} ms from the buffer padding)",
+                     to_utf8(options_.name), double(qpc_to_us(position_offset_qpc_)) / 1000.0);
+    }
+    if (std::llabs(diff - position_offset_qpc_) > qpc_from_ms(kPositionMaxOffMs)) {
+        // 位置が飛んだ (デバイス側のリセットなど): padding に戻して測り直す
+        spdlog::info("audio [{}]: audio clock moved {:+.1f} ms; measuring again", to_utf8(options_.name),
+                     double(qpc_to_us(diff - position_offset_qpc_)) / 1000.0);
+        position_ready_ = false;
+        calibrate_until_qpc_ = 0;
+        return by_padding;
+    }
+    return by_position - position_offset_qpc_;
+}
+
 bool DeviceOutput::render() {
     UINT32 frames = buffer_frames_;
     UINT32 lead = buffer_frames_;  // 排他: いま鳴っているバッファの次に鳴る
@@ -285,7 +341,8 @@ bool DeviceOutput::render() {
     ++render_count_;
     if (frames == 0) return true;
 
-    const int64_t first_hear = now + qpc_from_us(int64_t(lead) * 1'000'000 / rate_);
+    const int64_t first_hear = heard_time_locked(now, lead);
+    written_frames_ += frames;
     mix_.assign(size_t(frames) * channels_, 0.0f);
     {
         std::lock_guard lk(sources_mutex_);

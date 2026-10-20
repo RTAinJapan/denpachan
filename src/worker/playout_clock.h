@@ -136,6 +136,10 @@ private:
             if (!settled_) {
                 // 時間軸を作った直後 (まだ鳴らしていない): 大きなずれは一度に合わせる
                 if (std::abs(error) > jump) step = error;
+            } else if (std::abs(error) <= qpc_from_ms(kDeadbandMs)) {
+                // 1 秒ごとの最小の揺れには反応しない (反応すると時間軸が 1 秒に 1 ms ずつ行き来し続け、
+                // engine がそれを追うサンプルの重複・間引きが絶えない)
+                step = 0;
             } else if (video_error < -jump && video_error <= audio_error) {
                 // 映像が 3 フレームを超えて遅れた: 一度に遅らせ、備えを増やす (音声は合わせ直しになる)
                 step = video_error;
@@ -167,11 +171,14 @@ private:
 
     static constexpr int64_t kSettleMs = 500;
     static constexpr int64_t kMaxStepMs = 1;             // 鳴り始めてから 1 回 (1 秒) に動かす上限
+    static constexpr int64_t kDeadbandMs = 2;            // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
     static constexpr int64_t kAudioHeadroomMinMs = 10;   // 音声の揺れの備え (最初の値と下限)
     static constexpr int64_t kAudioHeadroomMaxMs = 200;
     static constexpr int64_t kVideoHeadroomMaxMs = 200;
     static constexpr int64_t kHeadroomGrowMaxMs = 50;    // 1 回の遅れで増やす上限 (一時的な大きな途切れで増やしすぎない)
-    static constexpr int64_t kHeadroomDecayMs = 5'000;   // 遅れがこの間なければ備えを 1 ms 減らす
+    // 遅れがこの間なければ備えを 1 ms 減らす。速く減らすと、減っては次の小さな遅れで増える、を繰り返して時間軸が
+    // 動き続け、engine がそれを追うサンプルの重複・間引きも増える (5 秒では 1 秒に十数回)
+    static constexpr int64_t kHeadroomDecayMs = 30'000;
 
     const int64_t buffer_;
     std::mutex mutex_;
