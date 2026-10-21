@@ -379,9 +379,23 @@ bool Connection::handle_command(const std::vector<AmfValue>& args) {
             send_command(5, kPublishStreamId, w);
             return false;
         }
+        if (!server_.begin_publish(ch, this)) {
+            // 同じキーに別の送出元が送り続けている: 断って切る (送出側の繋ぎ直しで、今の送出元が止まったら入れ替わる)
+            AmfWriter w;
+            w.string("onStatus").number(0).null();
+            w.begin_object()
+                .key("level")
+                .string("error")
+                .key("code")
+                .string("NetStream.Publish.BadName")
+                .key("description")
+                .string("Another publisher is sending to this key.")
+                .end_object();
+            send_command(5, kPublishStreamId, w);
+            return false;
+        }
         ch_ = ch;
         publishing_ = true;
-        server_.begin_publish(ch, this);
         spdlog::info("ch{}: RTMP publish from {} (app \"{}\")", ch, peer_, app_);
         AmfWriter w;
         w.string("onStatus").number(0).null();

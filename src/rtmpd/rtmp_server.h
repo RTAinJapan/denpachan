@@ -103,7 +103,7 @@ public:
     const ServerOptions& options() const { return options_; }
     bool stopping() const { return stop_; }
     int resolve(const std::string& app, const std::string& key);  // チャンネル (なければ 0)
-    void begin_publish(int ch, Connection* c);
+    bool begin_publish(int ch, Connection* c);                    // false = 今の送出元が送り続けているので断る
     void end_publish(int ch, Connection* c);
     bool write_media(int ch, Connection* c, uint8_t type, uint32_t timestamp, const uint8_t* data, uint32_t size);
     void update_tcp_stats(int ch, Connection* c, int32_t rtt_us, uint64_t retrans_bytes);
@@ -112,6 +112,10 @@ private:
     struct Channel {
         std::mutex mutex;
         Connection* publisher = nullptr;
+        int64_t last_media_qpc = 0;  // publisher から最後にメディアを受けた時刻 (publish の開始を含む)
+        int rejected = 0;            // まだログに出していない、断った publish の数
+        std::string rejected_peer;   // 最後に断った相手
+        int64_t rejected_log_qpc = 0;
         std::string app;  // publish を受けたときの振り分け
         std::string key;
         flv_ring::Writer ring;
@@ -122,7 +126,13 @@ private:
         std::vector<uint8_t> video_config;
     };
 
+    // 今の送出元からこの時間内にメディアが届いていれば、同じキーへの新しい publish を断る
+    static constexpr int64_t kActivePublisherMs = 1000;
+    // 断った publish のログをまとめる間隔 (断られた送出側は数秒ごとに繋ぎ直すので、1 回ずつ出すとログが溢れる)
+    static constexpr int64_t kRejectLogMs = 10'000;
+
     void accept_loop();
+    void log_rejected_locked(int ch, Channel& channel, int64_t now);
     bool read_routes(rtmp_routes::Route (&out)[rtmp_routes::kMaxRoutes]);
 
     const ServerOptions options_;

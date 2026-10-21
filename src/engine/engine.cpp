@@ -116,7 +116,14 @@ void Engine::init() {
     }
 
     routes_ = rtmp_routes::open_shared(routes_mapping_);
-    if (!routes_) spdlog::error("cannot open RTMP routes shared memory");
+    if (!routes_) {
+        // 前の版の rtmpd が、版の違う振り分けの共有メモリを持ったまま動いている (worker を残して engine だけ入れ替えた)。
+        // 止めれば共有メモリが消えるので、作り直す。止めないと RTMP の振り分けが効かず、新しい rtmpd は 1935 番を使えない
+        spdlog::warn("RTMP routes shared memory is from another version; stopping the leftover rtmpd");
+        rtmpd_->stop_leftover();
+        routes_ = rtmp_routes::open_shared(routes_mapping_);
+        if (!routes_) spdlog::error("cannot open RTMP routes shared memory");
+    }
 
     // 前回動いていたチャンネルを再開する (同じ設定で動いている worker / rtmpd は引き継ぐ)。
     // FFmpeg が無ければ worker は起動しない (見つかった時点で起動する)

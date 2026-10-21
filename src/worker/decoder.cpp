@@ -434,13 +434,16 @@ bool Decoder::run_session(uint64_t session) {
     // 参照の欠けたフレームはどうせ読めず、エラーが続いて HW デコードをやめる判断を誤らせるため。
     bool need_key = true;
     int64_t key_deadline = qpc_now() + qpc_from_ms(kKeyframeWaitMs);
-    bool sent_key = false;  // 直前にデコーダに渡したのがキーフレームか
+    bool sent_key = false;          // 直前にデコーダに渡したのがキーフレームか
+    bool sent_key_corrupt = false;  // そのキーフレームが壊れていたか (受信で欠けた: TS の連続性の抜けなど)
 
     auto on_error = [&](int e) {
         ++metrics_.decode_errors;
         need_key = true;
         key_deadline = qpc_now() + qpc_from_ms(kKeyframeWaitMs);
-        if (sent_key && ++consecutive_errors_ == kMaxKeyframeErrors && hw_enabled_) {
+        // 壊れたキーフレームが読めないのは HW デコーダのせいではないので数えない (数えると、パケットロスが続いただけで
+        // その接続の間ずっと SW デコードになり、4K60 などでは追いつかなくなる)
+        if (sent_key && !sent_key_corrupt && ++consecutive_errors_ == kMaxKeyframeErrors && hw_enabled_) {
             spdlog::warn("decoder: keyframes keep failing ({}), falling back to software", av_error_string(e));
             hw_enabled_ = false;
             open_decoder(stream);
@@ -510,6 +513,7 @@ bool Decoder::run_session(uint64_t session) {
             continue;
         }
         sent_key = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
+        sent_key_corrupt = sent_key && (pkt->flags & AV_PKT_FLAG_CORRUPT) != 0;
         if (need_key) {
             if (!sent_key && qpc_now() < key_deadline) {
                 av_packet_unref(pkt.get());

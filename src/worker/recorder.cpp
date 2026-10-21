@@ -372,10 +372,18 @@ void Recorder::reap_external() {
     for (auto it = finishing_.begin(); it != finishing_.end();) {
         DWORD code = 0;
         if (!(*it)->exited(code)) {
+            // 入力を閉じても終わらない (書き終えられずに固まった): いつまでも残さず止める
+            if ((*it)->ms_since_input_closed() > kFinishTimeoutMs && !(*it)->stalled()) {
+                spdlog::warn("record: ffmpeg (pid {}) has not finished {} s after its input was closed; stopping it", (*it)->pid(),
+                             kFinishTimeoutMs / 1000);
+                (*it)->kill_stalled();
+            }
             ++it;
             continue;
         }
-        if (code != 0) {
+        if ((*it)->stalled()) {
+            spdlog::warn("record: ffmpeg (pid {}) was stopped", (*it)->pid());
+        } else if (code != 0) {
             set_error(ui_message("rec.ffmpegCrashed", {{"code", std::to_string(code)}, {"detail", (*it)->last_message()}}));
         } else {
             spdlog::info("record: ffmpeg (pid {}) finished", (*it)->pid());
@@ -874,7 +882,10 @@ bool Recorder::write_packet(int stream_index, AVPacket* pkt, AVRational src_tb) 
     last = p->dts;
     const int err = av_interleaved_write_frame(segment_->oc, p.get());
     if (err < 0) {
-        const std::string detail = segment_->ext ? "ffmpeg: " + segment_->ext->last_message() : av_error_string(err);
+        const std::string detail = !segment_->ext ? av_error_string(err)
+                                   : segment_->ext->stalled()
+                                       ? "ffmpeg did not read its input for " + std::to_string(ExternalEncoder::kWriteStallMs / 1000) + " s"
+                                       : "ffmpeg: " + segment_->ext->last_message();
         set_error(ui_message("rec.writeFailed", {{"detail", detail}}));
         close_segment("write error");
         retry_open_qpc_ = qpc_now() + qpc_from_ms(10'000);
