@@ -25,6 +25,12 @@ std::wstring lower(std::wstring s) {
     return s;
 }
 
+// パスのファイル名の部分 (小文字)
+std::wstring file_name(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    return lower(slash == std::wstring::npos ? path : path.substr(slash + 1));
+}
+
 std::wstring image_path(HANDLE process) {
     wchar_t buf[MAX_PATH * 2] = {};
     DWORD n = DWORD(std::size(buf));
@@ -93,8 +99,15 @@ bool WorkerProcess::try_adopt_locked() {
     return true;
 }
 
+void WorkerProcess::stop_leftover() {
+    std::lock_guard lk(mutex_);
+    kill_orphan_locked();
+}
+
 void WorkerProcess::kill_orphan_locked() {
-    // 前の engine が起動した、設定の違う worker が残っていれば止める
+    // 前の engine が起動した、設定の違う worker が残っていれば止める。
+    // 前の版を別のフォルダに入れていることもあるので、場所ではなく exe の名前で見分ける (同じ名前の別のプロセスを
+    // 止めないよう、pid は worker 自身が共有メモリに書いたもの)。引き継ぐのは同じ場所の exe だけ (try_adopt_locked)
     auto* st = status_locked();
     if (!st) return;
     const DWORD pid = st->pid.load();
@@ -102,7 +115,7 @@ void WorkerProcess::kill_orphan_locked() {
     HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!h) return;
     UniqueHandle process(h);
-    if (!running(h) || lower(image_path(h)) != lower(exe_)) return;
+    if (!running(h) || file_name(image_path(h)) != file_name(exe_)) return;
     spdlog::info("[{}]stopping leftover worker (pid {})", label_, pid);
     if (HANDLE ev = OpenEventW(EVENT_MODIFY_STATE, FALSE, worker_status::stop_event_name(ch_).c_str())) {
         SetEvent(ev);

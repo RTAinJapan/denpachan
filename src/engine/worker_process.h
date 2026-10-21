@@ -41,6 +41,9 @@ public:
     void start(const std::wstring& args);
     // 停止要求を送り、3 秒で止まらなければ強制終了する
     void stop();
+    // 前の engine が起動したプロセスが残っていれば止める (別のフォルダにある前の版も含む)。
+    // 前の版の rtmpd が古い版の共有メモリを持ったままのときに、engine の起動時に使う
+    void stop_leftover();
     // 監視 (定期的に呼ぶ)
     void poll();
     // 録画の設定を共有メモリに書く (動いている worker が 1 秒以内に読む。再起動はしない)

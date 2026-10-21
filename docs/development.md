@@ -55,6 +55,7 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 | スクリプト | 確かめること |
 |-----------|-------------|
 | `engine_test.sh` | worker の監視・再起動、engine を落としたときの引き継ぎ、設定の検証 |
+| `upgrade_takeover_test.sh [前の版のフォルダ]` | 前の版の engine だけをこの版に入れ替えたとき、worker / rtmpd が二重に動かず、RTMP の振り分けも使えること (前の版の配布版を展開したフォルダが要る) |
 | `config_upgrade_test.sh` | 0.1.x (4ch) の設定の引き継ぎ (ch5〜8 の既定値とぶつかっても捨てない、チャンネル数を増やせる) |
 | `rtmp_test.sh` | RTMP の push (キーの振り分け、二重 publish、rtmpd の再起動) と pull |
 | `rtmp_double_publish_test.sh` | 1 つの接続で 2 つのキーに publish したときに、2 回目を断り、切れた接続を残さないこと (Python を使う) |
