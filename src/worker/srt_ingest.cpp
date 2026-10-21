@@ -97,6 +97,15 @@ bool SrtIngest::configure(int sock, bool listener) {
     };
 
     bool ok = set_int(SRTO_TRANSTYPE, SRTT_LIVE, "TRANSTYPE") && set_int(SRTO_LATENCY, options_.latency_ms, "LATENCY");
+    // 受信バッファは latency の間に届く量を溜められるだけ要る (足りないと、latency を大きくして高いビットレートを受けたときに
+    // パケットを落とす)。kMaxExpectedMbps で latency + 0.5 秒分。既定 (8192 パケット、約 12 MB) で足りれば既定のまま。
+    // SRTO_FC (パケット数) は SRTO_RCVBUF より先に、RCVBUF が収まる大きさにする
+    const int64_t want_bytes = int64_t(options_.latency_ms + 500) * kMaxExpectedMbps * 1'000'000 / 8 / 1000;
+    if (ok && want_bytes > kDefaultRcvBufBytes) {
+        const int packets = int(want_bytes / kPayloadBytes) + 1;
+        ok = set_int(SRTO_FC, packets, "FC") && set_int(SRTO_RCVBUF, int(want_bytes), "RCVBUF");
+        if (ok) spdlog::info("SRT: receive buffer {} MB for latency {} ms", want_bytes / 1'000'000, options_.latency_ms);
+    }
     if (ok && listener) ok = set_int(SRTO_RCVSYN, 0, "RCVSYN");
     if (ok && !listener) ok = set_int(SRTO_CONNTIMEO, 3000, "CONNTIMEO");
     if (ok && !options_.passphrase.empty()) {
