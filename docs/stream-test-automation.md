@@ -200,33 +200,102 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 ### 4.1 構成
 
 - 別リポジトリ。Node.js + discord.js (スラッシュコマンド、スレッド、ボタン、モーダル) + AWS SDK + `ws` + Google Sheets API。Python + discord.py + boto3 でも同じ。
-- 設定:
-  - Discord のトークン、サーバ、運営への通知のチャンネル、運営のロール。
-  - **配信テストのチャンネル (チャンネル ID で 1 つ)**。`/techcheck start` はこのチャンネルでだけ受け付け、配信者ごとのスレッドもここに作る。誰が使えるかは、このチャンネルを見られるロールで絞る (bot の側では人を絞らない)。
-  - プライベートスレッドは、招待された人と「スレッドの管理」の権限を持つ人にしか見えない。運営はすべての権限を持っているので、招待されていなくても、進行中のスレッドも終わってアーカイブしたスレッドも、あとからすべて見られる (チャンネルのスレッドの一覧の「アーカイブ済み」)。
-  - AWS のリージョンと認証 (フローの一覧、CloudWatch の読み取り、`StartFlow` / `StopFlow` の権限だけの IAM ユーザー)。
-  - **SRT のフローとドメインの組の一覧** (bot が起動・監視してよいフロー)。1 組ごとに、名前 (`/techcheck slot` で指す)、フローの ARN、配信用のドメイン、パスフレーズ。
-    ```yaml
-    flows:
-      - name: flow-a
-        arn: arn:aws:mediaconnect:ap-northeast-1:123456789012:flow:...:runner-a
-        domain: srt-a.example.jp
-        passphrase: "..."
-      - name: flow-b
-        arn: arn:aws:mediaconnect:ap-northeast-1:123456789012:flow:...:runner-b
-        domain: srt-b.example.jp
-        passphrase: "..."
-    rtmp:
-      domain: rtmp.example.jp
-      app: live
-      key: "..."
-    ```
-  - **テストの枠**: SRT の枠 1 つ (上の一覧の 1 組 ↔ denpachan のチャンネル番号) と RTMP の枠 1 つ (ECS の RTMP サーバ ↔ denpachan のチャンネル番号)。どの組・チャンネルを使うかは運営が `/techcheck slot` で設定し直す (§5.6)。設定し直した値は SQLite に持ち、bot を起動し直しても残る。一覧に無いフローは使えない (bot が本番のフローを誤って起動・停止しないように)。
-  - 配信者に案内する内容: 接続先 (ドメインは組から、ポートは `DescribeFlow` から)、配布した OBS の設定の名前、期待する解像度・fps・ビットレート、latency の初期値と上限。
-  - **チェックの手順** (§7。YAML で書き、運営が足したり変えたりできる)。
-  - シートの ID、denpachan の受信口 (host、port、token)、RTMP サーバの統計 API (あれば)。
-  - **結果の通知の Discord webhook の URL (任意)**。設定していなければ通知しない (§5.5)。
-- 状態 (テストのセッション、各段階の時刻) は SQLite に持つ (bot を起動し直しても続きから)。
+- 設定は 1 つの YAML ファイル (`config.yaml`) に書く。トークン・パスフレーズ・キーなどの秘密は、ファイルに直接書くか、`${環境変数名}` で環境変数から読む。
+- 状態 (テストのセッション、待ちの列、各段階の時刻) は SQLite に持つ (bot を起動し直しても続きから)。
+- 枠 (`slots`) の値は初期値で、運営が `/techcheck slot` で変えた値は SQLite に保存され、設定ファイルより優先する (§5.6)。
+- スレッドの見え方: プライベートスレッドは、招待された人と「スレッドの管理」の権限を持つ人にしか見えない。運営はすべての権限を持っているので、招待されていなくても、進行中のスレッドもアーカイブしたスレッドも、あとからすべて見られる (チャンネルのスレッドの一覧の「アーカイブ済み」)。
+
+#### 設定値の一覧
+
+「必須」の列: ◯ = 必須、空 = 任意 (既定値を使う、または機能を使わない)。
+
+| 区分 | キー | 内容 | 必須 / 既定 |
+| --- | --- | --- | --- |
+| Discord | `discord.token` | bot のトークン (秘密) | ◯ |
+| | `discord.guildId` | サーバの ID | ◯ |
+| | `discord.techcheckChannelId` | 配信テストのチャンネルの ID。`/techcheck start` はここでだけ受け付け、配信者ごとのスレッドもここに作る。使える人は、このチャンネルを見られるロールで絞る | ◯ |
+| | `discord.staffRoleId` | 運営のロールの ID。運営のコマンド (`slot`、`status`、`cancel` など) と、スレッドのボタンを配信者の代わりに押せる人 | ◯ |
+| | `discord.opsChannelId` | 運営への通知のチャンネルの ID (始まった、確定した値、運営側の問題) | ◯ |
+| 結果の通知 | `notify.webhookUrl` | 結果の通知の Discord webhook の URL (秘密)。**未設定なら送らない** (§5.5) | |
+| AWS | `aws.region` | MediaConnect と CloudWatch のリージョン | ◯ |
+| | (認証) | IAM ユーザーのアクセスキー。標準の環境変数 (`AWS_ACCESS_KEY_ID` など) か AWS のプロファイルで渡す。権限はフローの読み取り・開始・停止と CloudWatch の読み取りだけ | ◯ |
+| SRT のフロー | `flows[].name` | 組の名前 (`/techcheck slot srt` で指す) | ◯ |
+| | `flows[].arn` | フローの ARN。**bot が開始・停止・監視してよいのは、ここに書いたフローだけ** | ◯ |
+| | `flows[].domain` | 配信用のドメイン。配信者にはこれを案内する (IP アドレスは出さない) | ◯ |
+| | `flows[].passphrase` | SRT のパスフレーズ (秘密) | ◯ |
+| | `flows[].pbkeylen` | 鍵長 | 16 |
+| RTMP | `rtmp.domain` | ECS の RTMP サーバの配信用のドメイン | ◯ |
+| | `rtmp.app` / `rtmp.key` | 案内する app とストリームキー (キーは秘密) | ◯ |
+| | `rtmp.statsUrl` | RTMP サーバの統計 API (nginx-rtmp の `/stat` など)。無ければ denpachan の受信状態だけで判定する | |
+| 枠 (初期値) | `slots.srt.flow` | SRT の枠に使う組の名前 | |
+| | `slots.srt.channel` | SRT の枠に使う denpachan のチャンネル番号 | |
+| | `slots.rtmp.channel` | RTMP の枠に使う denpachan のチャンネル番号 | |
+| denpachan | `denpachan.host` / `denpachan.port` | メトリクスの受信口 (§3.2) | `127.0.0.1` / `9100` |
+| | `denpachan.token` | 受信口のトークン (秘密)。loopback 以外に繋ぐときは必須 | |
+| シート | `sheet.spreadsheetId` | 記録するスプレッドシートの ID | ◯ |
+| | `sheet.tabName` | 記録するシートの名前 | `techcheck` |
+| | `sheet.credentialsFile` | Google のサービスアカウントの鍵のファイル (秘密) | ◯ |
+| 案内 | `guide.obsProfile` | 配布した OBS の設定 (プロファイルとシーンコレクション) の名前 | ◯ |
+| | `guide.expected` | 期待する出力 (`width`、`height`、`fps`、`bitrateKbps`、`keyframeSec`)。`DescribeFlowSourceMetadata` の値と比べる | 1920 / 1080 / 60 / 6000 / 2 |
+| latency | `latency.initialMs` | 最初に案内する latency。フローの `MinLatency` はこれ以下にしておく | 120 |
+| | `latency.maxMs` | 上げる上限。これでも直らなければ RTMP へ | 2000 |
+| | `latency.maxRaises` | 上げる回数の上限 | 4 |
+| 判定 | `judge.windowSec` | 計測の窓 (この秒数溜まってから判定) | 60 |
+| | `judge.confirmSec` | 安定の確定のために見る秒数 | 60 |
+| | `judge.multipliers` | ロス率ごとの倍率 (§3.1) | `[[1,3],[3,4],[7,6],[10,8],[100,10]]` |
+| | `judge.minFpsRatio` | 期待の fps に対して、出ていればよい割合 | 0.9 |
+| | `judge.maxJitterMs` | これを超え続けたら RTMP へ | 500 |
+| | `judge.silentDb` / `judge.silentAlertSec` | 無音とみなすレベルと、知らせるまでの秒数 (§6) | −60 / 10 |
+| 時間切れ | `timeouts.claimMin` | 順番が来てから「始める」を押すまで | 5 |
+| | `timeouts.connectRemindMin` / `timeouts.connectAbortMin` | 配信の開始を催促するまで / 中断するまで | 10 / 30 |
+| | `timeouts.raiseRemindMin` | latency の変更を頼んでから催促するまで | 10 |
+| | `timeouts.stepAbortMin` | チェックの手順で進まないときに中断するまで | 20 |
+| | `timeouts.halveWhenQueued` | 待っている人がいるとき、催促と中断の時間を半分にする | true |
+| チェック | `checks` | 音声とその他のチェックの手順 (§7.1)。文言・秒数・閾値・種類 | §7.1 の 6 手順 |
+| 保存 | `db.path` | SQLite のファイル | `./techcheck.db` |
+
+#### 設定ファイルの例
+
+```yaml
+discord:
+  token: ${DISCORD_TOKEN}
+  guildId: "123456789012345678"
+  techcheckChannelId: "223456789012345678"
+  staffRoleId: "323456789012345678"
+  opsChannelId: "423456789012345678"
+notify:
+  webhookUrl: ${TECHCHECK_WEBHOOK_URL}   # 未設定なら送らない
+aws:
+  region: ap-northeast-1
+flows:
+  - name: flow-a
+    arn: arn:aws:mediaconnect:ap-northeast-1:123456789012:flow:...:runner-a
+    domain: srt-a.example.jp
+    passphrase: ${FLOW_A_PASSPHRASE}
+  - name: flow-b
+    arn: arn:aws:mediaconnect:ap-northeast-1:123456789012:flow:...:runner-b
+    domain: srt-b.example.jp
+    passphrase: ${FLOW_B_PASSPHRASE}
+rtmp:
+  domain: rtmp.example.jp
+  app: live
+  key: ${RTMP_KEY}
+slots:
+  srt: { flow: flow-a, channel: 7 }
+  rtmp: { channel: 8 }
+denpachan:
+  host: 127.0.0.1
+  port: 9100
+sheet:
+  spreadsheetId: 1AbC...
+  credentialsFile: ./google-service-account.json
+guide:
+  obsProfile: "RTA 配信用 2026"
+  expected: { width: 1920, height: 1080, fps: 60, bitrateKbps: 6000, keyframeSec: 2 }
+latency:
+  initialMs: 120
+  maxMs: 2000
+```
 
 ### 4.2 コマンドとボタン
 
@@ -261,20 +330,81 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 
 ## 5. テストの流れ
 
+### 5.0 ユースケースの流れ (起動から結果の通知まで)
+
+配信者が配信テストのチャンネルで `/techcheck start` を実行してから、結果が webhook で通知されるまで。うまくいく場合を本線にし、分かれ道は後ろの表にまとめる。各段階の詳しい規則は §5.1〜5.6、§6、§7。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor P as 配信者
+    participant T as Discord (#配信テスト / スレッド)
+    participant B as bot
+    participant M as MediaConnect / CloudWatch
+    participant E as denpachan
+    participant S as シート
+    participant W as webhook
+    P->>T: /techcheck start
+    B->>B: チャンネル ID と SRT の枠の空きを確かめる
+    B->>T: プライベートスレッドを作り、配信者を招待
+    B-->>P: スレッドへのリンク (本人だけに見える返事)
+    B->>M: フローが止まっていれば StartFlow、ドメインが ingest の IP を指すか確かめる
+    B->>E: チャンネルを開始、録画を開始
+    B->>T: 初回の案内 (SRT の URL、OBS の設定、期待する出力)
+    P->>M: OBS で配信を始める (SRT)
+    M-->>B: SourceConnected = 1
+    E-->>B: status = live
+    B->>T: 届きました。そのまま配信を続けてください (静止画)
+    B->>M: RTT・ロス・回復できなかったパケットを 2 分ほど見る
+    B->>T: 映像は問題なく届いています。latency は N ms のままで本番も
+    loop チェックの手順 (6 つ)
+        B->>T: 手順の指示 [始める]
+        P->>T: [始める] を押して指示どおりにする
+        E-->>B: 音声のレベル (1 秒ごと)
+        B->>T: 結果 (次へ / おかしいので直して [やり直す])
+    end
+    B->>T: まとめ [完了]
+    P->>T: [完了] (気になったことを書く)
+    B->>E: 録画を止め、チャンネルを止める
+    B->>M: bot が開始したフローなら StopFlow
+    B->>T: 枠を空け、待ちの列の先頭の人に順番を知らせる
+    B->>S: 1 行書く
+    B->>T: まとめを貼る
+    B->>W: 結果を通知 (URL が設定されていれば)
+    B->>T: ロックしてアーカイブ
 ```
-/techcheck start ──(枠が使用中・止めている)──> 待ちの列に入れる ──(順番が来たら知らせる、5 分以内に「始める」)
-     │                                                                    │
-     ▼ 空きあり  <─────────────────────────────────────────────────────────┘
-5.1 受付: スレッドを作る、フローと denpachan のチャンネルを開始、録画開始
-     ▼
-5.2 初回の案内 ──> 配信の開始を待つ ──(10 分で催促、30 分で中断)
-     ▼ SourceConnected = 1 かつ denpachan が live
-5.3 配信の確認 (少しの間配信させる) ──(だめ)──> §6 latency の調整 / RTMP への案内 ──> 5.3 に戻る
-     ▼ 正しく配信できている
-5.4 音声とその他のチェック (§7)
-     ▼ 配信者が「完了」
-5.5 終わり: 録画とフローを止める、シートに書く、スレッドを閉じる
-```
+
+| # | 場面 | 配信者がすること | bot がすること | 配信者に見えること |
+| --- | --- | --- | --- | --- |
+| 1 | 起動 | 配信テストのチャンネルで `/techcheck start` | チャンネル ID を確かめる。SRT の枠が空いていて、枠のチャンネル・フローが使える状態かを確かめる (§5.1) | — |
+| 2 | スレッド | — | `配信テスト YYYY-MM-DD HH:MM <表示名>` のプライベートスレッドを作り、配信者を招待する。運営への通知のチャンネルに「始まった」とリンクを流す | 本人だけに見える返事で、スレッドへのリンク |
+| 3 | 準備 | — | フローが止まっていれば `StartFlow` (開始したことを覚える)。組のドメインがフローの ingest の IP を指すかを確かめる。denpachan のチャンネルと録画を始める | スレッドに「準備しています」 |
+| 4 | 初回の案内 | OBS に URL を入れ、配布した設定になっているかを確かめ、配信を始める | 案内を貼る (§5.2) | `srt://<組のドメイン>:<port>?…` の URL、OBS の設定、期待する出力、[配信を始めた] [中断する] |
+| 5 | 配信の検出 | — | `SourceConnected = 1` と denpachan の `live` を待つ。解像度・fps・音声の有無を期待と比べる | 「届きました。そのまま配信を続けてください」と静止画 |
+| 6 | 映像の判定 | そのまま 2 分ほど配信を続ける | 計測の 60 秒と確定の 60 秒で判定する (§6) | 「映像は問題なく届いています。latency は N ms のままで本番もお願いします」 |
+| 7 | 音声とその他のチェック | 手順ごとに [始める] を押し、ゲーム音を鳴らす・静かにする・しゃべる・PC の音を鳴らす・画面を確かめる・配信を始め直す | 手順ごとに録画の区間を記録し、音声のレベルで参考の判定をする (§7) | 手順の指示、結果、おかしいときは直し方と [やり直す] |
+| 8 | 完了 | [完了] を押し、気になったことがあれば書く | — | 書く欄 (任意) |
+| 9 | 後片付け | — | 録画とチャンネルを止める。bot が開始したフローだけ `StopFlow`。枠を空け、待ちの列の先頭の人に知らせる | — |
+| 10 | 記録 | OBS の配信を止める | シートに 1 行書き、スレッドにまとめを貼る (§8) | まとめ (確定した latency、プロトコル、映像の数字、チェックの結果) と「OBS の配信を止めてください。おつかれさまでした」 |
+| 11 | 結果の通知 | — | webhook の URL が設定されていれば、結果を 1 つの embed で送る (§5.5)。未設定なら送らない | — |
+| 12 | 閉じる | — | スレッドをロックしてアーカイブする (消さない。運営はあとから見られる) | スレッドが閉じる |
+| 後日 | 音声の判定 | — | — (運営がシートの録画の区間を聞き、`/techcheck review` で書く) | — |
+
+分かれ道:
+
+| どこで | 何が起きたら | どうなる |
+| --- | --- | --- |
+| 1 | SRT の枠が使われている、運営が止めている | 待ちの列に入れ、何番目かを返す。順番が来たらメンションと DM で知らせ、[始める] が 5 分以内に押されたら 2 へ |
+| 1 | すでにテスト中・待ちの列にいる | そのスレッドへのリンクか、今の順番を返す |
+| 1 | 配信テストのチャンネル以外で実行した | 配信テストのチャンネルを案内するだけ |
+| 3 | 枠のチャンネルが使えない、ドメインが別のフローを指している | 始めずに運営に知らせる。配信者には「準備に問題があります。運営が確認します」(列の先頭のまま待つ) |
+| 5 | 10 分経っても届かない | 一度だけ催促する (URL、パスフレーズ、ファイアウォール)。30 分で中断 |
+| 5 | MediaConnect には届くのに denpachan が `live` にならない | 運営側の問題として運営に知らせる。配信者には「運営側で確認しています」 |
+| 6 | 乱れる (`tight` / `insufficient`) | latency を N にして始め直すよう頼む ([設定した])。繋ぎ直したら 5 へ戻る。最大 4 回、上限 2000 ms |
+| 6 | 上げても直らない、ジッタが大きい、デコードが安定しない | RTMP の枠が空いていれば、`rtmp://<RTMP サーバのドメイン>/<app>` とキーを案内する ([設定した])。RTMP で安定したら 7 へ。SRT の枠は空けて次の人に知らせる |
+| 6 | RTMP の枠も使えない | 運営に知らせ、「運営から連絡します」と伝えて 7 へ (録画は残る) |
+| 7 | 参考の判定でおかしい (マイクが載る、ゲーム音が来ないなど) | 直し方を伝えて [やり直す]。直さずに進めた手順は、まとめと通知に印を付ける |
+| どこでも | 配信者が [中断する]、運営が `/techcheck cancel`、催促しても進まない | 9〜12 と同じ手順で終える。記録と通知は「中断」と理由 |
 
 ### 5.1 受付 (`/techcheck start`)
 
