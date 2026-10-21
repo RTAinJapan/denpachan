@@ -69,7 +69,7 @@ bot が使う API とメトリクス。すべて AWS SDK (boto3 / AWS SDK for Ja
 
 | 用途 | API / メトリクス | 使い方 |
 | --- | --- | --- |
-| フローの状態、source の設定 (ingest の IP とポート、`MinLatency`、ホワイトリスト) | `DescribeFlow` | テストの開始時に、案内するポート、組にしたドメインがこのフローの ingest の IP を指していること (§5.1)、`MinLatency` が低いまま (OBS の値が効く状態) であることを確かめる |
+| フローの状態、source の設定 (ingest の IP とポート、`MinLatency`) | `DescribeFlow` | テストの開始時に、案内するポート、組にしたドメインがこのフローの ingest の IP を指していること (§5.1)、`MinLatency` が低いまま (OBS の値が効く状態) であることを確かめる |
 | フローの開始・停止 | `StartFlow` / `StopFlow` | テストの開始時にフローが止まっていれば開始し、終わったら止める (動いている間は課金されるので)。**止めるのは bot が開始したフローだけ** (もともと動いていたフローは止めない) |
 | 接続しているか | CloudWatch `SourceConnected` (1 / 0)、`SourceDisconnections`、`SourceUpTime` | 繋がった・切れた・切れた回数 |
 | RTT | `SourceRoundTripTime` (ms) | 推奨値の計算 (窓の最大) |
@@ -424,7 +424,6 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 - **同時に 1 人**: SRT の枠が 1 つなので、テストは 1 人ずつ。1 人 10〜15 分なので、1 時間に 4〜5 人。RTMP に移った人がいる間は、SRT の枠で次の人が始められる。待ちの列の長さは `/test slot` で見える。
 - **イベント中のテスト**: 本番のチャンネルと同じ denpachan で受けるので、本番を触らない仕組みを二重にする (bot は設定された枠のチャンネルしか操作しない。engine は `testSlot` の印の無いチャンネルへの操作を断る)。フローも、bot が止めるのは自分が開始したものだけ。テストのチャンネルのデコードの分だけ PC の負荷が増えるので、状態バーの CPU・GPU を見ておく。
 - **フローの課金**: 動いている間は課金される。bot はテストの間だけ `StartFlow` / `StopFlow` する (止まっていたフローを使うときだけ)。
-- **配信者のホワイトリスト**: フローの source の `WhitelistCidr` に配信者の IP が要る。`0.0.0.0/0` にしてパスフレーズで守るか、配信者に IP を申告してもらって運営が入れるか。前者が簡単 (パスフレーズは必ず付ける)。bot はフローの設定を変えない。
 - **パスフレーズ**: 案内 (スレッド) が見えるのはロールで絞ったメンバーだけなので、スレッドに残ってよい。テストのあとに変える必要はない。
 - **RTMP の統計**: ECS の RTMP サーバに統計の API があるかで、RTMP の判定の細かさが変わる。無くても denpachan の pull の受信状態で「映るか・安定か」は判定できる。
 - **OBS 側の latency**: bot からは見えない。SRT の latency は配信者 ↔ MediaConnect の握手で決まり、denpachan は別の接続 (MediaConnect ↔ denpachan) の値しか持たない。MediaConnect の `DescribeFlow` も設定値 (`MinLatency`) を返すだけ。CloudWatch の `SourceLatency` が握手の結果を出している可能性はあるが、ドキュメントでは確定できないので、**OBS の `latency=` を 500 と 1000 にして `SourceLatency` が追随するかを一度確かめる**。追随するなら、申告と合わないときに確かめてもらう材料にする。追随しなければ、案内した値と「設定した」の申告、繋ぎ直しの検出、取りこぼしの減り方で判定する。配信者が別の値を入れていても bot には分からないので、確定した値はシートとスレッドに残し、本番前に配信者に見てもらう。bot が値を確実に知る必要があるなら、`MinLatency` を bot が上げる方式 (大きい方が効く) に戻す。
