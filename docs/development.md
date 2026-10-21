@@ -57,6 +57,7 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 | `engine_test.sh` | worker の監視・再起動、engine を落としたときの引き継ぎ、設定の検証 |
 | `rtmp_test.sh` | RTMP の push (キーの振り分け、二重 publish、rtmpd の再起動) と pull |
 | `hold_test.sh` | 途絶えたときに最後の映像を保持する、NO SIGNAL の出し方 |
+| `burst_test.sh` | 送出側が短く止まってからまとめて送ったときに、増えた遅延が数秒で戻ること (VB-Audio Virtual Cable を使う) |
 | `record_test.sh` | 録画 (パススルー / GPU / CPU、区切り、再接続時の継続、ファイル名) |
 | `ffmpeg_missing_test.sh` | FFmpeg が無いときの動きと、置いたあとの自動復帰 |
 | `package_test.sh` | 配布用の zip を展開して起動 (仮想カメラの登録、DirectShow での取り込み) |

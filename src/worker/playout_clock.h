@@ -10,7 +10,11 @@
 //   1 秒ごとに、余裕の最も小さかった側が目標 (映像: 再生バッファ + 揺れの備え、音声: 揺れの備え) になるように動かす。
 // - 時間軸が動くと、engine は鳴らす位置を合わせ直す。大きく動くと音が途切れる (フェードして合わせ直す) ので、
 //   鳴り始めてからは 1 秒に 1 ms までしか動かさない (engine はサンプルの重複・間引きで追える)。
-//   一度に動かすのは、時間軸を作った直後の最初の調整と、遅れて届いたときだけ。
+//   一度に動かすのは、時間軸を作った直後の最初の調整と、遅れて届いたとき、遅延の余りが続いたときだけ。
+// - 遅延の余り: 短い途切れのあとにまとめて届くと、途切れた長さの分だけ遅らされ、揺れの備えを超えた分が余る。
+//   1 秒に 1 ms では何分も戻らず、その間は映像がキュー (24 フレーム) に収まらずコマ送りになる。
+//   余りが 3 フレームを超えたまま kCatchUpWindows 回続いたら一度に戻す (音声は 1 回合わせ直しになる)。
+//   1 回だけの余りで戻さないのは、遅れて届いた直後の窓はまとめ届きの残りで余裕が大きく見えることがあるため。
 // - 音声が遅れて届いた (余裕が負) ときは、届く前に鳴らすことはできないので即座に遅らせる。
 //   映像はその分待たされる (A/V 同期を保つため)。映像が 3 フレームを超えて遅れたときも一度に遅らせる。
 // - 揺れの備え (headroom): 遅れて届くたびに、その遅れの分だけ増やす (同じ大きさの揺れが次は間に合う)。
@@ -113,6 +117,7 @@ private:
         anchor_qpc_ = arrival_qpc + buffer_;
         ++generation_;
         settled_ = false;
+        excess_windows_ = 0;
         // 接続直後はストリーム解析中に溜まったフレームがまとめて届く (到着が実際より遅く見える)。
         // その間の報告は使わず、落ち着いてから最初の窓を始める。
         window_start_qpc_ = qpc_now() + qpc_from_ms(kSettleMs);
@@ -133,9 +138,15 @@ private:
             const int64_t jump = qpc_from_us(frame_us_ * 3);
             const int64_t limit = qpc_from_ms(kMaxStepMs);
             int64_t step = std::clamp(error, -limit, limit);
+            excess_windows_ = error > jump ? excess_windows_ + 1 : 0;
             if (!settled_) {
                 // 時間軸を作った直後 (まだ鳴らしていない): 大きなずれは一度に合わせる
                 if (std::abs(error) > jump) step = error;
+            } else if (excess_windows_ >= kCatchUpWindows) {
+                // 遅延の余りが続いている (短い途切れのあとのまとめ届きなど): 一度に戻す
+                step = error;
+                excess_windows_ = 0;
+                spdlog::info("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(error) / 1000.0);
             } else if (std::abs(error) <= qpc_from_ms(kDeadbandMs)) {
                 // 1 秒ごとの最小の揺れには反応しない (反応すると時間軸が 1 秒に 1 ms ずつ行き来し続け、
                 // engine がそれを追うサンプルの重複・間引きが絶えない)
@@ -170,8 +181,10 @@ private:
     }
 
     static constexpr int64_t kSettleMs = 500;
-    static constexpr int64_t kMaxStepMs = 1;            // 鳴り始めてから 1 回 (1 秒) に動かす上限
-    static constexpr int64_t kDeadbandMs = 2;           // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
+    static constexpr int64_t kMaxStepMs = 1;   // 鳴り始めてから 1 回 (1 秒) に動かす上限
+    static constexpr int64_t kDeadbandMs = 2;  // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
+    static constexpr int kCatchUpWindows =
+        2;  // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す          // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す
     static constexpr int64_t kAudioHeadroomMinMs = 10;  // 音声の揺れの備え (最初の値と下限)
     static constexpr int64_t kAudioHeadroomMaxMs = 200;
     static constexpr int64_t kVideoHeadroomMaxMs = 200;
@@ -193,6 +206,7 @@ private:
     int64_t min_video_slack_ = LLONG_MAX;
     int64_t min_audio_slack_ = LLONG_MAX;
     int64_t frame_us_ = 16'667;
+    int excess_windows_ = 0;  // 遅延の余りが 3 フレームを超えた窓が続いた数
     uint64_t audio_late_count_ = 0;
 
     // 揺れの備え (接続をまたいで覚えておく: 同じ送出元の揺れ方は変わらないことが多い)
