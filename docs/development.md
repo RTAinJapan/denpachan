@@ -13,7 +13,7 @@ Visual Studio 2026 (C++ によるデスクトップ開発)、.NET 10 SDK、vcpkg
 - ビルドに使う FFmpeg のヘッダは、初回の configure で FFmpeg 9.0.2 の shared 版を `out/deps/` に取ってくる (配布物には入れない)。
 - FFmpeg の DLL は出力に入らないので、開発中は `out/deps/ffmpeg-9.0.2-full_build-shared/bin` を PATH に足して動かす。
 - 配布用の zip は `tools/package.ps1` で作る (`out/dist/`)。
-- GitHub Actions でも同じようにビルドし、配布用の zip を artifact にする (`.github/workflows/build.yml`)。push・PR のたびに動く。
+- GitHub Actions でも同じようにビルドし、配布用の zip を artifact にする (`.github/workflows/build.yml`)。PR と main への push のたびに動く (PR のブランチへの push では、PR の run だけが動く)。
 - 好きなブランチを手動でビルドするときは、GitHub の Actions → build → 「Run workflow」でブランチを選ぶ。zip は実行結果の artifact から取れる。
 
 ## リリース
