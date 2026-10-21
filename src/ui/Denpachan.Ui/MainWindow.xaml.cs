@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Denpachan.Ui.ViewModels;
 
 namespace Denpachan.Ui;
@@ -35,7 +36,9 @@ public partial class MainWindow : Window
         _closeConfirmed = true;
         IsEnabled = false;
         await ViewModel.StopEngineAsync();
-        Close();
+        // engine に繋がっていないと StopEngineAsync はすぐ終わり、まだ Closing の中にいる。ここで Close() を呼ぶと
+        // WPF が例外を出し、ウィンドウが操作できないまま残るので、Closing を抜けてから閉じる
+        await Dispatcher.InvokeAsync(Close, DispatcherPriority.Background);
     }
 
     private void Tile_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
