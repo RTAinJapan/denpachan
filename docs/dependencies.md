@@ -88,9 +88,10 @@ ASIO SDK は使わない (denpachan-asio-driver の側で使う。§2.1)。
 
 ### 3.2 CI (GitHub Actions)
 
-`.github/workflows/build.yml`。push と pull request でビルドする。
+`.github/workflows/build.yml`。pull request、main への push、タグ、手動 (Run workflow) でビルドする。PR のブランチへの push では動かない (pull request の run と二重になるため)。同じブランチに続けて push すると、前の run は取り消す。
 
 - vcpkg を baseline と同じコミットで取り、`build.ps1` でビルドする。vcpkg のバイナリと、取った FFmpeg は Actions のキャッシュに入れる。
+  - vcpkg のキャッシュの key には runner image の版を入れる。image が更新されるとコンパイラ環境のハッシュが変わり、キャッシュの中身が合わなくなって openssl と libsrt をビルドし直す (8 分前後)。版を key に入れないと、その archives が保存されず、以後ずっとビルドし直しになる。image の更新のたびに 1 回だけ遅くなるのは仕様。
 - ビルド後に確かめること: 出力に FFmpeg の DLL が無い、必要なファイルとライセンス文がある、FFmpeg が無い状態で worker は専用の終了コード (0x0FF0) で終わり、engine は起動して「FFmpeg が見つかりません」をログに出す。
 - artifact: `denpachan-win64` (配布物。FFmpeg を含まない) と `denpachan-win64-symbols` (PDB)。
 

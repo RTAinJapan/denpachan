@@ -7,14 +7,21 @@
 # - タグ vX.Y.Z (プレリリースは vX.Y.Z-rc.1 など) を push すると、同じビルドで GitHub Release を作る (release ジョブ)。
 #   タグの版は CMakeLists.txt の project(... VERSION X.Y.Z) と合っていなければならない (docs/development.md の「リリース」)
 # - 手動: Actions の「Run workflow」でブランチを選んで実行できる (workflow が既定ブランチにあるときに出る)
+# - 動くのは PR、main への push、タグ、手動のとき。PR のブランチへの push では動かない (pull_request と二重に動いて、
+#   並列数の枠を食うだけなので)。PR にしていないブランチは手動で動かす
 name: build
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
+# 同じブランチ / PR に続けて push したら、前の run は取り消す (タグは取り消さない)
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 permissions:
   contents: read
@@ -66,12 +73,25 @@ jobs:
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE, $env:VCPKG_DOWNLOADS | Out-Null
 
+      # vcpkg のバイナリキャッシュは、コンパイラ環境のハッシュ (ABI hash) で中身を探す。runner image が更新されると
+      # ハッシュが変わり、復元した archives に合うものが無くて openssl と libsrt をビルドし直す (8 分前後)。
+      # key に image の版を入れないと、key は「当たり」のままで、ビルドし直した archives が保存されず、以後ずっと
+      # ビルドし直しになる。image の版を key に入れ、更新のときだけ 1 回ビルドし直して保存する
+      - name: Runner image
+        id: image
+        shell: pwsh
+        run: |
+          "version=$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          Write-Host "runner image: $env:ImageOS $env:ImageVersion"
+
       - name: Cache vcpkg binaries
         uses: actions/cache@v6
         with:
           path: vcpkg-cache/archives
-          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-
+          key: vcpkg-${{ runner.os }}-${{ steps.image.outputs.version }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ steps.image.outputs.version }}-
+            vcpkg-${{ runner.os }}-
 
       - name: Cache FFmpeg (build only)
         uses: actions/cache@v6
