@@ -37,13 +37,13 @@ void AsioOutput::start() {
         static_cast<AsioOutput*>(user)->on_render(mix, frames, first_hear_qpc);
     };
     callbacks_.log = [](void* user, int level, const char* message) { static_cast<AsioOutput*>(user)->on_log(level, message); };
-    output_ = plugin.open(clsid.c_str(), kPreferredRate, &callbacks_);
+    output_ = open_asio_output(clsid, kPreferredRate, &callbacks_);
 }
 
 void AsioOutput::stop() {
     if (!output_) return;
     stopping_ = true;
-    asio_plugin().close(output_);  // 戻るまでにコールバックは止まる
+    close_asio_output(output_);  // 戻るまでにコールバックは止まる
     output_ = nullptr;
 }
 

@@ -38,4 +38,10 @@ struct AsioDriverProbe {
 };
 std::optional<AsioDriverProbe> probe_asio_driver(const std::wstring& clsid);
 
+// 出力を開く / 閉じる (DLL が読み込めていなければ open は nullptr)。
+// probe_asio_driver とは 1 つのロックで順に呼ぶ: ASIO ドライバは同じプロセスで 2 つ目のインスタンスを嫌うものが多く、
+// 一覧を作る (画面・denpachan-ctl。engine のロックの外) のと出力の開け閉め (apply) が同時に走らないようにする
+denpachan_asio_output* open_asio_output(const std::wstring& clsid, int preferred_sample_rate, const denpachan_asio_callbacks* callbacks);
+void close_asio_output(denpachan_asio_output* output);
+
 }  // namespace denpachan::engine
