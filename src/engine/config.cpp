@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <dpapi.h>
 #include <wincrypt.h>
+#include <spdlog/spdlog.h>
 
 #include <cctype>
 #include <fstream>
@@ -277,6 +278,32 @@ bool stop_unused_channels(Config& c) {
     return stopped;
 }
 
+void make_room_for_new_channels(Config& c, int old_count) {
+    const int count = c.general.channel_count;
+    auto listen_key = [](const ChannelConfig& ch) { return std::pair{ch.source.host, ch.source.port}; };
+    auto is_listener = [](const ChannelConfig& ch) { return ch.source.protocol == "srt" && ch.source.mode == "listener"; };
+    for (int id = old_count + 1; id <= count; ++id) {
+        auto& ch = c.channels[size_t(id - 1)];
+        std::set<std::pair<std::string, int>> ports;
+        std::set<int> vcams;
+        for (const auto& other : c.channels) {
+            if (other.id == id || other.id > count) continue;
+            if (is_listener(other)) ports.insert(listen_key(other));
+            if (other.vcam != 0) vcams.insert(other.vcam);
+        }
+        if (is_listener(ch) && ports.count(listen_key(ch))) {
+            int port = 9001;
+            while (ports.count({ch.source.host, port})) ++port;
+            spdlog::info("ch{}: port {} is used by another channel; changed to {}", id, ch.source.port, port);
+            ch.source.port = port;
+        }
+        if (ch.vcam != 0 && vcams.count(ch.vcam)) {
+            spdlog::info("ch{}: vcam {} is used by another channel; changed to none", id, ch.vcam);
+            ch.vcam = 0;
+        }
+    }
+}
+
 std::optional<std::string> validate(const Config& c) {
     auto in = [](int v, int lo, int hi) { return v >= lo && v <= hi; };
     if (!in(c.general.channel_count, 1, kMaxChannels)) return "channelCount must be 1-" + std::to_string(kMaxChannels);
@@ -300,8 +327,12 @@ std::optional<std::string> validate(const Config& c) {
     for (const auto& ch : c.channels) {
         const std::string p = "ch" + std::to_string(ch.id) + ": ";
         const auto& s = ch.source;
+        // 使うチャンネル数より後ろのチャンネルは、ポート・カメラ・キーの重複を調べない。画面から直せないうえ、
+        // 0.1.x (4ch) の設定で ch1〜4 が 9005〜9008 を使っていると、既定値の ch5〜8 とぶつかって設定ごと捨てられるため。
+        // 使うチャンネル数を増やしたときは make_room_for_new_channels が重複を外してから調べる
+        const bool in_use = ch.id <= c.general.channel_count;
         if (!in(ch.vcam, 0, kMaxChannels)) return p + "vcam must be 0-" + std::to_string(kMaxChannels);
-        if (ch.vcam != 0 && !vcams.insert(ch.vcam).second) return p + "vcam " + std::to_string(ch.vcam) + " is already used";
+        if (in_use && ch.vcam != 0 && !vcams.insert(ch.vcam).second) return p + "vcam " + std::to_string(ch.vcam) + " is already used";
         if (!in(ch.playout_buffer_ms, 0, 2000)) return p + "playoutBufferMs must be 0-2000";
         if (!in(ch.audio.start_channel, 1, 64)) return p + "audio.startChannel must be 1-64";
         if (ch.audio.mode != "shared" && ch.audio.mode != "exclusive") return p + "audio.mode must be shared or exclusive";
@@ -312,7 +343,7 @@ std::optional<std::string> validate(const Config& c) {
             if (s.mode == "push") {
                 if (!valid_name(s.app, 63)) return p + "source.app must be 1-63 characters of [A-Za-z0-9-_.]";
                 if (!valid_name(s.key, 127)) return p + "source.key must be 1-127 characters of [A-Za-z0-9-_.]";
-                if (!rtmp_keys.insert({s.app, s.key}).second) return p + "the same app/key is used by another channel";
+                if (in_use && !rtmp_keys.insert({s.app, s.key}).second) return p + "the same app/key is used by another channel";
             } else if (s.mode == "pull") {
                 if (s.url.rfind("rtmp://", 0) != 0 && s.url.rfind("rtmps://", 0) != 0) {
                     return p + "source.url must start with rtmp:// or rtmps://";
@@ -333,7 +364,7 @@ std::optional<std::string> validate(const Config& c) {
         if (s.pbkeylen != 0 && s.pbkeylen != 16 && s.pbkeylen != 24 && s.pbkeylen != 32) {
             return p + "source.pbkeylen must be 0, 16, 24 or 32";
         }
-        if (s.mode == "listener" && !listen_ports.insert({s.host, s.port}).second) {
+        if (in_use && s.mode == "listener" && !listen_ports.insert({s.host, s.port}).second) {
             return p + "port " + std::to_string(s.port) + " is already used";
         }
     }
