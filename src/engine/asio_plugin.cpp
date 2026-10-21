@@ -14,6 +14,9 @@ namespace {
 
 constexpr wchar_t kDllName[] = L"denpachan-asio-driver.dll";
 
+// ドライバを触る呼び出し (probe / open / close) を順にする (asio_plugin.h の open_asio_output)
+std::mutex driver_mutex;
+
 std::wstring exe_dir() {
     wchar_t buf[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
@@ -73,8 +76,21 @@ std::optional<AsioDriverProbe> probe_asio_driver(const std::wstring& clsid) {
     const auto& plugin = asio_plugin();
     if (!plugin) return std::nullopt;
     denpachan_asio_probe probe{};
+    std::lock_guard lk(driver_mutex);
     if (!plugin.probe_driver(clsid.c_str(), &probe)) return std::nullopt;
     return AsioDriverProbe{probe.channels, probe.sample_rate};
+}
+
+denpachan_asio_output* open_asio_output(const std::wstring& clsid, int preferred_sample_rate, const denpachan_asio_callbacks* callbacks) {
+    const auto& plugin = asio_plugin();
+    if (!plugin) return nullptr;
+    std::lock_guard lk(driver_mutex);
+    return plugin.open(clsid.c_str(), preferred_sample_rate, callbacks);
+}
+
+void close_asio_output(denpachan_asio_output* output) {
+    std::lock_guard lk(driver_mutex);
+    asio_plugin().close(output);
 }
 
 }  // namespace denpachan::engine

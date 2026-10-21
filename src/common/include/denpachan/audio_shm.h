@@ -86,7 +86,9 @@ inline bool read_time_map(const Header* h, uint64_t& frame, int64_t& due_qpc) {
 }
 
 // 共有メモリを開く (なければ作って初期化する)。どちらの側から先に開いてもよい。
-inline Header* open_shared(SharedMapping& mapping, int ch) {
+// 相手が作った直後で初期化が終わっていなければ、最大 500 ms 待つ。wait = false なら待たずに失敗を返す
+// (音声の描画コールバックから呼ぶとき。待つと音が途切れる。次の呼び出しでまた試せばよい)
+inline Header* open_shared(SharedMapping& mapping, int ch, bool wait = true) {
     bool created = false;
     if (!mapping.open_or_create(mapping_name(ch), kMappingBytes, created)) return nullptr;
     auto* h = static_cast<Header*>(mapping.data());
@@ -97,7 +99,7 @@ inline Header* open_shared(SharedMapping& mapping, int ch) {
         h->capacity_frames = kCapacityFrames;
         h->magic.store(kMagic, std::memory_order_release);
     } else {
-        for (int i = 0; i < 100 && h->magic.load(std::memory_order_acquire) != kMagic; ++i) Sleep(5);
+        for (int i = 0; wait && i < 100 && h->magic.load(std::memory_order_acquire) != kMagic; ++i) Sleep(5);
         if (h->magic.load(std::memory_order_acquire) != kMagic) {
             mapping.close();
             return nullptr;

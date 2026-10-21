@@ -41,7 +41,9 @@ ChannelSource::ChannelSource(const RouteOptions& options, uint32_t device_rate, 
       passthrough_(device_rate == kSampleRate) {
     stats_.passthrough = passthrough_;
     mute_ = options.mute;
+    // 描画を始める前に済ませておく (描画コールバックでの最初の 1 回をなくす)
     ensure_swr();
+    ensure_open();
 }
 
 ChannelSource::~ChannelSource() {
@@ -67,7 +69,8 @@ bool ChannelSource::ensure_open() {
     const int64_t now = qpc_now();
     if (last_open_attempt_ != 0 && now - last_open_attempt_ < qpc_from_ms(1000)) return false;
     last_open_attempt_ = now;
-    header_ = open_shared(mapping_, options_.ch);
+    // 描画コールバックの中から呼ぶので、worker が作った直後でも待たない (1 秒後にまた試す)
+    header_ = open_shared(mapping_, options_.ch, false);
     if (header_) ring_ = ring_data(mapping_.data());
     return header_ != nullptr;
 }

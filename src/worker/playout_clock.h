@@ -28,7 +28,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "denpachan/win_util.h"
 
@@ -59,16 +61,17 @@ public:
 
     // 映像フレームの余裕 (出すべき時刻 - 到着時刻) を報告する
     void report_video(int64_t slack_qpc, int64_t frame_us) {
-        std::lock_guard lk(mutex_);
+        std::unique_lock lk(mutex_);
         frame_us_ = frame_us;
         if (qpc_now() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
         min_video_slack_ = std::min(min_video_slack_, slack_qpc);
         adjust_if_due_locked();
+        flush_log(lk);
     }
 
     // 音声チャンクの余裕 (鳴らすべき時刻から出力遅延を引いたもの - 到着時刻) を報告する
     void report_audio(int64_t slack_qpc) {
-        std::lock_guard lk(mutex_);
+        std::unique_lock lk(mutex_);
         const int64_t now = qpc_now();
         last_audio_report_qpc_ = now;
         if (now < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
@@ -76,14 +79,14 @@ public:
             // 遅れて届いた: 即座に遅らせ、同じ大きさの揺れが次は間に合うよう備えを増やす。
             // このかたまりは窓の最小には入れない (入れると、増やした備えとの差で次の調整がもう一度動かす)
             anchor_qpc_ -= slack_qpc;
-            ++audio_late_count_;
             grow_headroom_locked(audio_headroom_, -slack_qpc, kAudioHeadroomMaxMs, now, last_audio_late_qpc_);
-            spdlog::info("playout: audio arrived {:.1f} ms late; delay increased, audio headroom {:.0f} ms", qpc_to_us(-slack_qpc) / 1000.0,
-                         qpc_to_us(audio_headroom_) / 1000.0);
+            log_.push_back(fmt::format("playout: audio arrived {:.1f} ms late; delay increased, audio headroom {:.0f} ms",
+                                       qpc_to_us(-slack_qpc) / 1000.0, qpc_to_us(audio_headroom_) / 1000.0));
         } else {
             min_audio_slack_ = std::min(min_audio_slack_, slack_qpc);
         }
         adjust_if_due_locked();
+        flush_log(lk);
     }
 
     // 取り直しのたびに増える
@@ -109,14 +112,19 @@ public:
         return last_audio_report_qpc_ != 0 && qpc_now() - last_audio_report_qpc_ < qpc;
     }
 
-    uint64_t take_audio_late_count() {
-        std::lock_guard lk(mutex_);
-        return std::exchange(audio_late_count_, 0);
-    }
-
     int64_t buffer_qpc() const { return buffer_; }
 
 private:
+    // 溜めたログをロックを外してから書く (ログはファイルに書くので、ロックを持ったまま書くと、出力スレッドと
+    // 音声のスレッドがその間待たされる)
+    void flush_log(std::unique_lock<std::mutex>& lk) {
+        if (log_.empty()) return;
+        std::vector<std::string> lines;
+        lines.swap(log_);
+        lk.unlock();
+        for (const auto& line : lines) spdlog::info("{}", line);
+    }
+
     void anchor_locked(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
         anchored_ = true;
         session_ = session;
@@ -153,7 +161,7 @@ private:
                 // 遅延の余りが続いている (短い途切れのあとのまとめ届きなど): 一度に戻す
                 step = error;
                 excess_windows_ = 0;
-                spdlog::info("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(error) / 1000.0);
+                log_.push_back(fmt::format("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(error) / 1000.0));
             } else if (std::abs(error) <= qpc_from_ms(kDeadbandMs)) {
                 // 1 秒ごとの最小の揺れには反応しない (反応すると時間軸が 1 秒に 1 ms ずつ行き来し続け、
                 // engine がそれを追うサンプルの重複・間引きが絶えない)
@@ -162,8 +170,8 @@ private:
                 // 映像が 3 フレームを超えて遅れた: 一度に遅らせ、備えを増やす (音声は合わせ直しになる)
                 step = video_error;
                 grow_headroom_locked(video_headroom_, -video_error, kVideoHeadroomMaxMs, now, last_video_late_qpc_);
-                spdlog::info("playout: video arrived {:.1f} ms late; delay increased, video headroom {:.0f} ms",
-                             qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0);
+                log_.push_back(fmt::format("playout: video arrived {:.1f} ms late; delay increased, video headroom {:.0f} ms",
+                                           qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
             }
             anchor_qpc_ -= step;
             settled_ = true;
@@ -213,8 +221,8 @@ private:
     int64_t min_video_slack_ = LLONG_MAX;
     int64_t min_audio_slack_ = LLONG_MAX;
     int64_t frame_us_ = 16'667;
-    int excess_windows_ = 0;  // 遅延の余りが 3 フレームを超えた窓が続いた数
-    uint64_t audio_late_count_ = 0;
+    int excess_windows_ = 0;        // 遅延の余りが 3 フレームを超えた窓が続いた数
+    std::vector<std::string> log_;  // ロックを外してから書くログ (flush_log)
     int64_t last_audio_report_qpc_ = 0;
 
     // 揺れの備え (接続をまたいで覚えておく: 同じ送出元の揺れ方は変わらないことが多い)

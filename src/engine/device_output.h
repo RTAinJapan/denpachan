@@ -58,7 +58,9 @@ private:
     Microsoft::WRL::ComPtr<IAudioClient> client_;
     Microsoft::WRL::ComPtr<IAudioRenderClient> render_;
     UniqueHandle event_;
-    int open_failures_ = 0;                // 続けて開けなかった回数 (ログを毎秒出さないため)
+    int open_failures_ = 0;  // 続けて開けなかった回数 (ログを毎秒出さないため)
+    int quick_losses_ = 0;   // 開いてすぐ (kQuickLossMs 以内) 失ったのが続いた回数 (開き直しの間を延ばす)
+    static constexpr int64_t kQuickLossMs = 5000;
     bool exclusive_ = false;               // いま排他モードで開いているか
     bool exclusive_failed_ = false;        // 排他モードの周期に追いつけなかった (以後は共有モード)
     REFERENCE_TIME exclusive_period_ = 0;  // 0 = デバイスの最小周期
