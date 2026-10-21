@@ -4,6 +4,8 @@
 # 1. publish せずにデータを送り続ける接続は、1 MB を超えたら切られる
 # 2. publish せずに小さなメッセージを送り続ける接続は、30 秒で切られる
 # 3. publish の途中で rtmpd が落ちても、worker が「接続中」のまま残らない (起動し直した rtmpd が残ったセッションを終わらせる)
+# 4. publish の途中で rtmpd が止まって (ハートビートが切れて) 再開したら、worker も同じ publish を読み直す
+#    (3 より先に行う)
 # 試験用の設定ファイル (out/check/rtmpd-limits-config.json) を使う。
 #
 #   tools/testsrc/rtmpd_limits_test.sh
@@ -45,6 +47,23 @@ echo "  $R2"
 SEC=$(grep -oE "[0-9.]+ s$" <<<"$R2" | grep -oE "^[0-9]+")
 grep -q "closed by the server" <<<"$R2" && [ "${SEC:-99}" -ge 28 ] && [ "${SEC:-99}" -le 36 ]
 check "2. publish しないまま 30 秒経つと切られる (got ${SEC:-?} s)" $?
+
+# 4. publish の途中で rtmpd を 4 秒止める (ハートビートが 3 秒を超えて止まる)。再開したら worker も読み直す
+ffmpeg -hide_banner -loglevel error -re -f lavfi -i "testsrc2=size=1280x720:rate=30" -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
+    -c:v libx264 -preset veryfast -tune zerolatency -b:v 2M -g 30 -bf 0 -pix_fmt yuv420p -c:a aac -b:a 128k -t 20 \
+    -f flv "rtmp://127.0.0.1:1935/live/limkey" >/dev/null 2>&1 &
+SENDER=$!
+sleep 5
+RTMPD_PID=$(tasklist //FI "IMAGENAME eq denpachan-rtmpd.exe" //FO CSV //NH | head -1 | cut -d, -f2 | tr -d '"\r')
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$ROOT/tools/testsrc/suspend.ps1")" -ProcessId "$RTMPD_PID" -Milliseconds 4000
+sleep 6
+LINE=$("$CTL" summary | head -1)
+echo "  $LINE"
+STATE=$(grep -oE "video [a-z]+ [a-z]+" <<<"$LINE" | awk '{print $2}')
+[ "$STATE" = live ]
+check "4. rtmpd が 4 秒止まって再開したら、映像はまた受信中になる (got ${STATE:-?})" $?
+wait "$SENDER" 2>/dev/null
+sleep 3
 
 # 3. publish の途中で rtmpd を落とす (engine が起動し直す)。送出側は落ちたら終わる
 ffmpeg -hide_banner -loglevel error -re -f lavfi -i "testsrc2=size=1280x720:rate=30" -f lavfi -i "sine=frequency=1000:sample_rate=48000" \
