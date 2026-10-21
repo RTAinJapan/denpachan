@@ -70,6 +70,9 @@ void FlvRingIngest::run() {
             close_session();
             session = s;
             if (h->session_open.load(std::memory_order_acquire)) {
+                // 前の publish のために頼まれていた再同期は捨てる。残っていると、新しい publish を始めた途端に切ってしまい、
+                // その publish でもデコーダが読み始められずにまた頼む、を繰り返す (キーフレームごとにデコーダを開き直す)
+                resync_.store(false);
                 read_pos = h->session_start_pos.load(std::memory_order_relaxed);
                 active = true;
                 queue_.begin_session();
