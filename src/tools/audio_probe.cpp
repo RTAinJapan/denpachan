@@ -84,9 +84,15 @@ int wmain(int argc, wchar_t** argv) {
     auto dev = open_audio_device(info->id);
     ComPtr<IAudioClient> client;
     WAVEFORMATEX* mix = nullptr;
-    if (!dev || FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client)) || FAILED(client->GetMixFormat(&mix)) ||
-        FAILED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 2'000'000, 0, mix, nullptr))) {
-        std::fprintf(stderr, "cannot open capture device\n");
+    // どこで失敗したかとエラーコードを出す。0x80070005 = アクセス拒否 (Windows の設定で、デスクトップアプリが
+    // マイク (録音デバイス) を使えないようにしている)、0x8889000a = ほかのアプリが排他モードで使っている
+    HRESULT hr = dev ? S_OK : E_FAIL;
+    const char* step = "open";
+    if (SUCCEEDED(hr)) step = "activate", hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client);
+    if (SUCCEEDED(hr)) step = "mix format", hr = client->GetMixFormat(&mix);
+    if (SUCCEEDED(hr)) step = "initialize", hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 2'000'000, 0, mix, nullptr);
+    if (FAILED(hr)) {
+        std::fprintf(stderr, "cannot open capture device (%s: 0x%08lx)\n", step, static_cast<unsigned long>(hr));
         return 1;
     }
     const int channels = mix->nChannels;

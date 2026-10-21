@@ -5,7 +5,8 @@
 # 送出を ON (6 秒) → OFF (3 秒) → ON (6 秒) と切り替えながら次を確かめる。
 # - 音切れ・クリック (不連続) がないこと
 # - 途絶・再開の境目がフェードになっていること
-# - 再接続の前後で音声の遅延が変わらないこと (engine のログ)
+# - 再接続の前後で音声の遅延が変わらないこと (engine の状態)
+# 試験用の設定ファイル (out/check/audio-config.json) を使うので、普段の設定は触らない。
 #
 #   tools/testsrc/audio_test.sh [shared|exclusive] [default|lowmux]
 #     lowmux: 送出側で音声をまとめずに多重化する (-pes_payload_size 0 -muxdelay 0)
@@ -15,20 +16,36 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$ROOT/tools/testsrc/dev_env.sh"
 BIN="$ROOT/out/build/bin/Release"
 OUT="$ROOT/out/check"
+CTL="$BIN/denpachan-ctl.exe"
+CFG="$OUT/audio-config.json"
+ENGINE_LOG="$OUT/audio_engine.log"
+WORKER_LOG="$(cygpath -u "$LOCALAPPDATA")/denpachan/logs/ch1.log"
 PORT=9001
 MODE="${1:-shared}"
 MUX_ARGS=()
 if [ "${2:-default}" = "lowmux" ]; then MUX_ARGS=(-pes_payload_size 0 -muxdelay 0 -muxpreload 0); fi
 mkdir -p "$OUT"
-ENGINE_LOG="$OUT/audio_engine.log"
-WORKER_LOG="$OUT/audio_worker.log"
-rm -f "$ENGINE_LOG" "$WORKER_LOG"
+taskkill //IM denpachan-engine.exe //F >/dev/null 2>&1
+taskkill //IM denpachan-worker.exe //F >/dev/null 2>&1
+sleep 1
+rm -f "$CFG" "$ENGINE_LOG"
+SKIP=$(cat "$WORKER_LOG" 2>/dev/null | wc -l)
 
-"$BIN/denpachan-engine.exe" --out "ch=1,dev=CABLE Input,start=1,mode=$MODE" --log-file "$ENGINE_LOG" >/dev/null 2>&1 &
-"$BIN/denpachan-worker.exe" --ch 1 --cam 1 --port "$PORT" --log-file "$WORKER_LOG" >/dev/null 2>&1 &
+# engine の状態から ch1 の音声出力の値を 1 行で出す
+audio_state() {
+    # 1 行ずつ見る (deviceId の値に "}" が入るので、JSON を 1 行にして括弧で切り出すことはできない)
+    "$CTL" state | grep -A25 '"audioOut": {' | head -26 |
+        grep -oE '"(latencyMs|errorMs|slips|underruns|resyncs)": [-0-9.]+' | tr '\n' ' '
+    echo
+}
+
+"$BIN/denpachan-engine.exe" --config "$CFG" --log-file "$ENGINE_LOG" >/dev/null 2>&1 &
+sleep 2
+"$CTL" set 1 "{\"source\":{\"protocol\":\"srt\",\"mode\":\"listener\",\"port\":$PORT},\"audio\":{\"device\":\"CABLE Input\",\"startChannel\":1,\"mode\":\"$MODE\"}}" >/dev/null
+"$CTL" start 1
 sleep 1
 
-"$BIN/audio_probe.exe" --dev "CABLE Output" --seconds 20 --wav "$OUT/audio_capture.wav" > "$OUT/audio_probe.txt" 2>&1 &
+"$BIN/audio_probe.exe" --dev "CABLE Output" --seconds 20 --wav "$OUT/audio_capture.wav" >"$OUT/audio_probe.txt" 2>&1 &
 PROBE=$!
 sleep 1
 
@@ -41,20 +58,20 @@ send() {
 }
 
 send 6
+echo "==== engine audio (1 回目の受信の終わり): $(audio_state)"
 sleep 3
 send 6
+echo "==== engine audio (2 回目の受信の終わり): $(audio_state)"
 wait "$PROBE"
 
-taskkill //IM denpachan-worker.exe //F >/dev/null 2>&1
+"$CTL" stop 1 >/dev/null
 taskkill //IM denpachan-engine.exe //F >/dev/null 2>&1
 sleep 0.5
 
 echo "==== probe (CABLE Output)"
 cat "$OUT/audio_probe.txt"
 echo "==== engine"
-grep -E "opened|lost|error|warn" "$ENGINE_LOG" | cut -c12-
-grep -oE "latency [0-9.]+ ms err [-+0-9.]+ ms (slips|ratio) [-+0-9]+( ppm)? underruns [0-9]+ resyncs [0-9]+" "$ENGINE_LOG" |
-    awk '{print "  " $0}' | uniq -c | tail -25
+grep -E "audio \[|opened|lost|error|warn" "$ENGINE_LOG" | cut -c12-
 echo "==== worker (audio)"
-grep -E "late|audio" "$WORKER_LOG" | grep -vE "Mbps" | cut -c12- | head -10
-grep -oE "gaps [0-9]+ delay [0-9]+ ms a/v [-+0-9]+ ms" "$WORKER_LOG" | uniq -c | tail -15
+tail -n +"$((SKIP + 1))" "$WORKER_LOG" | grep -E "late|audio" | grep -vE "Mbps" | cut -c12- | head -10
+tail -n +"$((SKIP + 1))" "$WORKER_LOG" | grep -oE "gaps [0-9]+ delay [0-9]+ ms a/v [-+0-9]+ ms" | uniq -c | tail -15

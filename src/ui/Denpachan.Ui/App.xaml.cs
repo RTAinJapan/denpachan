@@ -69,7 +69,7 @@ public partial class App : Application
 
         window = new MainWindow();
         // Windows のシャットダウン・ログオフでは閉じてよいかを聞かない (ダイアログでシャットダウンを止めないように)
-        SessionEnding += (_, _) => window.AllowCloseWithoutConfirm();
+        SessionEnding += (_, _) => window.AllowCloseForSessionEnding();
         var delay = 6.0;
         var settingsFor = 0;  // 試験用: このチャンネルの設定画面を撮る (0 = メイン画面)
         var settingsTab = 0;

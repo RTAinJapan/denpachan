@@ -448,6 +448,21 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         return answer == MessageBoxResult.OK;
     }
 
+    /// <summary>
+    /// 閉じる前に、engine と繋がって受信の状態が分かるようにする。繋がっていなければ timeout まで待つ
+    /// (engine を起動し直した直後や、画面が engine を起動している最中)。繋がったら設定を読み直す
+    /// (繋がった直後は、どのチャンネルが受信中かがまだ届いていないことがある)。false = 繋がらなかった
+    /// </summary>
+    public async Task<bool> PrepareCloseAsync(TimeSpan timeout)
+    {
+        if (FixtureMode) return true;
+        var deadline = DateTime.UtcNow + timeout;
+        while (!Connected && DateTime.UtcNow < deadline) await Task.Delay(100);
+        if (!Connected) return false;
+        await LoadConfigAsync();
+        return true;
+    }
+
     /// <summary>engine を worker ごと止める。繋がっていなければ何もしない</summary>
     public async Task StopEngineAsync()
     {
