@@ -26,7 +26,7 @@ bot がスレッドで案内しながら、配信が届いたことの確認、*
 
 | 今の手順 | 自動化 | 根拠 |
 | --- | --- | --- |
-| 配信者と運営が時間を合わせ、Discord で通話する | **配信者が好きな時間に `/test start` で起動する。** 空きがあればすぐ始まり、bot が配信者ごとのスレッドで案内する。通話はしない | 時間を合わせる手間をなくす。空きが無ければその場で断る (§5.1) |
+| 配信者と運営が時間を合わせ、Discord で通話する | **配信者が好きな時間に `/test start` で起動する (イベント中も)。** 枠は SRT・RTMP とも 1 つなので、テストは同時に 1 人。空いていればすぐ始まり、bot が配信者ごとのスレッドで案内する。空いていなければ待ちの列に入り、順番が来たら知らせる。通話はしない | 時間を合わせる手間をなくす (§5.1) |
 | 配信者が MediaConnect に SRT で送る、運営が vMix で受ける | **bot が MediaConnect の接続状態 (`SourceConnected`) と denpachan の受信状態を見て、配信が届いたことを確かめる** | §3 |
 | 映像が乱れずに表示できること | **少しの間 (1〜2 分) 配信させ、bot が MediaConnect の取りこぼし (`SourceNotRecoveredPackets`)・CC エラーと、denpachan のデコードエラー・fps で判定し、結果を配信者に伝える** | 回復できなかったパケットとデコードエラーが 0 で fps が出ていれば、映像は乱れていない。静止画 (`DescribeFlowSourceThumbnail`) もスレッドに貼る |
 | 乱れるときは latency を上げてもらう。上げても直らなければ RTMP にする | **bot が値を決めて配信者に伝え、配信者が OBS の設定を変えて始め直す (§6)。** 直ったかどうかは bot が見る。上げても直らなければ bot が RTMP (ECS の RTMP サーバ) の案内に切り替える | latency は配信者の OBS の設定に持たせる (本番でもその値で送ってもらう)。MediaConnect の `MinLatency` は低いまま固定し、実際の latency は OBS の値で決まるようにする (大きい方が使われる) |
@@ -52,9 +52,10 @@ flowchart LR
     E -- 録画 --> R[録画ファイル]
 ```
 
-- **MediaConnect**: 本番と同じフロー (配信者の枠ごとに 1 つ。source は SRT listener、配信者が caller)。テスト用に **SRT の出力を 1 つ足す** (denpachan 向け)。vMix 向けの出力はそのまま。1 つのフローの出力は複数持てるので、本番の設定は触らない。source の `MinLatency` は低い値 (120 ms など) で固定し、bot は変えない。
+- **テストの枠は SRT 1 つ、RTMP 1 つ。** どのフロー・どの denpachan のチャンネルを使うかは、**そのとき空いているものを運営が設定し直す** (`/test slot`。イベント中も。§5.6)。
+- **MediaConnect**: SRT の枠には、そのとき空いているフロー (source は SRT listener、配信者が caller) を使う。そのフローには denpachan 向けの **SRT の出力**を足しておく (vMix 向けの出力はそのまま。1 つのフローの出力は複数持てる)。source の `MinLatency` は低い値 (120 ms など) で固定し、bot は変えない。
 - **ECS の RTMP サーバ**: SRT で安定しないときの受け口 (すでに動いているもの)。配信者はそこへ RTMP で送り、denpachan はそこから RTMP pull で受ける (`source.protocol = rtmp`、`mode = pull`)。本番で RTMP の配信者をどう受けるか (vMix が pull する、など) はそのまま。
-- **denpachan**: テスト用の受信機。枠ごとにチャンネルを 1 つ割り当てる (最大 8 枠同時)。録画 (passthrough) を残す。本番でも運営 PC で動いていてよい (受信口は本番では切っておける)。
+- **denpachan**: 本番の受信と同じ denpachan で、そのとき空いているチャンネルを SRT の枠 (MediaConnect のフローの出力を受ける) と RTMP の枠 (ECS の RTMP サーバから pull する) に 1 つずつ使う。録画 (passthrough) を残す。**bot が操作できるのは「配信テスト用」の印を付けたチャンネルだけ**にして、イベント中に本番のチャンネルを触らないようにする (§3.2)。
 - **bot**: denpachan とは別のプログラム (別リポジトリ。Node.js + discord.js か Python + discord.py。§4)。AWS の権限 (MediaConnect と CloudWatch の読み取り、フローの開始・停止) を持つ。denpachan と同じ PC で動かすのが簡単 (受信口は loopback)。別の PC でもよい (LAN、トークン必須)。
 - **区間ごとの役割**: 配信者 → MediaConnect の区間 (回線が悪くなりうる所) の数字は MediaConnect から、MediaConnect → 運営の区間 (安定している所) とデコード・音声は denpachan から。RTMP のときは、配信者 → ECS の区間は RTMP サーバの統計 (あれば) と denpachan の pull の受信状態から。
 - **配信者の OBS の設定を変えるのは配信者**: bot は値を決めて伝え、変えたことの申告 (ボタン) と、変えたあとの数字で確かめる。
@@ -68,7 +69,7 @@ bot が使う API とメトリクス。すべて AWS SDK (boto3 / AWS SDK for Ja
 | 用途 | API / メトリクス | 使い方 |
 | --- | --- | --- |
 | フローの状態、source の設定 (ingest の IP とポート、`MinLatency`、ホワイトリスト) | `DescribeFlow` | テストの開始時 (配信者に案内する接続先) と、`MinLatency` が低いまま (OBS の値が効く状態) であることの確認 |
-| フローの開始・停止 | `StartFlow` / `StopFlow` | テストの開始・終了 (動いている間は課金されるので、使わないときは止める) |
+| フローの開始・停止 | `StartFlow` / `StopFlow` | テストの開始時にフローが止まっていれば開始し、終わったら止める (動いている間は課金されるので)。**止めるのは bot が開始したフローだけ** (もともと動いていたフローは止めない) |
 | 接続しているか | CloudWatch `SourceConnected` (1 / 0)、`SourceDisconnections`、`SourceUpTime` | 繋がった・切れた・切れた回数 |
 | RTT | `SourceRoundTripTime` (ms) | 推奨値の計算 (窓の最大) |
 | ロス | `SourcePacketLossPercent` (%)、`SourceRecoveredPackets`、**`SourceNotRecoveredPackets`** | ロス率は倍率の決定、回復できなかったパケットは「今の latency では足りない」の判定 |
@@ -103,10 +104,12 @@ bot がここから使うのは: 受信の状態 (繋がっている、映像が
 
 | 項目 | 内容 |
 | --- | --- |
-| `enabled` | 既定 off。イベント本番では切っておける |
+| `enabled` | 既定 off。テストをイベント中も受け付けるので、テストの期間中 (イベント中を含む) は on |
 | `bind` / `port` | 既定は loopback の 9100 (SRT の 9001〜9008、RTMP の 1935 と離す)。別の PC の bot から繋ぐなら `0.0.0.0` |
 | `token` | 共有の秘密。**loopback 以外に bind するときは必須** (空なら engine が起動を断ってログに出す)。パスフレーズと同じく DPAPI で保存する (`tokenProtected`)。画面に「作り直す」ボタン |
-| `allowControl` | 操作のメソッド (下) を許すか。既定 off (読むだけ)。bot に録画の開始・停止をさせるなら on |
+| `allowControl` | 操作のメソッド (下) を許すか。既定 off (読むだけ)。bot にチャンネルと録画の開始・停止をさせるなら on。on でも、操作できるのは「配信テスト用」のチャンネルだけ |
+
+チャンネルの設定に **`testSlot`** (チャンネル設定の画面の「配信テスト用 (bot が操作してよい)」) を足す。運営がテストの枠を設定し直すとき (§5.6) に、そのチャンネルに印を付け、外したチャンネルの印を外す。イベント中は同じ denpachan で本番のチャンネルが動いているので、bot の不具合や枠の設定の間違いで本番のチャンネルを止めたり録画を切ったりしないよう、**engine の側で**操作の対象を印のあるチャンネルに限る。
 
 TLS はしない (家庭内 LAN か同じ PC で使う。外から繋ぐなら VPN か ssh のトンネルを通す)。
 
@@ -130,7 +133,7 @@ WebSocket (RFC 6455)、テキストフレーム、1 フレームに JSON 1 つ�
   "time": "2026-11-01T12:34:56.789Z",
   "channels": [
     {
-      "ch": 1, "name": "Runner A", "enabled": true,
+      "ch": 1, "name": "Runner A", "enabled": true, "testSlot": true,
       "status": "live",
       "source": { "protocol": "srt", "mode": "caller", "host": "203.0.113.5", "port": 5000, "peer": "203.0.113.5:5000", "connectedSec": 83 },
       "video": { "codec": "h264", "width": 1920, "height": 1080, "fps": 59.9, "outputFps": 60, "bitrateMbps": 6.1, "hwDecode": true,
@@ -178,7 +181,7 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 | 種別 | メソッド | 条件 |
 | --- | --- | --- |
 | 読む | `getState`、`getConfig` (IPC 形。秘密は入らない)、`getChannels` (`channels` と同じ内容を 1 回) | いつでも |
-| 操作 | `startChannel`、`stopChannel`、`setRecording`、`patchChannel` | `allowControl` が on のとき |
+| 操作 | `startChannel`、`stopChannel`、`setRecording`、`patchChannel` | `allowControl` が on で、**対象のチャンネルが `testSlot`** のとき (でなければ `error`) |
 
 `patchChannel` は bot が壊せる範囲を狭める: **`source.latencyMs` と `name` だけ**を受け付ける (他の項目が入っていれば `error`)。MediaConnect 経由では bot が denpachan の latency を変える必要はほぼ無いが、MediaConnect → denpachan の区間が悪いときに運営が `/test latency receiver` で上げられるよう残す。SRT の枠と RTMP の枠は別のチャンネルにしておき、bot はプロトコルの切り替えでチャンネルの設定を変えない。
 
@@ -188,7 +191,7 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
   - 握手の `Sec-WebSocket-Accept` は SHA-1 + Base64。SHA-1 は Windows の `BCryptHash` (新しい依存なし)。
   - 外部のライブラリは入れない (使うのはテキストフレームの送受信だけで、rtmpd と同じく自前で十分。300〜400 行)。
 - `Engine::tick` で 1 秒ごとに `state_locked()` を作ったあと、`channels_view(state)` でまとめた形を作って `ws_.broadcast` する。`connectedSec` と `silentSec` は engine がチャンネルごとに数える (`state` の変化を見る)。
-- `Engine::handle` の前に allowlist と `patchChannel` の絞り込みを置く (`ws_handle(method, params)` → `handle`)。
+- `Engine::handle` の前に allowlist、`testSlot` の確認、`patchChannel` の絞り込みを置く (`ws_handle(method, params)` → `handle`)。`testSlot` はチャンネルの設定 (`config.json`) に足し、画面のチャンネル設定に印を出す (タイルにも小さく「テスト用」と出す)。
 - `docs/design.md` §10.2 に「WebSocket の受信口」の項を足す。`denpachan-ctl` に `ws-watch` (動作確認用) を足してもよい。
 
 ## 4. Discord bot
@@ -200,7 +203,7 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
   - Discord のトークン、サーバ、テストのスレッドを作るチャンネル、運営への通知のチャンネル、運営のロール。
   - **配信者の名簿** (Discord のユーザー ID ↔ 配信者名。シートから読む)。`/test start` は名簿にいる人だけが使える。
   - AWS のリージョンと認証 (フローの一覧、CloudWatch の読み取り、`StartFlow` / `StopFlow` の権限だけの IAM ユーザー)。
-  - **テストの枠**: SRT の枠 (フロー ARN ↔ denpachan のチャンネル番号) と RTMP の枠 (ECS の RTMP サーバの URL とキー ↔ denpachan のチャンネル番号)。
+  - **テストの枠**: SRT の枠 1 つ (フロー ↔ denpachan のチャンネル番号) と RTMP の枠 1 つ (ECS の RTMP サーバの URL とキー ↔ denpachan のチャンネル番号)。どのフロー・チャンネルを使うかは運営が `/test slot` で設定し直す (§5.6)。設定し直した値は SQLite に持ち、bot を起動し直しても残る。
   - 配信者に案内する内容: 接続先 (フローの ingest の IP とポートは `DescribeFlow` から取れる。パスフレーズは設定に持つ)、配布した OBS の設定の名前、期待する解像度・fps・ビットレート、latency の初期値と上限。
   - **チェックの手順** (§7。YAML で書き、運営が足したり変えたりできる)。
   - シートの ID、denpachan の受信口 (host、port、token)、RTMP サーバの統計 API (あれば)。
@@ -212,7 +215,11 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 
 | コマンド | 誰が | すること |
 | --- | --- | --- |
-| `/test start` | 配信者 (名簿にいる人) | テストを始める (§5.1)。返事はその人にだけ見える (ephemeral) |
+| `/test start` | 配信者 (名簿にいる人) | テストを始める。枠が使われていれば待ちの列に入る (§5.1)。返事はその人にだけ見える (ephemeral) |
+| `/test leave` | 配信者 | 待ちの列から抜ける |
+| `/test slot` | 運営 | 今の枠の設定と状態 (使用中の配信者、待ちの列) を出す |
+| `/test slot srt <フロー> <ch>` / `/test slot rtmp <ch>` | 運営 | 枠に使うフローと denpachan のチャンネルを設定し直す (§5.6) |
+| `/test slot off <srt\|rtmp>` / `/test slot on <srt\|rtmp>` | 運営 | 枠を止める / 戻す (空いているフロー・チャンネルが無いとき)。止めている間も待ちの列は残す |
 | `/test status [配信者]` | 運営 | 進行中のテストの段階と数字 (MediaConnect と denpachan の両方) を出す |
 | `/test shot [配信者]` | 運営 | `DescribeFlowSourceThumbnail` の静止画を貼る |
 | `/test latency <配信者> <ms>` | 運営 | 配信者に案内する latency を手で決める (自動の途中でも)。`/test latency receiver <ch> <ms>` は denpachan 側 (MediaConnect → 運営の区間) |
@@ -236,9 +243,9 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 ## 5. テストの流れ
 
 ```
-/test start ──(空きなし)──> 断る (空いたら知らせるボタン)
-     │
-     ▼ 空きあり
+/test start ──(枠が使用中・止めている)──> 待ちの列に入れる ──(順番が来たら知らせる、5 分以内に「始める」)
+     │                                                                    │
+     ▼ 空きあり  <─────────────────────────────────────────────────────────┘
 5.1 受付: スレッドを作る、フローと denpachan のチャンネルを開始、録画開始
      ▼
 5.2 初回の案内 ──> 配信の開始を待つ ──(10 分で催促、30 分で中断)
@@ -252,11 +259,13 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 
 ### 5.1 受付 (`/test start`)
 
-1. 名簿にいるか、すでに進行中のテストが無いか (あればそのスレッドへのリンクを返す) を確かめる。
-2. **空きを探す**: 使われていない SRT の枠 (フローがほかのテストに使われていない、かつ denpachan のチャンネルが止まっている)。
-   - 空きが無ければ「今は空きがありません (テスト中 N 人)。少し待ってからもう一度実行してください」と返し、**「空いたら知らせる」ボタン**を付ける (押した人に、空いたときにメンションする。順番に 1 人ずつ)。
-3. 空きがあれば枠を押さえ、**配信者ごとのスレッド** (テスト用のチャンネルのプライベートスレッド。配信者と運営のロールを入れる) を作る。返事でスレッドへのリンクを返す。
-4. 裏で準備する: フローを `StartFlow` (止まっていれば。動き出すまで 1 分ほどかかることがある)、denpachan のチャンネルを開始し録画を始める (`startChannel`、`setRecording`)。準備が終わるまで、スレッドには「準備しています」と出す。
+1. 名簿にいるか、すでに進行中のテストや待ちの列に入っていないか (あればそのスレッドへのリンクか、今の順番を返す) を確かめる。
+2. **SRT の枠が空いているか**を見る (ほかの人のテストに使われていない、運営が止めていない)。
+   - 空いていなければ **待ちの列**に入れ、「今は別の方がテスト中です。順番が来たらお知らせします (N 番目)」と返す。順番が来たら (前の人のテストが終わった、または前の人が RTMP の枠に移って SRT の枠が空いた) 先頭の人にメンションと DM で知らせ、「始める」ボタンを出す。**5 分以内**に押されなければ列の最後に回し、次の人に知らせる (2 回続けて押されなければ列から外す)。
+   - 運営が枠を止めているときも列に入れ、「今は受付を止めています。再開したらお知らせします」と返す。
+3. 押さえる前に、枠の状態を確かめる: denpachan のチャンネルが `testSlot` で止まっていること、フローの source に誰も繋がっていないこと (`SourceConnected` が 0)。合わなければ始めずに運営に知らせ、配信者には「準備に問題があります。運営が確認します」と返す (列の先頭のまま待つ)。
+4. 枠を押さえ、**配信者ごとのスレッド** (テスト用のチャンネルのプライベートスレッド。配信者と運営のロールを入れる) を作る。返事でスレッドへのリンクを返す。
+5. 裏で準備する: フローが止まっていれば `StartFlow` (動き出すまで 1 分ほどかかることがある。開始したことを覚えておく)、denpachan のチャンネルを開始し録画を始める (`startChannel`、`setRecording`)。準備が終わるまで、スレッドには「準備しています」と出す。
 
 ### 5.2 初回の案内
 
@@ -289,10 +298,22 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 配信者が「完了」を押したら:
 
 1. 「気になったことがあれば書いてください (任意)」のモーダルを出す。
-2. 録画を止め (`setRecording`)、denpachan のチャンネルを止め、フローをほかのテストが使っていなければ `StopFlow`。枠を空け、「空いたら知らせる」を押した人に知らせる。
+2. 録画を止め (`setRecording`)、denpachan のチャンネルを止め、フローは bot が開始したときだけ `StopFlow`。枠を空け、待ちの列の先頭の人に知らせる (§5.1)。
 3. シートに 1 行書く (§8)。スレッドにまとめ (確定した latency、プロトコル、映像の数字、チェックの結果と録画の区間) を貼り、「OBS の配信を止めてください。おつかれさまでした」で締める。スレッドはロックしてアーカイブする。
 
-途中で配信者が「中断する」を押したとき、運営が `/test cancel` したとき、催促しても進まないとき (配信の開始は 30 分、各チェックは 20 分) も、同じ手順で終わる (記録は「中断」と理由)。
+途中で配信者が「中断する」を押したとき、運営が `/test cancel` したとき、催促しても進まないとき (配信の開始は 30 分、各チェックは 20 分) も、同じ手順で終わる (記録は「中断」と理由)。枠が 1 つなので、待っている人がいるときは催促の時間を半分にする。
+
+### 5.6 枠の設定し直し (イベント中)
+
+テストはイベント中も受け付ける。枠に使うフローとチャンネルは、そのとき空いているものを運営が設定し直す。
+
+1. 運営は denpachan で、空いているチャンネルの受信の設定を枠に合わせる (SRT の枠: そのフローの denpachan 向けの出力を受ける。RTMP の枠: ECS の RTMP サーバから pull する)。そのチャンネルに「配信テスト用」の印を付け、前に枠だったチャンネルの印を外す。
+2. bot で `/test slot srt <フロー> <ch>` (または `/test slot rtmp <ch>`) を実行する。bot は次を確かめてから受け入れる。合わなければ理由を返して、前の設定のままにする。
+   - denpachan のチャンネルがあり、`testSlot` の印が付いていて、止まっている。
+   - チャンネルの受信の設定が枠と合う (SRT の枠なら `protocol = srt`、RTMP の枠なら `protocol = rtmp` の pull)。
+   - SRT の枠なら、フローがあり、source が SRT listener で、`MinLatency` が案内の初期値以下。
+3. **テストの途中で設定し直したとき**は、進行中のテストは前の枠のまま最後まで続け、新しい枠は次のテストから使う (運営への返事にそう出す)。急いで空けたいときは `/test cancel` してから設定し直す。
+4. 空いているフロー・チャンネルが無い間は `/test slot off srt` で止める。待ちの列は残り、`/test slot on srt` で再開したら先頭の人から知らせる。
 
 ## 6. 配信の確認と latency の調整
 
@@ -303,8 +324,8 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
    - 上げたのに `SourceNotRecoveredPackets` が前の窓とまったく変わらないときは、設定が反映されていない可能性として URL を確かめてもらう (OBS は URL を変えても配信を止めないと反映しない)。
 4. **安定の確定**: `ok` か `generous` が出たら、さらに 60 秒見て `SourceNotRecoveredPackets` が 0、`SourceContinuityCounter` と `SourceTSSyncLoss` が増えない、denpachan の `decodeErrors` が増えない、`fps` が 60 秒の平均で期待の 90% 以上であれば **確定** (§5.3 の「正しく配信できていそう」)。`generous` なら推奨値まで下げられることを添える (下げるのは任意。下げるなら同じ手順で始め直す)。
 5. **RTMP への案内**: 上限まで上げても `insufficient`、または `SourceJitter` が 500 ms を超え続ける (AWS の目安では切断の原因)、または denpachan の `decodeErrors` が増え続ける・`fps` が出ない (回線でなく送出側の問題の可能性) なら、**RTMP の枠** (ECS の RTMP サーバ + denpachan の pull のチャンネル) に移す。
-   - RTMP の枠に空きがあれば押さえ、スレッドに RTMP の URL とキーを貼り、「OBS の配信の設定をこの URL に変えて、始め直してください」と頼む (「設定した」ボタン付き)。SRT の枠は空ける。
-   - RTMP の枠に空きが無ければ、運営に知らせて「運営から連絡します」と伝え、音声のチェック (§7) は SRT のまま進める。
+   - RTMP の枠 (1 つ) が空いていれば押さえ、スレッドに RTMP の URL とキーを貼り、「OBS の配信の設定をこの URL に変えて、始め直してください」と頼む (「設定した」ボタン付き)。RTMP で繋がったら SRT の枠は空け、待ちの列の先頭の人に知らせる (§5.1)。
+   - RTMP の枠がほかの人に使われている・止めているときは、運営に知らせて「運営から連絡します」と伝え、音声のチェック (§7) は SRT のまま進める。
    - RTMP サーバの統計 (あれば) と denpachan で `live` になり、60 秒安定 (`decodeErrors` が増えない、`fps` が出る、`tcp.retransBytes` が増え続けない) で確定。結果は「RTMP」。
 6. **無音**: どの段階でも denpachan の `audio.silentSec > 10` なら「音が届いていません (OBS の音声の設定を確認)」を一度だけ伝える。`DescribeFlowSourceMetadata` に音声ストリームが無いときも同じ。音が来たら解除。§7 の「静かにする」手順のあいだは伝えない。
 
@@ -363,18 +384,19 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 
 | 段 | 内容 | 大きさの目安 |
 | --- | --- | --- |
-| 1 | bot: 名簿、`/test start` と枠の管理 (空きの判定、断る)、スレッド、初回の案内、MediaConnect の読み取り (`DescribeFlow`、CloudWatch、`DescribeFlowSourceMetadata`、サムネイル)、配信の開始の検出、`StartFlow` / `StopFlow`、終わりとシートへの記録 | bot の骨格。denpachan の変更なし (録画は運営が画面で始める) |
+| 1 | bot: 名簿、`/test start` と待ちの列、`/test slot` (枠の設定し直し)、スレッド、初回の案内、MediaConnect の読み取り (`DescribeFlow`、CloudWatch、`DescribeFlowSourceMetadata`、サムネイル)、配信の開始の検出、`StartFlow` / `StopFlow`、終わりとシートへの記録 | bot の骨格。denpachan の変更なし (チャンネルと録画は運営が画面で始める) |
 | 2 | bot: §6 の判定と latency の調整 (値を決めて伝える、「設定した」ボタン、繋ぎ直しの検出) | |
-| 3 | engine: `general.metrics` の設定、WebSocket サーバ、`hello` / `channels` の配信、`getState` / `getChannels`、`allowControl` と `startChannel` / `stopChannel` / `setRecording`。bot: denpachan の受信状態・デコード・録画を取り込み、チャンネルと録画を自動で始める・止める | C++ 500〜600 行 + 画面の全体設定 |
+| 3 | engine: `general.metrics` の設定、WebSocket サーバ、`hello` / `channels` の配信、`getState` / `getChannels`、チャンネルの `testSlot` の印 (設定・画面・操作の制限)、`allowControl` と `startChannel` / `stopChannel` / `setRecording`。bot: denpachan の受信状態・デコード・録画を取り込み、チャンネルと録画を自動で始める・止める、`/test slot` での確認 | C++ 600 行前後 + 画面 (全体設定、チャンネル設定の印、タイルの表示) |
 | 4 | bot: §7 の音声とその他のチェック (手順の YAML、録画の区間の記録、レベルによる参考の判定) | 段 3 の音声レベルを使う |
-| 5 | bot: RTMP への案内、「空いたら知らせる」、`/test review` | |
+| 5 | bot: RTMP への案内、`/test review` | |
 
 - **段 1〜2 で「配信者が起動して、映像の確認と latency の調整まで自動」になる。** 音声のチェックは、段 3 が無くても手順の指示と区間の記録 (時刻は bot の時計で、録画の開始時刻から計算) まではできる。レベルによる参考の判定には段 3 が要る。
 
 ## 10. 決めていないこと・注意
 
-- **枠の数と同時に何人まで**: SRT の枠はフローと denpachan のチャンネルの組。denpachan は最大 8 チャンネルで、そのうち RTMP の枠に何チャンネル回すか (たとえば SRT 6 + RTMP 2) を決める。
-- **フローの数と課金**: 枠の数だけフローが要り、動いている間は課金される。テストの間だけ `StartFlow` / `StopFlow` する (bot が行う)。本番用のフローをそのまま使うか、テスト用のフローを別に作るかは運用で決める (同じ経路で測るには本番用を使うのが確実。本番の直前にテストを受け付けないよう、bot に受付の期間を設定する)。
+- **同時に 1 人**: SRT の枠が 1 つなので、テストは 1 人ずつ。1 人 10〜15 分なので、1 時間に 4〜5 人。RTMP に移った人がいる間は、SRT の枠で次の人が始められる。待ちの列の長さは `/test slot` で見える。
+- **イベント中のテスト**: 本番のチャンネルと同じ denpachan で受けるので、本番を触らない仕組みを二重にする (bot は設定された枠のチャンネルしか操作しない。engine は `testSlot` の印の無いチャンネルへの操作を断る)。フローも、bot が止めるのは自分が開始したものだけ。テストのチャンネルのデコードの分だけ PC の負荷が増えるので、状態バーの CPU・GPU を見ておく。
+- **フローの課金**: 動いている間は課金される。bot はテストの間だけ `StartFlow` / `StopFlow` する (止まっていたフローを使うときだけ)。
 - **配信者のホワイトリスト**: フローの source の `WhitelistCidr` に配信者の IP が要る。`0.0.0.0/0` にしてパスフレーズで守るか、配信者に IP を申告してもらって運営が入れるか。前者が簡単 (パスフレーズは必ず付ける)。bot はフローの設定を変えない。
 - **パスフレーズの扱い**: スレッドはプライベートで、配信者と運営しか見えない。それでも残るので、テストのあとにパスフレーズを変える運用にするか、本番とテストでフローを分けるかを決める。
 - **RTMP の統計**: ECS の RTMP サーバに統計の API があるかで、RTMP の判定の細かさが変わる。無くても denpachan の pull の受信状態で「映るか・安定か」は判定できる。
@@ -384,4 +406,4 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 - **音声の参考の判定の限界**: 1 秒ごとのピークしか見ないので、小さい声や短い通知音は見逃すことがある。最終的な判定は録画を聞いて行う前提。閾値は最初のイベントの結果を見て調整する。
 - **配信者の OBS の設定の確認** (解像度・fps・ビットレート・音声の経路) は、bot が「案内した値」と `DescribeFlowSourceMetadata` の値を比べて違いを伝えるところまで。設定そのものは配信者が直す。
 - **bot が落ちたとき**: MediaConnect も engine も影響を受けない。bot は起動し直したら SQLite のセッションを読み、続きから進める (チェックの手順の途中なら、その手順をやり直してもらう)。
-- **engine の受信口を本番で使うか**: 本番は `enabled: false` でよい。使うなら `bind: 127.0.0.1` のまま、bot を同じ PC で動かす。
+- **engine の受信口をイベント中も開けておく**: テストをイベント中も受け付けるので、受信口はイベント中も on になる。`bind: 127.0.0.1` のまま bot を同じ PC で動かすのが安全 (外から繋がらない)。別の PC で動かすならトークンを必ず付ける。受信口と bot が落ちても、本番の受信には影響しない (受信口は engine の tick を止めない作り。§3.2)。
