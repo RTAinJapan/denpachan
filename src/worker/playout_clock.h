@@ -70,6 +70,7 @@ public:
     void report_audio(int64_t slack_qpc) {
         std::lock_guard lk(mutex_);
         const int64_t now = qpc_now();
+        last_audio_report_qpc_ = now;
         if (now < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
         if (slack_qpc < 0) {
             // 遅れて届いた: 即座に遅らせ、同じ大きさの揺れが次は間に合うよう備えを増やす。
@@ -100,6 +101,12 @@ public:
     bool settled() {
         std::lock_guard lk(mutex_);
         return anchored_ && settled_;
+    }
+
+    // 音声がこの時間内に届いているか (映像が途切れても、音声が時間軸を使い続けているか)
+    bool audio_reported_within(int64_t qpc) {
+        std::lock_guard lk(mutex_);
+        return last_audio_report_qpc_ != 0 && qpc_now() - last_audio_report_qpc_ < qpc;
     }
 
     uint64_t take_audio_late_count() {
@@ -208,6 +215,7 @@ private:
     int64_t frame_us_ = 16'667;
     int excess_windows_ = 0;  // 遅延の余りが 3 フレームを超えた窓が続いた数
     uint64_t audio_late_count_ = 0;
+    int64_t last_audio_report_qpc_ = 0;
 
     // 揺れの備え (接続をまたいで覚えておく: 同じ送出元の揺れ方は変わらないことが多い)
     int64_t audio_headroom_ = qpc_from_ms(kAudioHeadroomMinMs);

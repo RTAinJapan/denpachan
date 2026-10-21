@@ -460,11 +460,23 @@ bool Decoder::run_session(uint64_t session) {
     bool started = false;  // 映像を 1 枚でもデコーダに渡せた
     const int64_t test_rewind_at = test_ts_rewind_after_sec_ > 0 ? qpc_now() + qpc_from_ms(int64_t(test_ts_rewind_after_sec_) * 1000) : 0;
     bool test_rewound = false;
+    const int64_t test_drop_at = test_drop_video_after_sec_ > 0 ? qpc_now() + qpc_from_ms(int64_t(test_drop_video_after_sec_) * 1000) : 0;
+    bool test_dropping = false;
     while (!stop_ && (codec_ || vidx < 0)) {
         err = av_read_frame(fmt, pkt.get());  // ネットワーク待ちでブロックしうる
         if (err < 0) {                        // セッション終了 (EOF) / 停止
             if (url_mode && !stop_) spdlog::info("decoder: read ended: {}", av_error_string(err));
             break;
+        }
+        if (test_drop_at != 0 && pkt->stream_index == vidx) {
+            const int64_t now = qpc_now();
+            const bool drop = now >= test_drop_at && now < test_drop_at + qpc_from_ms(kTestDropVideoMs);
+            if (drop != test_dropping) spdlog::warn("decoder: test: {} video packets", drop ? "dropping" : "stopped dropping");
+            test_dropping = drop;
+            if (drop) {
+                av_packet_unref(pkt.get());
+                continue;
+            }
         }
         // 映像以外は 0.3 秒遅れて戻す (MPEG-TS の折り返しはストリームごとに別の時刻で起きるので、その代わり)
         if (test_rewind_at != 0 && qpc_now() >= test_rewind_at + (pkt->stream_index == vidx ? 0 : qpc_from_ms(kTestRewindAudioLagMs))) {

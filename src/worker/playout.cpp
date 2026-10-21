@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstdlib>
 
 namespace denpachan::worker {
 
@@ -79,10 +80,13 @@ void Playout::run() {
             // 途絶中は最後のフレームを出し続ける (NO SIGNAL にはしない)
             if (live && now - last_output_qpc > stall) {
                 live = false;
-                clock_.invalidate();
+                // 時間軸を捨てるのは音声も来ていないときだけ。音声が届き続けているなら、映像が戻ったときも同じ時間軸で
+                // 出せる (捨てると、次に届いた音声で取り直されて、音声がフェードして合わせ直しになる)
+                const bool audio_flowing = clock_.audio_reported_within(stall);
+                if (!audio_flowing) clock_.invalidate();
                 if (writer_) writer_->set_state(vcam::WriterState::Hold);
                 metrics_.video_state = uint32_t(worker_status::VideoState::Hold);
-                spdlog::info("playout: stalled, holding last frame");
+                spdlog::info("playout: stalled, holding last frame{}", audio_flowing ? " (audio continues)" : "");
             }
             if (writer_) writer_->refresh(held.get());
             if (preview_) preview_->refresh(held.get());
@@ -101,10 +105,21 @@ void Playout::run() {
         }
         last_arrival_qpc = f->arrival_qpc;
 
-        // 時間軸の取り直し: タイムスタンプの飛び (1 秒以上)。新しい接続は due() が取り直す。
-        if (f->session == last_session && clock_.anchored_for(f->session) && (gap_us < -1'000'000 || gap_us > 1'000'000)) {
-            spdlog::info("playout: re-anchor (gap {} ms)", gap_us / 1000);
-            clock_.reanchor(f->session, f->pts_us, f->arrival_qpc);
+        // 時間軸の取り直し: タイムスタンプが 1 秒以上飛び、今の時間軸ではこのフレームを出す時刻が大きくずれるとき
+        // (送出側の時計が飛んだ、巻き戻ったなど)。映像だけが途切れて音声は届き続けていた、送出側が止まってその分だけ
+        // タイムスタンプが進んだ、などで、今の時間軸のままで出す時刻が合っている (余裕が再生バッファからずれていない) なら
+        // 取り直さない (取り直すと音声がフェードして合わせ直しになる)。新しい接続は due() が取り直す。
+        // 届いた間隔とは比べない (HW デコーダは次の入力まで前のフレームを返さないので、途切れの前のフレームの到着が遅く見える)
+        const bool ts_jumped = gap_us < -1'000'000 || gap_us > 1'000'000;
+        if (f->session == last_session && clock_.anchored_for(f->session) && ts_jumped) {
+            const int64_t off_us = qpc_to_us(clock_.due(f->session, f->pts_us, f->arrival_qpc) - f->arrival_qpc - clock_.buffer_qpc());
+            if (std::llabs(off_us) > kOffTimelineUs) {
+                spdlog::info("playout: re-anchor (gap {} ms, {} ms off the current timeline)", gap_us / 1000, off_us / 1000);
+                clock_.reanchor(f->session, f->pts_us, f->arrival_qpc);
+            } else {
+                spdlog::info("playout: timestamps jumped {} ms but still fit the current timeline ({:+} ms); keeping it", gap_us / 1000,
+                             off_us / 1000);
+            }
         } else if (gap_us > 0 && gap_us < 100'000) {
             frame_us = gap_us;
         }
