@@ -77,6 +77,7 @@ Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output,
 
 Decoder::~Decoder() {
     stop();
+    av_buffer_pool_uninit(&transfer_pool_);  // 使われている間は残り、最後のフレームが捨てられたときに消える
     swr_free(&swr_);
     av_channel_layout_uninit(&swr_in_layout_);
 }
@@ -215,11 +216,38 @@ bool Decoder::open_decoder(const AVStream* stream) {
     return false;
 }
 
+// HW デコードの結果を CPU に取り出す先のフレーム。バッファは使い回す (取り出すたびに確保すると、4K60 では 1 ch あたり
+// 毎秒 700 MB 前後を確保・解放することになる)。大きさか形式が変わったらプールを作り直す (前のプールは、使われている
+// バッファが全部返ってきたときに消える)
+FramePtr Decoder::transfer_frame(const AVFrame* hw) {
+    const auto* frames = hw->hw_frames_ctx ? reinterpret_cast<const AVHWFramesContext*>(hw->hw_frames_ctx->data) : nullptr;
+    if (!frames) return FramePtr(av_frame_alloc());  // 取り出し先を av_hwframe_transfer_data に任せる (これまでどおり)
+    const AVPixelFormat fmt = frames->sw_format;
+    if (!transfer_pool_ || fmt != pool_format_ || hw->width != pool_width_ || hw->height != pool_height_) {
+        av_buffer_pool_uninit(&transfer_pool_);
+        const int size = av_image_get_buffer_size(fmt, hw->width, hw->height, kTransferAlign);
+        if (size <= 0) return nullptr;
+        transfer_pool_ = av_buffer_pool_init(size_t(size), nullptr);
+        pool_format_ = fmt;
+        pool_width_ = hw->width;
+        pool_height_ = hw->height;
+    }
+    FramePtr out(av_frame_alloc());
+    if (!out || !transfer_pool_) return nullptr;
+    out->format = fmt;
+    out->width = hw->width;
+    out->height = hw->height;
+    out->buf[0] = av_buffer_pool_get(transfer_pool_);
+    if (!out->buf[0]) return nullptr;
+    if (av_image_fill_arrays(out->data, out->linesize, out->buf[0]->data, fmt, hw->width, hw->height, kTransferAlign) < 0) return nullptr;
+    return out;
+}
+
 void Decoder::handle_frame(AVFrame* frame, const AVStream* stream, uint64_t session) {
     FramePtr out;
     if (frame->format == AV_PIX_FMT_D3D11) {
-        out.reset(av_frame_alloc());
-        const int err = av_hwframe_transfer_data(out.get(), frame, 0);
+        out = transfer_frame(frame);
+        const int err = out ? av_hwframe_transfer_data(out.get(), frame, 0) : AVERROR(ENOMEM);
         if (err < 0) {
             ++metrics_.decode_errors;
             return;
