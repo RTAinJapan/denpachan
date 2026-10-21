@@ -27,6 +27,7 @@ struct WorkerSnapshot {
     std::string last_event;  // 直近の異常 (終了コード、固まった等)
     bool has_metrics = false;
     worker_status::Metrics metrics{};
+    uint64_t rejected_senders = 0;  // worker_status::Header の末尾の欄
 };
 
 class WorkerProcess {

@@ -45,6 +45,8 @@ struct Header {
     std::atomic<uint64_t> bytes_in;
     std::atomic<int32_t> tcp_rtt_us;
     std::atomic<uint64_t> tcp_retrans_bytes;
+    // 今の送出元が送っている間に来て断った publish の数 (累計)。後から末尾に足したもの (前の版の rtmpd では 0 のまま)
+    std::atomic<uint64_t> rejected_publishers;
 };
 
 static_assert(sizeof(Header) <= kHeaderBytes);

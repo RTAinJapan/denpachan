@@ -277,6 +277,7 @@ WorkerSnapshot WorkerProcess::snapshot() {
         s.uptime_sec = double(qpc_to_us(qpc_now() - started_qpc_)) / 1e6;
         if (auto* st = status_locked(); st && st->pid.load() == pid_) {
             s.has_metrics = worker_status::read_metrics(st, s.metrics);
+            s.rejected_senders = st->rejected_senders.load();
         }
     }
     return s;

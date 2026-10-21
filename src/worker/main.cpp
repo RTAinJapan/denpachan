@@ -252,6 +252,7 @@ public:
                 strncpy_s(s.rec_error, m_.rec_error.c_str(), _TRUNCATE);
             }
             worker_status::write_metrics(m_.status, s);
+            m_.status->rejected_senders.store(m_.rejected_senders.load());  // Metrics の外 (末尾に足した欄)
         }
         last_bytes_ = bytes;
         last_decoded_ = decoded;

@@ -50,6 +50,9 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     // 前回の状態 (イベントログ用)
     private long _lastRestarts = -1;
+    private long _lastRejected = -1;  // 断った別の送出元の数 (前回の状態)
+    private long _rejectedPending;    // まだイベントログに出していない分
+    private DateTime _rejectedLoggedAt = DateTime.MinValue;
     private string _lastVideoState = "";
     private string _lastUnreachable = "";  // 繋がらない理由 (メッセージの JSON。言語を変えても同じ)
     private bool? _lastConnected;
@@ -480,6 +483,17 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         var unreachableKey = unreachable ? video.At("lastError")?.ToJsonString() ?? "" : "";
         if (unreachableKey.Length > 0 && unreachableKey != _lastUnreachable) events.Add(new(F("event.unreachable", ("reason", lastError)), true));
         _lastUnreachable = unreachableKey;
+        // 同じ宛先 (SRT のポート / RTMP のキー) に別の送出元がつないできて、今の送出元が送っているので断った。
+        // 断られた側は数秒ごとに繋ぎ直すので、1 分に 1 回、その間の回数をまとめて出す。worker が起動し直すと数え直しになる
+        var rejected = (long)video.Num("rejectedSenders");
+        if (_lastRejected >= 0 && rejected > _lastRejected) _rejectedPending += rejected - _lastRejected;
+        _lastRejected = rejected;
+        if (_rejectedPending > 0 && DateTime.Now - _rejectedLoggedAt >= TimeSpan.FromMinutes(1))
+        {
+            events.Add(new(F("event.rejectedSenders", ("count", _rejectedPending)), true));
+            _rejectedPending = 0;
+            _rejectedLoggedAt = DateTime.Now;
+        }
         _lastRestarts = restarts;
         _lastWorkerState = workerState;
         _lastConnected = connected;
@@ -659,6 +673,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             Add("detail.delay", $"{video.Num("delayMs"):0} ms", "detail.delayTip");
             Add("detail.dropped", F("detail.droppedValue", ("late", $"{video.Num("droppedLate"):0}"), ("queue", $"{video.Num("droppedQueue"):0}")));
             Add("detail.decodeErrors", $"{video.Num("decodeErrors"):0}");
+            if (video.Num("rejectedSenders") > 0) Add("detail.rejectedSenders", $"{video.Num("rejectedSenders"):0}", "detail.rejectedSendersTip");
             if (Message(video.At("lastError")) is { Length: > 0 } err) Add(UnreachableReason.Length > 0 ? "detail.unreachableReason" : "detail.error", err);
         }
         if (st.At("srt") is JsonNode srt)

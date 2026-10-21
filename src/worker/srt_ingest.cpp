@@ -233,6 +233,7 @@ void SrtIngest::run_listener() {
                         if (idle_ms < kActiveSenderMs) {
                             // 断られた送出側は数秒ごとに繋ぎ直すので、ログは kRejectLogMs に 1 回、回数を添えてまとめる
                             ++rejected;
+                            ++metrics_.rejected_senders;  // 画面に出す
                             rejected_peer = address_string(peer);
                             if (qpc_now() - rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) log_rejected();
                             srt_close(c);
