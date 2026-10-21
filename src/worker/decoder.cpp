@@ -163,6 +163,8 @@ void Decoder::run() {
             if (run_session(session)) backoff_ms = 500;  // 読めていたなら、間隔は最初から
             if (stop_ || !input_.session_alive(session)) break;
             for (int64_t waited = 0; waited < backoff_ms && !stop_ && input_.session_alive(session); waited += 100) Sleep(100);
+            // 待っている間に接続が終わったら、頼まずに次の接続を待つ (終わった接続のための再同期を次の接続に持ち越さない)
+            if (stop_ || !input_.session_alive(session)) break;
             backoff_ms = std::min<int64_t>(backoff_ms * 2, 5000);
             if (resync_) {
                 resync_();  // 新しいセッションになるので wait_session で待つ
