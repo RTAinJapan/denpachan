@@ -38,6 +38,9 @@ private:
     void run();
     bool wait_until(int64_t target_qpc);
 
+    // タイムスタンプが飛んでも、今の時間軸で出す時刻のずれ (余裕と再生バッファの差) がこれ以内なら時間軸を取り直さない
+    static constexpr int64_t kOffTimelineUs = 500'000;
+
     const PlayoutOptions options_;
     PlayoutClock& clock_;
     FrameQueue& queue_;

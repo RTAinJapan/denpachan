@@ -41,6 +41,9 @@ public:
     // (同じ接続のまま送出側が再起動した、MPEG-TS の折り返しなどの代わり)。音声は kTestRewindAudioLagMs 遅れて戻す。
     // start() の前に呼ぶ。
     void set_test_ts_rewind(int after_sec) { test_ts_rewind_after_sec_ = after_sec; }
+    // 試験用: セッションが始まってからこの秒数後から kTestDropVideoMs の間、受信した映像のパケットを捨てる
+    // (映像だけが途切れて音声は届き続ける送出元の代わり)。start() の前に呼ぶ。
+    void set_test_drop_video(int after_sec) { test_drop_video_after_sec_ = after_sec; }
 
     void start();
     void stop();
@@ -91,6 +94,8 @@ private:
     int test_ts_rewind_after_sec_ = 0;
     static constexpr int64_t kTestRewindSec = 8;
     static constexpr int64_t kTestRewindAudioLagMs = 300;
+    int test_drop_video_after_sec_ = 0;
+    static constexpr int64_t kTestDropVideoMs = 3000;
 
     std::thread thread_;
     std::atomic<bool> stop_{false};
