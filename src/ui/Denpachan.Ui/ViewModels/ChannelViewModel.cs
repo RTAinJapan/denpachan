@@ -416,10 +416,6 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// 1 秒ごとの状態。イベントログに出す出来事を返す。
-    /// relabel = 言語を変えたので文言だけ作り直す (グラフの履歴に足さない、出来事も返さない)。
-    /// </summary>
-    /// <summary>
     /// engine と切れた: 状態が分からないことを出す (最後に届いた状態のままにすると、受信できているように見える)。
     /// 次に繋がって状態が届けば ApplyState で戻る
     /// </summary>
@@ -429,6 +425,10 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         UnreachableReason = "";
     }
 
+    /// <summary>
+    /// 1 秒ごとの状態。イベントログに出す出来事を返す。
+    /// relabel = 言語を変えたので文言だけ作り直す (グラフの履歴に足さない、出来事も返さない)。
+    /// </summary>
     public List<ChannelEvent> ApplyState(JsonNode st, bool relabel = false)
     {
         var events = new List<ChannelEvent>();
