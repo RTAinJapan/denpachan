@@ -26,7 +26,7 @@
 | 映像が乱れずに表示できること | **bot が MediaConnect の取りこぼし (`SourceNotRecoveredPackets`)・CC エラーと、denpachan のデコードエラー・fps で判定する** | 回復できなかったパケットとデコードエラーが 0 で fps が出ていれば、映像は乱れていない。人の目は要らない。静止画 (`DescribeFlowSourceThumbnail`) をスレッドに貼って、人がちらっと見ることもできる |
 | 音声が正しく来ていること、ノイズが無いこと | **録画を残し、後で人が聞く。** 音が来ていない (無音) だけは bot がその場で伝える | ノイズや混ざり方の判定は録画でできる。無音は denpachan の数字で分かるので、その場で直してもらう方が早い |
 | ゲーム音だけが載っていること (マイク音は別経路) | 録画を後で人が聞く | 同上 |
-| 乱れるときは latency を上げてもらう。上げても直らなければ RTMP にする | **bot が自動で行う (§5)。** MediaConnect の source の `MinLatency` を上げる。実際の latency は送出側と MediaConnect の大きい方になるので、**送出側の設定を変えてもらわずに上げて試せる** (繋ぎ直しは要る) | AWS のドキュメント: 送出側と MediaConnect の最小 latency の大きい方が使われる |
+| 乱れるときは latency を上げてもらう。上げても直らなければ RTMP にする | **bot が値を決めて配信者に伝え、配信者が OBS の設定を変えて始め直す (§5)。** 直ったかどうかは bot が見る。上げても直らなければ bot が RTMP (ECS の RTMP サーバ) の案内に切り替える | latency は配信者の OBS の設定に持たせる (本番でもその値で送ってもらう)。MediaConnect の `MinLatency` は低いまま固定し、実際の latency は OBS の値で決まるようにする (大きい方が使われる) |
 | 結果をシートに記録する | **bot が書く (§6)** | |
 
 人がその場にいなくても回るのが目標。運営は後日、録画をまとめて聞いて、シートの音声の欄を埋める。
@@ -36,19 +36,24 @@
 ```mermaid
 flowchart LR
     S[配信者の OBS] -- "SRT (caller)" --> M[MediaConnect フロー]
+    S -. "RTMP (SRT がだめなとき)" .-> T[ECS の RTMP サーバ]
     M -- "SRT 出力 (本番用)" --> V[vMix]
     M -- "SRT 出力 (テスト用)" --> E[denpachan engine + worker]
+    T -. "RTMP pull" .-> E
     M -- "CloudWatch / API" --> B[Discord bot]
+    T -. "統計 API (あれば)" .-> B
     E -- "WebSocket (状態 1 秒ごと)" --> B
     B -- スラッシュコマンド・スレッド --> D[Discord]
     B -- 結果 --> G[Google スプレッドシート]
     E -- 録画 --> R[録画ファイル]
 ```
 
-- **MediaConnect**: 本番と同じフロー (配信者の枠ごとに 1 つ。source は SRT listener、配信者が caller)。テスト用に **SRT の出力を 1 つ足す** (denpachan 向け)。vMix 向けの出力はそのまま。1 つのフローの出力は複数持てるので、本番の設定は触らない。
-- **denpachan**: テスト用の受信機。フローごとにチャンネルを 1 つ割り当てる (最大 8 フロー同時)。録画 (passthrough) を残す。本番でも運営 PC で動いていてよい (受信口は本番では切っておける)。
-- **bot**: denpachan とは別のプログラム (別リポジトリ。Node.js + discord.js か Python + discord.py。§4)。AWS の権限 (MediaConnect と CloudWatch の読み取り、フローの source の更新と開始・停止) を持つ。denpachan と同じ PC で動かすのが簡単 (受信口は loopback)。別の PC でもよい (LAN、トークン必須)。
-- **区間ごとの役割**: 配信者 → MediaConnect の区間 (回線が悪くなりうる所) の数字は MediaConnect から、MediaConnect → 運営の区間 (安定している所) とデコード・音声は denpachan から。
+- **MediaConnect**: 本番と同じフロー (配信者の枠ごとに 1 つ。source は SRT listener、配信者が caller)。テスト用に **SRT の出力を 1 つ足す** (denpachan 向け)。vMix 向けの出力はそのまま。1 つのフローの出力は複数持てるので、本番の設定は触らない。source の `MinLatency` は低い値 (120 ms など) で固定し、bot は変えない。
+- **ECS の RTMP サーバ**: SRT で安定しないときの受け口 (すでに動いているもの)。配信者はそこへ RTMP で送り、denpachan はそこから RTMP pull で受ける (`source.protocol = rtmp`、`mode = pull`)。本番で RTMP の配信者をどう受けるか (vMix が pull する、など) はそのまま。
+- **denpachan**: テスト用の受信機。枠ごとにチャンネルを 1 つ割り当てる (最大 8 枠同時)。録画 (passthrough) を残す。本番でも運営 PC で動いていてよい (受信口は本番では切っておける)。
+- **bot**: denpachan とは別のプログラム (別リポジトリ。Node.js + discord.js か Python + discord.py。§4)。AWS の権限 (MediaConnect と CloudWatch の読み取り、フローの開始・停止) を持つ。denpachan と同じ PC で動かすのが簡単 (受信口は loopback)。別の PC でもよい (LAN、トークン必須)。
+- **区間ごとの役割**: 配信者 → MediaConnect の区間 (回線が悪くなりうる所) の数字は MediaConnect から、MediaConnect → 運営の区間 (安定している所) とデコード・音声は denpachan から。RTMP のときは、配信者 → ECS の区間は RTMP サーバの統計 (あれば) と denpachan の pull の受信状態から。
+- **配信者の OBS の設定を変えるのは配信者**: bot は値を決めて伝え、変えたことの申告 (ボタン) と、変えたあとの数字で確かめる。
 
 ## 3. bot の情報源
 
@@ -58,9 +63,8 @@ bot が使う API とメトリクス。すべて AWS SDK (boto3 / AWS SDK for Ja
 
 | 用途 | API / メトリクス | 使い方 |
 | --- | --- | --- |
-| フローの状態、source の設定 (ingest の IP とポート、`MinLatency`、ホワイトリスト) | `DescribeFlow` | テストの開始時と、設定を変えたあとの確認 |
+| フローの状態、source の設定 (ingest の IP とポート、`MinLatency`、ホワイトリスト) | `DescribeFlow` | テストの開始時 (配信者に案内する接続先) と、`MinLatency` が低いまま (OBS の値が効く状態) であることの確認 |
 | フローの開始・停止 | `StartFlow` / `StopFlow` | テストの開始・終了 (動いている間は課金されるので、使わないときは止める) |
-| **latency を変える** | `UpdateFlowSource` の `MinLatency` (ms) | §5。SRT の latency は握手で決まるので、変えたあとは**配信者に配信を始め直してもらう** (bot が頼む) |
 | 接続しているか | CloudWatch `SourceConnected` (1 / 0)、`SourceDisconnections`、`SourceUpTime` | 繋がった・切れた・切れた回数 |
 | RTT | `SourceRoundTripTime` (ms) | 推奨値の計算 (窓の最大) |
 | ロス | `SourcePacketLossPercent` (%)、`SourceRecoveredPackets`、**`SourceNotRecoveredPackets`** | ロス率は倍率の決定、回復できなかったパケットは「今の latency では足りない」の判定 |
@@ -72,7 +76,12 @@ bot が使う API とメトリクス。すべて AWS SDK (boto3 / AWS SDK for Ja
 
 - CloudWatch は `GetMetricData` で、直近 60 秒を **1 秒の粒度**で 10 秒ごとに取る (AWS のトラブルシュートの記事は 1 秒の解像度で見ることを勧めている。高解像度のメトリクスは 3 時間残る)。ディメンションは Source ARN (と Flow ARN)。
 - **推奨 latency の計算は bot が行う** (denpachan の `src/worker/srt_advisor.h` と同じ規則を bot に写す): 直近 60 秒の RTT の最大 × 倍率 (ロス率 〜1%: 3、〜3%: 4、〜7%: 6、〜10%: 8、それ以上: 10)。窓の中に `SourceNotRecoveredPackets` があれば今の 1.5 倍以上。下限 20 ms、10 ms 単位に切り上げ。接続直後の 5 秒は使わない。AWS の目安「latency は RTT のピークの 3 倍以上」と同じ考え方で、ロスが多いときに倍率を上げる分だけ厳しい。
-- 余裕 (`headroomMs`) と `verdict` (§3.2 の表と同じ区分) もここから作る。実際の latency は「配信者の OBS の値」と「`MinLatency`」の大きい方。OBS の値は bot からは見えないので、**案内した値を配信者が入れている前提**で `MinLatency` と比べ、合わなければ (`SourceLatency` が `MinLatency` より明らかに大きいなど) 配信者に確かめる。
+- 余裕 (`headroomMs`) と `verdict` (§3.2 の表と同じ区分) もここから作る。実際の latency は「配信者の OBS の値」と「`MinLatency`」の大きい方で、`MinLatency` は低く固定するので OBS の値が効く。**OBS の値は bot からは見えない。** bot は「案内した値」を実際の latency とみなし、配信者が「設定した」と申告 (スレッドのボタン) したうえで `SourceUpTime` が戻った (繋ぎ直した) ことを確かめてから、次の計測に進む。上げたのに `SourceNotRecoveredPackets` がまったく減らないときは、設定が反映されていない可能性として配信者に URL の `latency=` を確かめてもらう。
+
+#### RTMP (ECS の RTMP サーバ) の区間
+
+- RTMP サーバに統計の API があれば (nginx-rtmp の `/stat`、SRS の HTTP API など)、接続しているか・ビットレートを取る。無ければ denpachan の pull の受信状態 (`status`、`fps`、`decodeErrors`、`tcp.retransBytes`) だけで判定する。
+- 配信者に案内するのは RTMP の URL とキー (bot の設定に、枠ごとのキーを持つ)。denpachan のそのチャンネルの pull の URL も同じキーにしておく。
 
 ### 3.2 denpachan のメトリクスの受信口 (MediaConnect → 運営の区間、デコード、音声、録画)
 
@@ -167,7 +176,7 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 | 読む | `getState`、`getConfig` (IPC 形。秘密は入らない)、`getChannels` (`channels` と同じ内容を 1 回) | いつでも |
 | 操作 | `startChannel`、`stopChannel`、`setRecording`、`patchChannel` | `allowControl` が on のとき |
 
-`patchChannel` は bot が壊せる範囲を狭める: **`source.latencyMs` と `name` だけ**を受け付ける (他の項目が入っていれば `error`)。MediaConnect 経由では bot が denpachan の latency を変える必要はほぼ無いが、MediaConnect → denpachan の区間が悪いときに運営が `/test latency` で上げられるよう残す。
+`patchChannel` は bot が壊せる範囲を狭める: **`source.latencyMs` と `name` だけ**を受け付ける (他の項目が入っていれば `error`)。MediaConnect 経由では bot が denpachan の latency を変える必要はほぼ無いが、MediaConnect → denpachan の区間が悪いときに運営が `/test latency receiver` で上げられるよう残す。SRT の枠と RTMP の枠は別のチャンネルにしておき、bot はプロトコルの切り替えでチャンネルの設定を変えない。
 
 #### 実装 (engine)
 
@@ -183,7 +192,7 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 ### 4.1 構成
 
 - 別リポジトリ。Node.js + discord.js (スラッシュコマンド、スレッド、ボタン) + AWS SDK + `ws` + Google Sheets API。Python + discord.py + boto3 でも同じ。
-- 設定: Discord のトークン、サーバとチャンネル、AWS のリージョンと認証 (フローの一覧、CloudWatch の読み取り、`UpdateFlowSource`、`StartFlow` / `StopFlow` の権限だけの IAM ユーザー)、**テストの枠** (フロー ARN ↔ denpachan のチャンネル番号の対応表)、配信者に案内する接続先 (フローの ingest の IP とポートは `DescribeFlow` から取れる。パスフレーズは設定に持つ)、RTMP の案内先、シートの ID、denpachan の受信口 (host、port、token)。
+- 設定: Discord のトークン、サーバとチャンネル、AWS のリージョンと認証 (フローの一覧、CloudWatch の読み取り、`StartFlow` / `StopFlow` の権限だけの IAM ユーザー)、**テストの枠** (SRT の枠: フロー ARN ↔ denpachan のチャンネル番号、RTMP の枠: ECS の RTMP サーバの URL とキー ↔ denpachan のチャンネル番号)、配信者に案内する接続先 (フローの ingest の IP とポートは `DescribeFlow` から取れる。パスフレーズは設定に持つ)、latency の初期値と上限、シートの ID、denpachan の受信口 (host、port、token)、RTMP サーバの統計 API (あれば)。
 - 状態 (テストのセッション) は SQLite に持つ (bot を起動し直しても続きから)。
 
 ### 4.2 コマンド
@@ -193,13 +202,13 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 | `/test start @配信者 [枠]` | 運営 (または配信者本人) | 空いている枠 (フロー + denpachan のチャンネル) を割り当て、フローを `StartFlow`、denpachan のチャンネルを開始し録画を始める。**スレッド**を作って配信者を呼び、接続先 (SRT の URL `srt://<ingest IP>:<port>?latency=<ms>000&passphrase=…`、OBS の設定) を貼る。監視を始める |
 | `/test status [枠]` | 誰でも | 今の数字 (MediaConnect と denpachan の両方) を人が読める形で出す |
 | `/test shot` | 誰でも | `DescribeFlowSourceThumbnail` の静止画を貼る |
-| `/test latency <ms>` | 運営 | 手でフローの `MinLatency` を変える (自動の途中でも)。`/test latency receiver <ms>` は denpachan 側 |
-| `/test rtmp` | 運営 | RTMP に切り替える (自動の判定を待たずに) |
+| `/test latency <ms>` | 運営 | 配信者に案内する latency を手で決める (自動の途中でも。bot が配信者に伝え、申告を待つ)。`/test latency receiver <ms>` は denpachan 側 (MediaConnect → 運営の区間) |
+| `/test rtmp` | 運営 | RTMP (ECS の RTMP サーバ) の案内に切り替える (自動の判定を待たずに) |
 | `/test finish [結果メモ]` | 運営・配信者 | 録画を止め、フローを止め (他で使っていなければ)、結果をシートに書き、スレッドにまとめを貼る |
 | `/test review @配信者 音声:OK/NG メモ` | 運営 (後日) | 録画を聞いた結果をシートの音声の欄に書く |
 | `/test cancel` | 運営 | 中止 (枠を空ける) |
 
-スレッドの中では、bot が節目ごとに短く書く (繋がった、計測中、latency を上げるので始め直してほしい、安定した、RTMP に切り替える、無音、終了)。1 秒ごとの数字は書かない (`/test status` で見る)。
+スレッドの中では、bot が節目ごとに短く書く (繋がった、計測中、latency を N ms にして始め直してほしい、安定した、RTMP に切り替える、無音、終了)。配信者への頼みには **「設定した」ボタン**を付け、押されるまで待つ (押されずに繋ぎ直しだけ観測したときは、押したものとみなして進めてよい)。1 秒ごとの数字は書かない (`/test status` で見る)。
 
 ### 4.3 監視の状態機械
 
@@ -207,8 +216,8 @@ RTMP のチャンネルでは `latency` の代わりに `tcp: { rttMs, retransBy
 WAITING ──(SourceConnected = 1)──> CONNECTED ──(15 秒)──> MEASURING ──(窓が 30 秒以上)──> JUDGE
    │ 10 分で一度だけ「まだ届いていません」と伝える           │
    │                                                     ├─ ok / generous ──> STABLE (さらに 60 秒見て確定) ──> DONE
-   │                                                     ├─ tight / insufficient ──> RAISE (MinLatency を上げ、始め直しを頼む) ──> WAITING
-   │                                                     └─ 上限まで上げても insufficient ──> RTMP (切り替え) ──> CONNECTED (RTMP で再判定) ──> DONE
+   │                                                     ├─ tight / insufficient ──> RAISE (値を伝え、OBS を直して始め直すのを待つ) ──> WAITING
+   │                                                     └─ 上限まで上げても insufficient ──> RTMP (ECS の RTMP サーバへ案内) ──> CONNECTED (RTMP の枠で再判定) ──> DONE
    └─(denpachan が unreachable / 繋がるのに映像が無い)──> 運営側の問題として運営に伝える (配信者の問題ではない)
 ```
 
@@ -216,13 +225,14 @@ WAITING ──(SourceConnected = 1)──> CONNECTED ──(15 秒)──> MEASU
 
 ## 5. latency の調整の手順 (bot の中身)
 
-1. **初期値**: フローの `MinLatency` を案内値 (たとえば 120 ms) にし、配信者には OBS の URL に同じ値 (`latency=120000`、µs) を入れてもらう。実際の latency は両側の大きい方なので、`MinLatency` を上げれば効く。
+1. **初期値**: 配信者には OBS の URL に案内値 (たとえば `latency=120000`、µs。bot の設定) を入れてもらう。フローの `MinLatency` はそれ以下に固定してあるので、実際の latency は OBS の値になる。bot は「今の latency = 案内した値」として持つ。
 2. **計測**: `SourceConnected` が 1 になって 15 秒後から (接続直後の 5 秒を除外し、10 秒分溜まってから) 推奨値を出す。窓が 30 秒以上になってから判定する (§3.1 の規則で `verdict` と `headroomMs` を作る)。
-3. **上げる**: `tight` か `insufficient` なら、`MinLatency` を `max(推奨値, 今の値 × 1.5)` を 10 ms 単位に切り上げた値にする (`UpdateFlowSource`)。上限 2000 ms。SRT の latency は握手で決まるので、スレッドで「latency を N ms に上げました。OBS の配信を止めて、始め直してください (URL の `latency=` も N000 に)」と頼む。繋ぎ直したら (`SourceUpTime` が戻る) また計測 (2 へ)。最大 4 回。
-   - `MinLatency` の変更で MediaConnect が接続を切るかどうかは AWS のドキュメントに書いていない (CloudFormation では「中断なし」の更新)。切れても切れなくても、始め直してもらえば新しい値で握手し直す。
-4. **安定の確定**: `ok` か `generous` が出たら、さらに 60 秒見て `SourceNotRecoveredPackets` が 0、`SourceContinuityCounter` と `SourceTSSyncLoss` が増えない、denpachan の `decodeErrors` が増えない、`fps` が 60 秒の平均で期待の 90% 以上 (期待は案内値、たとえば 1080p60) であれば **確定**。`generous` なら推奨値まで下げる提案を添える (下げるのは任意)。
-5. **確定したら配信者に伝える**: 「latency は **N ms** にしてください」。N = 確定した `MinLatency`。フローの `MinLatency` はその値のまま本番に使う (テストが本番と同じ経路なので、余裕を足し直す必要はない。安全側に 1.2 倍にしてもよい)。
-6. **RTMP への切り替え**: 上限まで上げても `insufficient`、または `SourceJitter` が 500 ms を超え続ける (AWS の目安では切断の原因)、または denpachan の `decodeErrors` が増え続ける・`fps` が出ない (回線でなく送出側の問題の可能性) なら、**RTMP 用に用意した枠** (RTMP を受ける経路は本番の構成に合わせて決める。§8) に配信者を移す。bot が RTMP の URL とキーを貼り、監視する枠を変える。RTMP で `live` になり 60 秒安定で確定。結果は「RTMP」。
+3. **上げる**: `tight` か `insufficient` なら、次の値 N = `max(推奨値, 今の値 × 1.5)` を 10 ms 単位に切り上げたもの (上限 2000 ms) を決め、スレッドで「OBS の配信を止め、URL の `latency=` を **N000** にして、始め直してください」と頼む (「設定した」ボタン付き)。ボタンが押され、`SourceUpTime` が戻った (繋ぎ直した) のを見たら、「今の latency = N」としてまた計測 (2 へ)。最大 4 回。
+   - 配信者が始め直さないまま 10 分経ったら、一度だけ催促する。
+   - 上げたのに `SourceNotRecoveredPackets` が前の窓とまったく変わらないときは、設定が反映されていない可能性として URL を確かめてもらう (OBS は URL を変えても配信を止めないと反映しない)。
+4. **安定の確定**: `ok` か `generous` が出たら、さらに 60 秒見て `SourceNotRecoveredPackets` が 0、`SourceContinuityCounter` と `SourceTSSyncLoss` が増えない、denpachan の `decodeErrors` が増えない、`fps` が 60 秒の平均で期待の 90% 以上 (期待は案内値、たとえば 1080p60) であれば **確定**。`generous` なら推奨値まで下げられることを添える (下げるのは任意。下げるなら同じ手順で始め直す)。
+5. **確定したら配信者に伝える**: 「本番も latency **N ms** のままにしてください」。N = 確定した値 (テストが本番と同じ経路なので、余裕を足し直す必要はない)。シートにも書く。
+6. **RTMP への切り替え**: 上限まで上げても `insufficient`、または `SourceJitter` が 500 ms を超え続ける (AWS の目安では切断の原因)、または denpachan の `decodeErrors` が増え続ける・`fps` が出ない (回線でなく送出側の問題の可能性) なら、**RTMP の枠** (ECS の RTMP サーバ + denpachan の pull のチャンネル) に配信者を移す。bot が RTMP の URL とキーを貼り、SRT の枠を空け、監視する枠を変える。RTMP サーバの統計 (あれば) と denpachan で `live` になり 60 秒安定 (`decodeErrors` が増えない、`fps` が出る、`tcp.retransBytes` が増え続けない) で確定。結果は「RTMP」。
 7. **無音**: どの段階でも denpachan の `audio.silentSec > 10` なら「音が届いていません (OBS の音声の設定を確認)」を一度だけ伝える。`DescribeFlowSourceMetadata` に音声ストリームが無いときも同じ。音が来たら解除。
 
 判定に使う数字はすべて bot の中の共通の形 (§3.2 の `channels` の項目名) にそろえるので、区間が MediaConnect でも denpachan でも同じ処理で判定できる。閾値 (倍率の表) は bot の設定に置く。
@@ -252,7 +262,7 @@ WAITING ──(SourceConnected = 1)──> CONNECTED ──(15 秒)──> MEASU
 | 段 | 内容 | 大きさの目安 |
 | --- | --- | --- |
 | 1 | bot: MediaConnect の読み取り (`DescribeFlow`、CloudWatch、`DescribeFlowSourceMetadata`、サムネイル)、`/test start` / `status` / `shot` / `finish`、スレッドでの通知、シートへの記録。denpachan は人が画面で見る | bot の骨格。denpachan の変更なし |
-| 2 | bot: §5 の自動調整 (`UpdateFlowSource`、`StartFlow` / `StopFlow`) | |
+| 2 | bot: §5 の自動調整 (値を決めて伝える、「設定した」ボタン、繋ぎ直しの検出、`StartFlow` / `StopFlow`) | |
 | 3 | engine: `general.metrics` の設定、WebSocket サーバ、`hello` / `channels` の配信、`getState` / `getChannels` (読むだけ)。bot: デコード・無音・録画の状態を取り込む | C++ 500 行前後 + 画面の全体設定 |
 | 4 | engine: `allowControl` と `setRecording` / `patchChannel` の絞り込み。bot: 録画の自動開始・停止、`/test latency receiver` | |
 | 5 | bot: RTMP への切り替え、`/test review`。(任意) 予約 | |
@@ -262,9 +272,10 @@ WAITING ──(SourceConnected = 1)──> CONNECTED ──(15 秒)──> MEASU
 ## 8. 決めていないこと・注意
 
 - **フローの数と課金**: 配信者の枠の数だけフローが要り、動いている間は課金される。テストの時間だけ `StartFlow` / `StopFlow` する (bot が行う)。本番用のフローをそのまま使うか、テスト用のフローを別に作るかは運用で決める (同じ経路で測るには本番用を使うのが確実)。
-- **配信者のホワイトリスト**: フローの source の `WhitelistCidr` に配信者の IP が要る。`0.0.0.0/0` にしてパスフレーズで守るか、配信者に IP を申告してもらって bot が `UpdateFlowSource` で入れるか。前者が簡単 (パスフレーズは必ず付ける)。
-- **RTMP の経路**: MediaConnect は RTMP を受けないので、RTMP のときは別の受け口 (運営 PC の denpachan の rtmpd、または Nginx) に送ってもらう。本番で RTMP の配信者をどう受けるかに合わせる。
-- **OBS 側の latency**: bot からは見えない。案内した値を入れている前提で判定し、`SourceLatency` (ストリームの latency) が `MinLatency` より大きければ配信者に確かめる。
+- **配信者のホワイトリスト**: フローの source の `WhitelistCidr` に配信者の IP が要る。`0.0.0.0/0` にしてパスフレーズで守るか、配信者に IP を申告してもらって運営が入れるか。前者が簡単 (パスフレーズは必ず付ける)。bot はフローの設定を変えない。
+- **RTMP の統計**: ECS の RTMP サーバに統計の API があるかで、RTMP の判定の細かさが変わる。無くても denpachan の pull の受信状態で「映るか・安定か」は判定できる。
+- **OBS 側の latency**: bot からは見えない。案内した値と「設定した」の申告で判定する。配信者が別の値を入れていても bot には分からないので、確定した値はシートとスレッドに残し、本番前に配信者に見てもらう。
+- **フローの `MinLatency`**: OBS の値が効くように低い値 (案内の初期値以下) に固定しておく。これより大きいと、配信者がいくら下げても効かない。
 - **CloudWatch の粒度と遅れ**: 1 秒の粒度で取れるが、CloudWatch に反映されるまで数十秒遅れることがある。判定の窓を 30 秒以上にしてあるので、遅れは「判定が少し遅くなる」だけ。
 - **同時に何人まで**: 枠の数 (フローと denpachan のチャンネル。最大 8)。
 - **配信者の OBS の設定の確認** (解像度・fps・ビットレート・音声の経路) は、bot が「案内した値」と `DescribeFlowSourceMetadata` の値を比べて違いを伝えるところまで。設定そのものは配信者が直す。
