@@ -91,6 +91,14 @@ private:
     std::atomic<int64_t> io_deadline_qpc_{0};
     std::atomic<bool> io_timed_out_{false};  // interrupt_cb が時間切れで打ち切った (繋がらない理由の表示用)
     int64_t last_pts_us_ = AV_NOPTS_VALUE;
+
+    // HW デコードの結果を取り出す先のバッファのプール (transfer_frame)
+    FramePtr transfer_frame(const AVFrame* hw);
+    AVBufferPool* transfer_pool_ = nullptr;
+    AVPixelFormat pool_format_ = AV_PIX_FMT_NONE;
+    int pool_width_ = 0;
+    int pool_height_ = 0;
+    static constexpr int kTransferAlign = 64;
     int test_ts_rewind_after_sec_ = 0;
     static constexpr int64_t kTestRewindSec = 8;
     static constexpr int64_t kTestRewindAudioLagMs = 300;
