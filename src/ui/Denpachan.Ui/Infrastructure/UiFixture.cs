@@ -64,6 +64,11 @@ public static class UiFixture
             }
             vm.ApplyStateFromFixture(state);
         }
+        // engine に繋がっていないときは、実際の画面と同じく状態不明と出す (MainViewModel.OnConnectionChanged)
+        if (!fixture.Bool("connected", true))
+        {
+            foreach (var ch in vm.Channels) ch.SetEngineDisconnected();
+        }
 
         if (fixture.At("testPattern") is JsonArray pattern)
         {

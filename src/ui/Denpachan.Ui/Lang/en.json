@@ -169,6 +169,7 @@
   "status.waitingVideo": "Waiting for video",
   "status.connecting": "Connecting…",
   "status.listening": "Listening",
+  "status.engineDisconnected": "Unknown (disconnected from the engine)",
   "event.channel": "{name}: {text}",
   "event.workerRestarted": "Restarted the worker ({reason})",
   "event.stopped": "Stopped",

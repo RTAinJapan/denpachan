@@ -260,7 +260,7 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding Details}">
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="{x:Type vm:DetailRow}">
+                            <DataTemplate DataType="{x:Type vm:DetailItem}">
                                 <!-- Tip があればその行の説明をツールチップに出す (行のどこにマウスを載せても出るよう背景を透明で塗る) -->
                                 <Grid Margin="0,1" Background="Transparent" ToolTip="{Binding Tip}">
                                     <Grid.ColumnDefinitions>

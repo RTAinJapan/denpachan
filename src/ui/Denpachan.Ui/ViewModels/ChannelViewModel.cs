@@ -13,6 +13,26 @@ public sealed record Option<T>(T Value, string Label);
 /// <summary>詳細パネルの 1 行。Tip は行にマウスを載せたときの説明 (無ければ null)</summary>
 public sealed record DetailRow(string Label, string Value, string? Tip = null);
 
+/// <summary>
+/// 詳細パネルに出している 1 行。毎秒の更新では、行の並びが同じなら値だけを書き換える
+/// (行を作り直すと、開いているツールチップが閉じてしまう)
+/// </summary>
+public sealed class DetailItem(DetailRow row) : ObservableObject
+{
+    private DetailRow _row = row;
+    public string Label => _row.Label;
+    public string Value => _row.Value;
+    public string? Tip => _row.Tip;
+
+    public void Update(DetailRow row)
+    {
+        if (row == _row) return;
+        _row = row;
+        OnPropertyChanged(nameof(Value));
+        OnPropertyChanged(nameof(Tip));
+    }
+}
+
 /// <summary>イベントログに出す出来事 (Warning は黄色で出す)</summary>
 public sealed record ChannelEvent(string Text, bool Warning = false);
 
@@ -145,11 +165,33 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private double[] _rttHistory = [];
     public double[] RttHistory { get => _rttHistory; private set => SetProperty(ref _rttHistory, value); }
 
-    private IReadOnlyList<DetailRow> _details = [];
-    public IReadOnlyList<DetailRow> Details { get => _details; private set => SetProperty(ref _details, value); }
+    /// <summary>詳細パネルの行。詳細パネルに出している (選んでいる) チャンネルだけ作る</summary>
+    public System.Collections.ObjectModel.ObservableCollection<DetailItem> Details { get; } = [];
+    private JsonNode? _lastState;  // 最後に届いた状態 (選ばれたときに詳細を作るため)
 
     private bool _isSelected;
-    public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (SetProperty(ref _isSelected, value) && value) RefreshDetails();
+        }
+    }
+
+    private void RefreshDetails()
+    {
+        if (_lastState == null) return;
+        var rows = BuildDetails(_lastState);
+        // 行の並び (ラベル) が同じなら値だけを書き換える。違えば作り直す
+        if (rows.Count == Details.Count && rows.Select(r => r.Label).SequenceEqual(Details.Select(d => d.Label)))
+        {
+            for (var i = 0; i < rows.Count; i++) Details[i].Update(rows[i]);
+            return;
+        }
+        Details.Clear();
+        foreach (var r in rows) Details.Add(new DetailItem(r));
+    }
 
     private bool _isLocked;
     /// <summary>操作ロック (誤操作の防止)。タイルのボタンとプルダウンを使えなくする。</summary>
@@ -374,6 +416,16 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// engine と切れた: 状態が分からないことを出す (最後に届いた状態のままにすると、受信できているように見える)。
+    /// 次に繋がって状態が届けば ApplyState で戻る
+    /// </summary>
+    public void SetEngineDisconnected()
+    {
+        (StatusKind, StatusText) = ("restarting", T("status.engineDisconnected"));
+        UnreachableReason = "";
+    }
+
+    /// <summary>
     /// 1 秒ごとの状態。イベントログに出す出来事を返す。
     /// relabel = 言語を変えたので文言だけ作り直す (グラフの履歴に足さない、出来事も返さない)。
     /// </summary>
@@ -537,7 +589,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
         if (workerState == "stopped") PreviewHasFrame = PreviewHasFrame && Enabled;
         UpdatePreviewMessage();
-        Details = BuildDetails(st);
+        _lastState = st;
+        if (IsSelected) RefreshDetails();  // 詳細は選んでいるチャンネルの分だけ作る (毎秒 8ch 分を作らない)
         return relabel ? [] : events;
     }
 
