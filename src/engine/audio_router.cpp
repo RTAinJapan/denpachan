@@ -110,8 +110,11 @@ void AudioRouter::apply(const Config& config) {
         for (const auto& [ch, name] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, name);
         logged_missing_ = missing_;
     }
-    for (const auto& [ch, name] : asio_busy_) {
-        spdlog::warn("ch{}: {} is not used: only one ASIO driver at a time ({} is in use)", ch, name, to_utf8(asio_name));
+    if (asio_busy_ != logged_asio_busy_) {  // 同じく、変わったときだけ出す
+        for (const auto& [ch, name] : asio_busy_) {
+            spdlog::warn("ch{}: {} is not used: only one ASIO driver at a time ({} is in use)", ch, name, to_utf8(asio_name));
+        }
+        logged_asio_busy_ = asio_busy_;
     }
 }
 
@@ -141,21 +144,43 @@ json AudioRouter::channel_status(int ch) {
                       {"exclusive", st.exclusive},
                       {"startChannel", r.start_channel},
                       {"mute", r.mute}};
+            // for_each_source は描画スレッドと同じロック (sources_mutex_) を持って呼ぶので、その中では値を写すだけにして、
+            // JSON はロックの外で作る (8ch 分を 1 秒ごとに作る間、描画を待たせない)
+            struct Snapshot {
+                bool found = false;
+                bool playing = false;
+                double latency_ms = 0, error_ms = 0;
+                uint64_t slips = 0, underruns = 0, resyncs = 0;
+                std::string last_resync;
+                float peak_l = 0, peak_r = 0;
+            } snap;
             d.output->for_each_source([&](ChannelSource& s) {
                 if (s.options().ch != ch) return;
                 auto& stats = s.stats();
-                j["playing"] = stats.playing.load();
-                j["latencyMs"] = stats.latency_ms.load();
-                j["errorMs"] = stats.error_ms.load();
-                j["slips"] = stats.slips.load();
-                j["underruns"] = stats.underruns.load();
-                j["resyncs"] = stats.resyncs.load();
+                snap.found = true;
+                snap.playing = stats.playing.load();
+                snap.latency_ms = stats.latency_ms.load();
+                snap.error_ms = stats.error_ms.load();
+                snap.slips = stats.slips.load();
+                snap.underruns = stats.underruns.load();
+                snap.resyncs = stats.resyncs.load();
                 {
                     std::lock_guard lk(stats.reason_mutex);
-                    j["lastResync"] = stats.last_resync_reason;  // 直近の合わせ直しの理由 (調べもの用)
+                    snap.last_resync = stats.last_resync_reason;
                 }
-                j["peakDb"] = {dbfs(stats.peak_l.exchange(0)), dbfs(stats.peak_r.exchange(0))};
+                snap.peak_l = stats.peak_l.exchange(0);
+                snap.peak_r = stats.peak_r.exchange(0);
             });
+            if (snap.found) {
+                j["playing"] = snap.playing;
+                j["latencyMs"] = snap.latency_ms;
+                j["errorMs"] = snap.error_ms;
+                j["slips"] = snap.slips;
+                j["underruns"] = snap.underruns;
+                j["resyncs"] = snap.resyncs;
+                j["lastResync"] = snap.last_resync;  // 直近の合わせ直しの理由 (調べもの用)
+                j["peakDb"] = {dbfs(snap.peak_l), dbfs(snap.peak_r)};
+            }
             return j;
         }
     }

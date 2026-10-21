@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "audio_devices.h"
+#include "render_log.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -299,13 +300,13 @@ int64_t DeviceOutput::heard_time_locked(int64_t now, uint32_t lead_frames) {
         position_offset_qpc_ = calibrate_samples_[calibrate_samples_.size() / 2];
         calibrate_samples_.clear();
         position_ready_ = true;
-        spdlog::info("audio [{}]: timing from the audio clock (offset {:+.2f} ms from the buffer padding)", to_utf8(options_.name),
-                     double(qpc_to_us(position_offset_qpc_)) / 1000.0);
+        render_log().info("audio [{}]: timing from the audio clock (offset {:+.2f} ms from the buffer padding)", to_utf8(options_.name),
+                          double(qpc_to_us(position_offset_qpc_)) / 1000.0);
     }
     if (std::llabs(diff - position_offset_qpc_) > qpc_from_ms(kPositionMaxOffMs)) {
         // 位置が飛んだ (デバイス側のリセットなど): padding に戻して測り直す
-        spdlog::info("audio [{}]: audio clock moved {:+.1f} ms; measuring again", to_utf8(options_.name),
-                     double(qpc_to_us(diff - position_offset_qpc_)) / 1000.0);
+        render_log().info("audio [{}]: audio clock moved {:+.1f} ms; measuring again", to_utf8(options_.name),
+                          double(qpc_to_us(diff - position_offset_qpc_)) / 1000.0);
         position_ready_ = false;
         calibrate_until_qpc_ = 0;
         return by_padding;

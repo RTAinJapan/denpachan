@@ -4,6 +4,7 @@
 
 #include "audio_devices.h"  // to_utf8
 #include "denpachan/win_util.h"
+#include "render_log.h"
 
 namespace denpachan::engine {
 
@@ -101,7 +102,7 @@ void AsioOutput::on_log(int level, const char* message) {
                      : level == DENPACHAN_ASIO_LOG_WARN ? spdlog::level::warn
                      : level == DENPACHAN_ASIO_LOG_INFO ? spdlog::level::info
                                                         : spdlog::level::debug;
-    spdlog::log(lvl, "audio [{}]: {}", to_utf8(options_.name), message);
+    render_log().log(lvl, "audio [{}]: {}", to_utf8(options_.name), message);  // ドライバのスレッドから呼ばれる
 }
 
 }  // namespace denpachan::engine

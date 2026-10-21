@@ -26,6 +26,7 @@
 #include "engine.h"
 #include "ipc_server.h"
 #include "output_devices.h"
+#include "render_log.h"
 
 #include <timeapi.h>  // windows.h の後に置く
 
@@ -94,6 +95,7 @@ void setup_logging(const std::wstring& log_file) {
     logger->flush_on(spdlog::level::warn);
     spdlog::set_default_logger(logger);
     spdlog::flush_every(std::chrono::seconds(1));
+    setup_render_log();  // 音声の描画スレッド用 (非同期。render_log.h)
 }
 
 std::wstring exe_dir() {
@@ -173,5 +175,6 @@ int wmain(int argc, wchar_t** argv) {
     timeEndPeriod(1);
     CoUninitialize();
     spdlog::info("engine stopped");
+    spdlog::shutdown();  // 非同期のロガー (render_log) に溜まっている分を書き出す
     return 0;
 }
