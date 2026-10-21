@@ -116,8 +116,7 @@ int wmain(int argc, wchar_t** argv) {
 
     if (opts->list_devices) {
         for (const auto& d : list_output_devices()) {
-            std::printf("%s\n    %d ch, %d Hz\n    %s\n", to_utf8(d.name).c_str(), d.channels, d.sample_rate,
-                        to_utf8(d.id).c_str());
+            std::printf("%s\n    %d ch, %d Hz\n    %s\n", to_utf8(d.name).c_str(), d.channels, d.sample_rate, to_utf8(d.id).c_str());
         }
         CoUninitialize();
         return 0;
@@ -149,8 +148,7 @@ int wmain(int argc, wchar_t** argv) {
     g_stop_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     SetConsoleCtrlHandler(on_console_ctrl, TRUE);
 
-    Engine engine(opts->config_path.empty() ? default_config_path() : opts->config_path,
-                  exe_dir() + L"\\denpachan-worker.exe", log_dir);
+    Engine engine(opts->config_path.empty() ? default_config_path() : opts->config_path, exe_dir() + L"\\denpachan-worker.exe", log_dir);
     spdlog::info("engine start");
     engine.init();
 

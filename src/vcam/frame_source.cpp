@@ -120,9 +120,7 @@ void FrameSource::fill_slate(uint8_t* dst) {
     memcpy(dst, slate_.data(), slate_.size());
 }
 
-bool FrameSource::has_frame() const {
-    return header_ && header_->write_seq.load(std::memory_order_acquire) != 0;
-}
+bool FrameSource::has_frame() const { return header_ && header_->write_seq.load(std::memory_order_acquire) != 0; }
 
 bool FrameSource::fill(uint8_t* dst) {
     if (ensure_open()) ensure_reader_slot();
@@ -131,8 +129,8 @@ bool FrameSource::fill(uint8_t* dst) {
     // 開いた直後でまだフレームがなく、書き手が生きているときは、書き手が保持しているフレームを
     // 書いてくれるのを少し待つ (誰も見ていない間は書き手が書き込みを省いているため)。
     const bool live = writer_live();
-    const bool wait_for_writer = first_fill_ && !has_frame() && header_ &&
-                                 heartbeat_alive(header_->writer_heartbeat_qpc.load(), kWriterTimeoutMs);
+    const bool wait_for_writer =
+        first_fill_ && !has_frame() && header_ && heartbeat_alive(header_->writer_heartbeat_qpc.load(), kWriterTimeoutMs);
     first_fill_ = false;
     if (!live || header_->write_seq.load(std::memory_order_acquire) == last_seq_) {
         const DWORD timeout = wait_for_writer ? 200 : live ? frame_period_ms_ * 2 : frame_period_ms_;

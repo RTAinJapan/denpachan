@@ -29,9 +29,7 @@ void AsioOutput::start() {
     const std::wstring clsid = options_.id.substr(options_.id.find(L':') + 1);
     denpachan_asio_callbacks callbacks{};
     callbacks.user = this;
-    callbacks.opened = [](void* user, const denpachan_asio_format* format) {
-        static_cast<AsioOutput*>(user)->on_opened(*format);
-    };
+    callbacks.opened = [](void* user, const denpachan_asio_format* format) { static_cast<AsioOutput*>(user)->on_opened(*format); };
     callbacks.closed = [](void* user) { static_cast<AsioOutput*>(user)->on_closed(); };
     callbacks.render = [](void* user, float* mix, int frames, int64_t first_hear_qpc) {
         static_cast<AsioOutput*>(user)->on_render(mix, frames, first_hear_qpc);
@@ -71,8 +69,8 @@ void AsioOutput::on_opened(const denpachan_asio_format& format) {
         sources_.clear();
         for (const auto& r : routes_) {
             if (r.start_channel < 1 || r.start_channel + 1 > format.channels) {
-                spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch,
-                             r.start_channel, format.channels);
+                spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch, r.start_channel,
+                             format.channels);
             }
             sources_.push_back(std::make_unique<ChannelSource>(r, uint32_t(format.sample_rate), format.channels));
         }
@@ -99,7 +97,7 @@ void AsioOutput::on_render(float* mix, int frames, int64_t first_hear_qpc) {
 }
 
 void AsioOutput::on_log(int level, const char* message) {
-    const auto lvl = level >= DENPACHAN_ASIO_LOG_ERROR ? spdlog::level::err
+    const auto lvl = level >= DENPACHAN_ASIO_LOG_ERROR  ? spdlog::level::err
                      : level == DENPACHAN_ASIO_LOG_WARN ? spdlog::level::warn
                      : level == DENPACHAN_ASIO_LOG_INFO ? spdlog::level::info
                                                         : spdlog::level::debug;

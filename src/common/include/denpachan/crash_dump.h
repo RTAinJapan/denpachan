@@ -16,7 +16,7 @@ namespace crash_dump_detail {
 inline std::wstring g_dir;
 inline std::wstring g_prefix;
 
-constexpr int kKeepDumps = 10;                               // 同じ prefix のダンプをいくつ残すか
+constexpr int kKeepDumps = 10;                                  // 同じ prefix のダンプをいくつ残すか
 constexpr ULONGLONG kMinFreeBytes = 2ULL * 1024 * 1024 * 1024;  // 空きがこれを切ったらダンプを書かない
 
 // 同じ prefix のダンプを新しい順に kKeepDumps 個だけ残す。クラッシュを繰り返しても (engine は数秒ごとに
@@ -45,8 +45,8 @@ inline LONG WINAPI on_unhandled(EXCEPTION_POINTERS* info) {
     SYSTEMTIME t;
     GetLocalTime(&t);
     wchar_t name[128];
-    swprintf_s(name, L"%s-%04u%02u%02u-%02u%02u%02u-%lu.dmp", g_prefix.c_str(), t.wYear, t.wMonth, t.wDay, t.wHour,
-               t.wMinute, t.wSecond, GetCurrentProcessId());
+    swprintf_s(name, L"%s-%04u%02u%02u-%02u%02u%02u-%lu.dmp", g_prefix.c_str(), t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond,
+               GetCurrentProcessId());
     const std::wstring path = g_dir + L"\\" + name;
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
@@ -55,8 +55,7 @@ inline LONG WINAPI on_unhandled(EXCEPTION_POINTERS* info) {
         mei.ExceptionPointers = info;
         mei.ClientPointers = FALSE;
         MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file,
-                          MINIDUMP_TYPE(MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory), &mei, nullptr,
-                          nullptr);
+                          MINIDUMP_TYPE(MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory), &mei, nullptr, nullptr);
         CloseHandle(file);
     }
     return EXCEPTION_EXECUTE_HANDLER;  // ダイアログを出さずに終了する (engine が再起動する)

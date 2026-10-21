@@ -34,8 +34,8 @@ bool Scaler::scale(const AVFrame* src, uint8_t* dst, int dw, int dh) {
     const int x0 = ((dw - rw) / 2) & ~1;
     const int y0 = ((dh - rh) / 2) & ~1;
 
-    ctx_ = sws_getCachedContext(ctx_, src->width, src->height, AVPixelFormat(src->format), rw, rh, AV_PIX_FMT_NV12,
-                                SWS_BILINEAR, nullptr, nullptr, nullptr);
+    ctx_ = sws_getCachedContext(ctx_, src->width, src->height, AVPixelFormat(src->format), rw, rh, AV_PIX_FMT_NV12, SWS_BILINEAR, nullptr,
+                                nullptr, nullptr);
     if (!ctx_) return false;
 
     uint8_t* y_plane = dst;

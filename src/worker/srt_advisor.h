@@ -21,7 +21,7 @@ struct SrtAdvice {
     double rtt_ms = 0;   // 計算に使った RTT (窓の最大)
     double loss_pct = 0;
     int multiplier = 0;
-    int64_t drops = 0;   // 窓の中の取りこぼし
+    int64_t drops = 0;  // 窓の中の取りこぼし
     int window_sec = 0;
 };
 

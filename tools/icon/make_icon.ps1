@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   アイコンの元 (assets/denpachan.svg) から assets/denpachan.ico を作る。
 

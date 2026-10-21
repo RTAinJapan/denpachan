@@ -1,0 +1,6 @@
+# 改行コードは LF に固定する (各自の core.autocrlf の設定や OS によって、取り出したファイルの改行が変わらないように)。
+# ファイルの形式は .editorconfig、確かめるのは tools/format/check.ps1
+* text=auto eol=lf
+
+*.ico binary
+*.png binary

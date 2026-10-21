@@ -84,8 +84,8 @@ bool PreviewWriter::convert(const AVFrame* src, uint8_t* dst) {
     const int x0 = (int(kWidth) - rw) / 2;
     const int y0 = (int(kHeight) - rh) / 2;
 
-    sws_ = sws_getCachedContext(sws_, src->width, src->height, AVPixelFormat(src->format), rw, rh, AV_PIX_FMT_BGRA,
-                                SWS_BILINEAR, nullptr, nullptr, nullptr);
+    sws_ = sws_getCachedContext(sws_, src->width, src->height, AVPixelFormat(src->format), rw, rh, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr,
+                                nullptr, nullptr);
     if (!sws_) return false;
     if (rw != int(kWidth) || rh != int(kHeight)) {
         for (uint32_t y = 0; y < kHeight; ++y) {

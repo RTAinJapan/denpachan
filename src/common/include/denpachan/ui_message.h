@@ -22,20 +22,30 @@ inline void append_json_string(std::string& out, std::string_view s) {
     out += '"';
     for (const char c : s) {
         switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    static constexpr char kHex[] = "0123456789abcdef";
-                    out += "\\u00";
-                    out += kHex[(c >> 4) & 0xf];
-                    out += kHex[c & 0xf];
-                } else {
-                    out += c;
-                }
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                static constexpr char kHex[] = "0123456789abcdef";
+                out += "\\u00";
+                out += kHex[(c >> 4) & 0xf];
+                out += kHex[c & 0xf];
+            } else {
+                out += c;
+            }
         }
     }
     out += '"';

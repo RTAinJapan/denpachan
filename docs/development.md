@@ -112,6 +112,23 @@ dotnet watch --no-hot-reload run --project src/ui/Denpachan.Ui/Denpachan.Ui.cspr
 - XAML はホットリロードが効かないので、ホットリロードを切って毎回起動し直している。
 - C++ のビルドは `build.ps1` (タスク「ビルド (全体)」) で行う。CMake Tools が開いたときに勝手に configure しないよう、`.vscode/settings.json` で止めている (同じ `out/build` を触って `build.ps1` とぶつかるため)。
 
+## ファイルの形式
+
+どの環境で保存しても同じ形になるよう、決まりをファイルに書いてある。VS Code では保存したときにこの形になる (`.vscode/settings.json`。おすすめの拡張機能を入れておく)。
+
+| もの | 決まり | 書いてある場所 |
+|------|--------|---------------|
+| すべてのテキスト | UTF-8、改行は LF、末尾に改行 1 つ、行末に空白を残さない、字下げは空白 (4 桁。JSON・YAML・csproj・SVG は 2 桁) | `.editorconfig`、`.vscode/settings.json` |
+| 改行コード | 取り出したときも LF (`core.autocrlf` の設定に左右されない) | `.gitattributes` |
+| PowerShell (`.ps1`) | BOM 付き UTF-8 (Windows PowerShell 5.1 が日本語を読めるように) | `.editorconfig`、`.vscode/settings.json` |
+| C++ | 保存時に clang-format で整える (1 行 140 桁まで) | `.clang-format` |
+| C# | 保存時に C# 拡張機能で整える | `.editorconfig` の `[*.cs]` |
+| JSON・YAML・XAML・Markdown・シェル・CMake | 書式の道具で全体を書き換えない (手で並べた形を保つ)。上の空白・改行の決まりだけ | `.vscode/settings.json` |
+
+- 指摘だけする道具: PowerShell (PSScriptAnalyzer)、シェル (ShellCheck)、Markdown (markdownlint、`.markdownlint.jsonc`)。
+- まとめて確かめる・整える: `./tools/format/check.ps1` (確かめるだけ) / `./tools/format/check.ps1 -Fix` (整える)。CI でも確かめ、合わなければ失敗する。
+- clang-format は VS Code の C++ 拡張機能に付属のもの (版 23) を使う。Visual Studio に付属のもの (版 22) でも同じ結果になることを確かめてある。CI は pip の `clang-format==23.1.0`。版を上げて結果が変わったら、`-Fix` で整えてコミットする。
+
 ## アイコン
 
 元は `assets/denpachan.svg`。これを直したら次を実行して `assets/denpachan.ico` を作り直し、両方をコミットする。

@@ -20,15 +20,15 @@
 namespace denpachan::worker {
 
 struct PlayoutOptions {
-    int buffer_ms = 0;  // RTA 向けに既定は 0 (デコードしたら即出す)。カクつくなら 1 フレーム分程度に上げる
-    int stall_ms = 2000;  // 映像が来なくなってから「途絶」とみなすまで (状態表示用。表示は最後のフレームのまま)
+    int buffer_ms = 0;            // RTA 向けに既定は 0 (デコードしたら即出す)。カクつくなら 1 フレーム分程度に上げる
+    int stall_ms = 2000;          // 映像が来なくなってから「途絶」とみなすまで (状態表示用。表示は最後のフレームのまま)
     int test_hang_after_sec = 0;  // 試験用: この秒数後に出力スレッドをわざと止める (engine の検出の確認)
 };
 
 class Playout {
 public:
-    Playout(PlayoutOptions options, PlayoutClock& clock, FrameQueue& queue, VcamWriter* writer,
-            PreviewWriter* preview, ChannelMetrics& metrics);
+    Playout(PlayoutOptions options, PlayoutClock& clock, FrameQueue& queue, VcamWriter* writer, PreviewWriter* preview,
+            ChannelMetrics& metrics);
     ~Playout();
 
     void start();

@@ -21,8 +21,8 @@ namespace {
 constexpr REFERENCE_TIME kMinExclusivePeriod = 30'000;     // 3ms (100ns 単位)
 constexpr REFERENCE_TIME kRetryExclusivePeriod = 100'000;  // 周期に追いつけなかったら 10ms から試し直す
 constexpr REFERENCE_TIME kMaxExclusivePeriod = 200'000;    // 20ms を超えるなら共有モードにする
-constexpr int64_t kCalibrateMs = 1000;       // 開いた直後、GetPosition と padding の差をこの間測る (中央値を使う)
-constexpr int64_t kPositionMaxOffMs = 30;    // 差がいつもよりこれ以上ずれたら (位置のリセットなど) 測り直す
+constexpr int64_t kCalibrateMs = 1000;                     // 開いた直後、GetPosition と padding の差をこの間測る (中央値を使う)
+constexpr int64_t kPositionMaxOffMs = 30;                  // 差がいつもよりこれ以上ずれたら (位置のリセットなど) 測り直す
 
 struct CoTaskMemDeleter {
     void operator()(void* p) const { CoTaskMemFree(p); }
@@ -103,10 +103,8 @@ bool DeviceOutput::open() {
             GUID subformat;
         };
         const Candidate candidates[] = {
-            {SampleType::Float32, 32, 32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT},
-            {SampleType::Int32, 32, 32, KSDATAFORMAT_SUBTYPE_PCM},
-            {SampleType::Int24In32, 32, 24, KSDATAFORMAT_SUBTYPE_PCM},
-            {SampleType::Int24, 24, 24, KSDATAFORMAT_SUBTYPE_PCM},
+            {SampleType::Float32, 32, 32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT}, {SampleType::Int32, 32, 32, KSDATAFORMAT_SUBTYPE_PCM},
+            {SampleType::Int24In32, 32, 24, KSDATAFORMAT_SUBTYPE_PCM},      {SampleType::Int24, 24, 24, KSDATAFORMAT_SUBTYPE_PCM},
             {SampleType::Int16, 16, 16, KSDATAFORMAT_SUBTYPE_PCM},
         };
         WAVEFORMATEXTENSIBLE fmt{};
@@ -121,9 +119,8 @@ bool DeviceOutput::open() {
             fmt.Format.nAvgBytesPerSec = rate_ * fmt.Format.nBlockAlign;
             fmt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
             fmt.Samples.wValidBitsPerSample = c.valid;
-            fmt.dwChannelMask = mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE
-                                    ? reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix.get())->dwChannelMask
-                                    : 0;
+            fmt.dwChannelMask =
+                mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE ? reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix.get())->dwChannelMask : 0;
             fmt.SubFormat = c.subformat;
             if (client_->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &fmt.Format, nullptr) == S_OK) {
                 sample_type_ = c.type;
@@ -138,15 +135,13 @@ bool DeviceOutput::open() {
         REFERENCE_TIME def_period = 0, min_period = 0;
         client_->GetDevicePeriod(&def_period, &min_period);
         REFERENCE_TIME period = std::max({min_period, kMinExclusivePeriod, exclusive_period_});
-        hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period,
-                                 &fmt.Format, nullptr);
+        hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format, nullptr);
         if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
             UINT32 frames = 0;
             client_->GetBufferSize(&frames);
             period = REFERENCE_TIME(std::llround(10'000'000.0 * frames / rate_));
             if (!activate()) return false;
-            hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period,
-                                     &fmt.Format, nullptr);
+            hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format, nullptr);
         }
     } else {
         // 共有モード: ミックス形式のまま (通常 float32)
@@ -161,21 +156,17 @@ bool DeviceOutput::open() {
         ComPtr<IAudioClient3> client3;
         if (SUCCEEDED(client_.As(&client3))) {
             UINT32 def_frames = 0, fundamental = 0, min_frames = 0, max_frames = 0;
-            if (SUCCEEDED(client3->GetSharedModeEnginePeriod(mix.get(), &def_frames, &fundamental, &min_frames,
-                                                             &max_frames))) {
-                hr = client3->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, min_frames, mix.get(),
-                                                          nullptr);
+            if (SUCCEEDED(client3->GetSharedModeEnginePeriod(mix.get(), &def_frames, &fundamental, &min_frames, &max_frames))) {
+                hr = client3->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK, min_frames, mix.get(), nullptr);
             }
         }
         if (FAILED(hr)) {
             if (!activate()) return false;
-            hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, mix.get(),
-                                     nullptr);
+            hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, mix.get(), nullptr);
         }
     }
     if (FAILED(hr)) {
-        spdlog::log(fail_level, "audio [{}]: initialize ({}) failed: 0x{:08x}", name, exclusive_ ? "exclusive" : "shared",
-                    uint32_t(hr));
+        spdlog::log(fail_level, "audio [{}]: initialize ({}) failed: 0x{:08x}", name, exclusive_ ? "exclusive" : "shared", uint32_t(hr));
         return false;
     }
 
@@ -214,8 +205,8 @@ bool DeviceOutput::open() {
         sources_.clear();
         for (const auto& r : routes_) {
             if (r.start_channel < 1 || r.start_channel > channels_) {
-                spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch,
-                             r.start_channel, channels_);
+                spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch, r.start_channel,
+                             channels_);
             }
             sources_.push_back(std::make_unique<ChannelSource>(r, rate_, channels_));
         }
@@ -233,9 +224,8 @@ bool DeviceOutput::open() {
         status_.buffer_ms = buffer_ms;
         status_.delay_ms = double(qpc_to_us(base_delay_qpc_)) / 1000.0;
     }
-    spdlog::info("audio [{}]: opened {} {} Hz {} ch {} buffer {:.2f} ms", name,
-                 exclusive_ ? "exclusive" : "shared", rate_, channels_, sample_type_name(int(sample_type_)),
-                 buffer_ms);
+    spdlog::info("audio [{}]: opened {} {} Hz {} ch {} buffer {:.2f} ms", name, exclusive_ ? "exclusive" : "shared", rate_, channels_,
+                 sample_type_name(int(sample_type_)), buffer_ms);
     return true;
 }
 
@@ -309,8 +299,8 @@ int64_t DeviceOutput::heard_time_locked(int64_t now, uint32_t lead_frames) {
         position_offset_qpc_ = calibrate_samples_[calibrate_samples_.size() / 2];
         calibrate_samples_.clear();
         position_ready_ = true;
-        spdlog::info("audio [{}]: timing from the audio clock (offset {:+.2f} ms from the buffer padding)",
-                     to_utf8(options_.name), double(qpc_to_us(position_offset_qpc_)) / 1000.0);
+        spdlog::info("audio [{}]: timing from the audio clock (offset {:+.2f} ms from the buffer padding)", to_utf8(options_.name),
+                     double(qpc_to_us(position_offset_qpc_)) / 1000.0);
     }
     if (std::llabs(diff - position_offset_qpc_) > qpc_from_ms(kPositionMaxOffMs)) {
         // 位置が飛んだ (デバイス側のリセットなど): padding に戻して測り直す
@@ -389,12 +379,12 @@ void DeviceOutput::run() {
                     const REFERENCE_TIME current = REFERENCE_TIME(std::llround(10'000'000.0 * buffer_frames_ / rate_));
                     exclusive_period_ = std::max(kRetryExclusivePeriod, current * 2);
                     exclusive_failed_ = exclusive_period_ > kMaxExclusivePeriod;
-                    spdlog::warn("audio [{}]: device does not keep up with the exclusive-mode period ({:.0f}/{:.0f} "
-                                 "calls/s); {}",
-                                 name, calls, expected_calls,
-                                 exclusive_failed_ ? std::string("falling back to shared mode")
-                                                   : fmt::format("retrying with {:.0f} ms period",
-                                                                 double(exclusive_period_) / 10'000));
+                    spdlog::warn(
+                        "audio [{}]: device does not keep up with the exclusive-mode period ({:.0f}/{:.0f} "
+                        "calls/s); {}",
+                        name, calls, expected_calls,
+                        exclusive_failed_ ? std::string("falling back to shared mode")
+                                          : fmt::format("retrying with {:.0f} ms period", double(exclusive_period_) / 10'000));
                     break;
                 }
                 check_start = qpc_now();

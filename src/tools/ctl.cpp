@@ -114,8 +114,8 @@ std::string summary_line(const json& ch) {
     if (ch.contains("video")) {
         const json& v = ch.at("video");
         snprintf(buf, sizeof(buf), " | video %s %s %.0f fps delay %.0f ms %.1f Mbps", v.at("state").get<std::string>().c_str(),
-                 v.at("connected").get<bool>() ? "connected" : "waiting", v.at("outputFps").get<double>(),
-                 v.at("delayMs").get<double>(), v.at("bitrateMbps").get<double>());
+                 v.at("connected").get<bool>() ? "connected" : "waiting", v.at("outputFps").get<double>(), v.at("delayMs").get<double>(),
+                 v.at("bitrateMbps").get<double>());
         line += buf;
     }
     if (ch.contains("audioOut") && !ch.at("audioOut").is_null()) {
@@ -143,8 +143,7 @@ std::string summary_line(const json& ch) {
     if (ch.contains("record") && ch.at("record").at("state") != "off") {
         const json& r = ch.at("record");
         snprintf(buf, sizeof(buf), " | rec %s %.0fs %.1fMB drop %llu", r.at("state").get<std::string>().c_str(),
-                 r.at("seconds").get<double>(), r.at("bytes").get<double>() / 1e6,
-                 (unsigned long long)r.at("dropped").get<uint64_t>());
+                 r.at("seconds").get<double>(), r.at("bytes").get<double>() / 1e6, (unsigned long long)r.at("dropped").get<uint64_t>());
         line += buf;
         if (const std::string err = message_text(r.at("error")); !err.empty()) line += " err: " + err;
     }

@@ -125,9 +125,8 @@ public:
     bool open_or_create(const std::wstring& name, size_t bytes, bool& created) {
         close();
         SharedSecurity sec;
-        HANDLE h = CreateFileMappingW(INVALID_HANDLE_VALUE, sec.get(), PAGE_READWRITE,
-                                      static_cast<DWORD>(uint64_t(bytes) >> 32), static_cast<DWORD>(bytes),
-                                      name.c_str());
+        HANDLE h = CreateFileMappingW(INVALID_HANDLE_VALUE, sec.get(), PAGE_READWRITE, static_cast<DWORD>(uint64_t(bytes) >> 32),
+                                      static_cast<DWORD>(bytes), name.c_str());
         if (!h) return false;
         created = GetLastError() != ERROR_ALREADY_EXISTS;
         handle_.reset(h);

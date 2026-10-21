@@ -23,18 +23,24 @@ std::wstring num(int v) { return std::to_wstring(v); }
 
 const char* worker_state_name(WorkerState s) {
     switch (s) {
-    case WorkerState::Stopped: return "stopped";
-    case WorkerState::Running: return "running";
-    case WorkerState::Restarting: return "restarting";
+    case WorkerState::Stopped:
+        return "stopped";
+    case WorkerState::Running:
+        return "running";
+    case WorkerState::Restarting:
+        return "restarting";
     }
     return "unknown";
 }
 
 const char* video_state_name(uint32_t s) {
     switch (worker_status::VideoState(s)) {
-    case worker_status::VideoState::Waiting: return "waiting";
-    case worker_status::VideoState::Live: return "live";
-    case worker_status::VideoState::Hold: return "hold";
+    case worker_status::VideoState::Waiting:
+        return "waiting";
+    case worker_status::VideoState::Live:
+        return "live";
+    case worker_status::VideoState::Hold:
+        return "hold";
     }
     return "unknown";
 }
@@ -138,9 +144,8 @@ void Engine::apply_rtmp_locked() {
 
     if (any_push) {
         const auto& g = config_.general;
-        rtmpd_->start(L"--port " + num(g.rtmp_port) + L" --bind " + quote_arg(from_utf8(g.rtmp_bind)) +
-                      L" --idle-timeout-ms " + num(g.rtmp_idle_timeout_ms) + L" --log-file " +
-                      quote_arg(log_dir_ + L"\\rtmpd.log"));
+        rtmpd_->start(L"--port " + num(g.rtmp_port) + L" --bind " + quote_arg(from_utf8(g.rtmp_bind)) + L" --idle-timeout-ms " +
+                      num(g.rtmp_idle_timeout_ms) + L" --log-file " + quote_arg(log_dir_ + L"\\rtmpd.log"));
     } else {
         rtmpd_->stop();
     }
@@ -184,15 +189,15 @@ void Engine::save_locked() {
 
 std::wstring Engine::worker_args(const ChannelConfig& ch) const {
     const auto& s = ch.source;
-    std::wstring a = L"--ch " + num(ch.id) + L" --cam " + num(ch.vcam) + L" --buffer " + num(ch.playout_buffer_ms) +
-                     L" --stall-ms " + num(config_.general.stall_ms);
+    std::wstring a = L"--ch " + num(ch.id) + L" --cam " + num(ch.vcam) + L" --buffer " + num(ch.playout_buffer_ms) + L" --stall-ms " +
+                     num(config_.general.stall_ms);
     if (s.protocol == "rtmp" && s.mode == "push") {
         a += L" --input rtmp-push";  // rtmpd がこのチャンネルの FLV リングに書く
     } else if (s.protocol == "rtmp") {
         a += L" --input url --url " + quote_arg(from_utf8(s.url));
     } else {
-        a += L" --input srt --srt-mode " + from_utf8(s.mode) + L" --host " + quote_arg(from_utf8(s.host)) +
-             L" --port " + num(s.port) + L" --latency " + num(s.latency_ms);
+        a += L" --input srt --srt-mode " + from_utf8(s.mode) + L" --host " + quote_arg(from_utf8(s.host)) + L" --port " + num(s.port) +
+             L" --latency " + num(s.latency_ms);
         if (!s.passphrase.empty()) a += L" --passphrase " + quote_arg(from_utf8(s.passphrase));
         if (s.pbkeylen != 0) a += L" --pbkeylen " + num(s.pbkeylen);
         if (!s.streamid.empty()) a += L" --streamid " + quote_arg(from_utf8(s.streamid));
@@ -226,8 +231,11 @@ json Engine::handle(const std::string& method, const json& params) {
     if (method == "listAudioDevices") {
         json arr = json::array();
         for (const auto& d : list_output_devices()) {
-            arr.push_back({{"id", to_utf8(d.id)}, {"name", to_utf8(d.name)}, {"channels", d.channels},
-                           {"sampleRate", d.sample_rate}, {"api", d.asio ? "asio" : "wasapi"}});
+            arr.push_back({{"id", to_utf8(d.id)},
+                           {"name", to_utf8(d.name)},
+                           {"channels", d.channels},
+                           {"sampleRate", d.sample_rate},
+                           {"api", d.asio ? "asio" : "wasapi"}});
         }
         return arr;
     }
@@ -325,10 +333,9 @@ json Engine::state_locked() {
             {"name", c.name},
             {"enabled", c.enabled},
             {"vcam", c.vcam},
-            {"source",
-             c.source.protocol == "rtmp"
-                 ? json{{"protocol", "rtmp"}, {"mode", c.source.mode}, {"app", c.source.app}}
-                 : json{{"protocol", "srt"}, {"mode", c.source.mode}, {"host", c.source.host}, {"port", c.source.port}}},
+            {"source", c.source.protocol == "rtmp"
+                           ? json{{"protocol", "rtmp"}, {"mode", c.source.mode}, {"app", c.source.app}}
+                           : json{{"protocol", "srt"}, {"mode", c.source.mode}, {"host", c.source.host}, {"port", c.source.port}}},
             {"worker",
              {{"state", c.enabled && !ffmpeg_ok_ ? "unavailable" : worker_state_name(w.state)},
               {"pid", w.pid},
@@ -355,9 +362,14 @@ json Engine::state_locked() {
                           {"decodeErrors", m.decode_errors},
                           {"lastError", message_json(m.last_error)}};
             if (c.source.protocol == "srt") {
-                j["srt"] = {{"latencyMs", m.srt_latency_ms}, {"rttMs", m.srt_rtt_ms}, {"rcvBufMs", m.srt_rcv_buf_ms},
-                            {"recvMbps", m.srt_recv_mbps},   {"lost", m.srt_lost},    {"retrans", m.srt_retrans},
-                            {"dropped", m.srt_dropped},      {"configuredLatencyMs", c.source.latency_ms}};
+                j["srt"] = {{"latencyMs", m.srt_latency_ms},
+                            {"rttMs", m.srt_rtt_ms},
+                            {"rcvBufMs", m.srt_rcv_buf_ms},
+                            {"recvMbps", m.srt_recv_mbps},
+                            {"lost", m.srt_lost},
+                            {"retrans", m.srt_retrans},
+                            {"dropped", m.srt_dropped},
+                            {"configuredLatencyMs", c.source.latency_ms}};
                 // latency の推奨値 (受信状況から。0 = 計測中)
                 j["srt"]["recommend"] = {{"latencyMs", m.srt_rec_latency_ms}, {"multiplier", m.srt_rec_multiplier},
                                          {"rttMs", m.srt_rec_rtt_ms},         {"lossPct", m.srt_rec_loss_pct},

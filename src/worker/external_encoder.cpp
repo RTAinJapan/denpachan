@@ -47,7 +47,6 @@ std::wstring quote_arg(const std::wstring& arg) {
     return out;
 }
 
-
 }  // namespace
 
 ExternalEncoder::ExternalEncoder() {
@@ -127,8 +126,8 @@ bool ExternalEncoder::start(const std::wstring& exe, const std::vector<std::stri
     for (const auto& a : args) cmd += L" " + quote_arg(widen(a));
     PROCESS_INFORMATION pi{};
     const BOOL ok = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, TRUE,
-                                   CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | EXTENDED_STARTUPINFO_PRESENT, nullptr,
-                                   nullptr, &si.StartupInfo, &pi);
+                                   CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr,
+                                   &si.StartupInfo, &pi);
     const DWORD last_error = GetLastError();
     DeleteProcThreadAttributeList(attrs);
     CloseHandle(in_read);

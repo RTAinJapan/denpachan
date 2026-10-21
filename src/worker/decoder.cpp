@@ -43,8 +43,8 @@ constexpr int kIoBufferSize = 64 * 1024;
 // キーフレーム以外の失敗 (途中から受けた、ロスで参照が欠けた) では数えない
 constexpr int kMaxKeyframeErrors = 3;
 constexpr int64_t kKeyframeWaitMs = 10'000;  // 受信開始・エラーのあと、これだけキーフレームが来なければそのまま渡す
-constexpr int64_t kOpenTimeoutMs = 10'000;  // URL を開く・ストリームを解析するまでの上限
-constexpr int64_t kReadTimeoutMs = 5'000;   // URL からこれだけ届かなければ切って繋ぎ直す
+constexpr int64_t kOpenTimeoutMs = 10'000;   // URL を開く・ストリームを解析するまでの上限
+constexpr int64_t kReadTimeoutMs = 5'000;    // URL からこれだけ届かなければ切って繋ぎ直す
 
 int64_t frame_duration_us(const AVStream* st) {
     AVRational rate = st->avg_frame_rate.num ? st->avg_frame_rate : st->r_frame_rate;
@@ -54,8 +54,7 @@ int64_t frame_duration_us(const AVStream* st) {
 
 }  // namespace
 
-Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, AudioWriter* audio,
-                 ChannelMetrics& metrics, bool allow_hw)
+Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, AudioWriter* audio, ChannelMetrics& metrics, bool allow_hw)
     : input_format_(std::move(input_format)),
       input_(input),
       output_(output),
@@ -386,8 +385,7 @@ bool Decoder::run_session(uint64_t session) {
     err = avformat_find_stream_info(fmt, nullptr);
     if (err < 0) {
         if (!stop_) spdlog::warn("decoder: stream info failed: {}", av_error_string(err));
-        set_error(io_timed_out_ ? ui_message("rtmp.noStream")
-                                : ui_message("rtmp.unreadable", {{"detail", av_error_string(err)}}));
+        set_error(io_timed_out_ ? ui_message("rtmp.noStream") : ui_message("rtmp.unreadable", {{"detail", av_error_string(err)}}));
         cleanup();
         return false;
     }
@@ -424,8 +422,7 @@ bool Decoder::run_session(uint64_t session) {
             return false;
         }
     } else {
-        spdlog::info("decoder: waiting for the video stream (only {} so far)",
-                     fmt->nb_streams > 0 ? "audio" : "nothing");
+        spdlog::info("decoder: waiting for the video stream (only {} so far)", fmt->nb_streams > 0 ? "audio" : "nothing");
     }
 
     PacketPtr pkt(av_packet_alloc());

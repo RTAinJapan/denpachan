@@ -57,9 +57,9 @@ struct Metrics {
     // latency の推奨値 (worker の srt_advisor.h)
     int32_t srt_rec_latency_ms;  // 0 = 計測中
     int32_t srt_rec_multiplier;
-    double srt_rec_rtt_ms;       // 計算に使った RTT (窓の最大)
+    double srt_rec_rtt_ms;  // 計算に使った RTT (窓の最大)
     double srt_rec_loss_pct;
-    int64_t srt_rec_drops;       // 窓の中の取りこぼし
+    int64_t srt_rec_drops;  // 窓の中の取りこぼし
     int32_t srt_rec_window_sec;
 
     double tcp_rtt_ms;  // RTMP push

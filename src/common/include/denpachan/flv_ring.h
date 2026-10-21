@@ -64,8 +64,7 @@ inline Header* open_shared(SharedMapping& mapping, int ch) {
         h->magic.store(kMagic, std::memory_order_release);
     } else {
         for (int i = 0; i < 100 && h->magic.load(std::memory_order_acquire) != kMagic; ++i) Sleep(5);
-        if (h->magic.load(std::memory_order_acquire) != kMagic || h->layout_version != kLayoutVersion ||
-            h->capacity != kCapacity) {
+        if (h->magic.load(std::memory_order_acquire) != kMagic || h->layout_version != kLayoutVersion || h->capacity != kCapacity) {
             mapping.close();
             return nullptr;
         }
@@ -107,9 +106,16 @@ public:
     // FLV タグ 1 つ (type: 8 音声 / 9 映像 / 18 スクリプト)
     void write_tag(uint8_t type, uint32_t timestamp, const uint8_t* payload, uint32_t size) {
         uint8_t tag[11] = {type,
-                           uint8_t(size >> 16), uint8_t(size >> 8), uint8_t(size),
-                           uint8_t(timestamp >> 16), uint8_t(timestamp >> 8), uint8_t(timestamp), uint8_t(timestamp >> 24),
-                           0, 0, 0};
+                           uint8_t(size >> 16),
+                           uint8_t(size >> 8),
+                           uint8_t(size),
+                           uint8_t(timestamp >> 16),
+                           uint8_t(timestamp >> 8),
+                           uint8_t(timestamp),
+                           uint8_t(timestamp >> 24),
+                           0,
+                           0,
+                           0};
         const uint32_t prev = size + 11;
         const uint8_t trailer[4] = {uint8_t(prev >> 24), uint8_t(prev >> 16), uint8_t(prev >> 8), uint8_t(prev)};
         append(tag, sizeof(tag), false);

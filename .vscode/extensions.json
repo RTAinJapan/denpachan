@@ -1,9 +1,23 @@
 {
-  // C# は C# 拡張機能だけで足りる (補完・エラー表示・定義へのジャンプ)。画面のプロジェクトは 1 つだけで、
+  // C# は C# 拡張機能だけで足りる (補完・エラー表示・定義へのジャンプ・保存時の整形)。画面のプロジェクトは 1 つだけで、
   // C# Dev Kit のソリューション エクスプローラーなどは要らない
   "recommendations": [
-    "ms-dotnettools.csharp",
+    // ファイルの形式 (.editorconfig: 文字コード・改行・末尾の改行・行末の空白・字下げ)
+    "editorconfig.editorconfig",
+    // C++ (保存時に clang-format で整える。付属の clang-format を使う)
     "ms-vscode.cpptools",
-    "ms-vscode.cmake-tools"
+    "ms-vscode.cmake-tools",
+    // C# (保存時に整える)
+    "ms-dotnettools.csharp",
+    // PowerShell (PSScriptAnalyzer で問題を指摘する)
+    "ms-vscode.powershell",
+    // シェルスクリプト (ShellCheck で問題を指摘する)
+    "timonwong.shellcheck",
+    // Markdown (書き方の揺れを指摘する。.markdownlint.jsonc)
+    "davidanson.vscode-markdownlint"
+  ],
+  // ほかの書式の道具 (Prettier など) が JSON・Markdown などを全体で書き換えないように
+  "unwantedRecommendations": [
+    "esbenp.prettier-vscode"
   ]
 }

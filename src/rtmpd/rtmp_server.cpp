@@ -69,8 +69,7 @@ bool Server::start() {
     listen_ = socket(res->ai_family, SOCK_STREAM, IPPROTO_TCP);
     BOOL exclusive = TRUE;  // 他のプロセスにポートを横取りされないように
     setsockopt(listen_, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
-    const bool ok = listen_ != INVALID_SOCKET && bind(listen_, res->ai_addr, int(res->ai_addrlen)) == 0 &&
-                    listen(listen_, SOMAXCONN) == 0;
+    const bool ok = listen_ != INVALID_SOCKET && bind(listen_, res->ai_addr, int(res->ai_addrlen)) == 0 && listen(listen_, SOMAXCONN) == 0;
     freeaddrinfo(res);
     if (!ok) {
         spdlog::error("cannot listen on {}:{} (error {})", options_.bind, options_.port, WSAGetLastError());
@@ -139,9 +138,7 @@ void Server::accept_loop() {
     }
 }
 
-bool Server::read_routes(rtmp_routes::Route (&out)[rtmp_routes::kMaxRoutes]) {
-    return routes_ && rtmp_routes::read_routes(routes_, out);
-}
+bool Server::read_routes(rtmp_routes::Route (&out)[rtmp_routes::kMaxRoutes]) { return routes_ && rtmp_routes::read_routes(routes_, out); }
 
 int Server::resolve(const std::string& app, const std::string& key) {
     rtmp_routes::Route routes[rtmp_routes::kMaxRoutes];
@@ -197,8 +194,10 @@ bool Server::write_media(int ch, Connection* c, uint8_t type, uint32_t timestamp
     if (type == 9 && !video_config && is_keyframe(data, size) && channel.ring.resync_requested()) {
         channel.ring.begin_session(c->peer());
         if (!channel.metadata.empty()) channel.ring.write_tag(18, timestamp, channel.metadata.data(), uint32_t(channel.metadata.size()));
-        if (!channel.video_config.empty()) channel.ring.write_tag(9, timestamp, channel.video_config.data(), uint32_t(channel.video_config.size()));
-        if (!channel.audio_config.empty()) channel.ring.write_tag(8, timestamp, channel.audio_config.data(), uint32_t(channel.audio_config.size()));
+        if (!channel.video_config.empty())
+            channel.ring.write_tag(9, timestamp, channel.video_config.data(), uint32_t(channel.video_config.size()));
+        if (!channel.audio_config.empty())
+            channel.ring.write_tag(8, timestamp, channel.audio_config.data(), uint32_t(channel.audio_config.size()));
         spdlog::info("ch{}: resynced the FLV ring at a keyframe", ch);
     }
     channel.ring.write_tag(type, timestamp, data, size);

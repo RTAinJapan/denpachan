@@ -14,16 +14,15 @@ constexpr DWORD kWriteTimeoutMs = 2000;  // 読まないクライアントで en
 
 }  // namespace
 
-IpcServer::IpcServer(Handler handler)
-    : handler_(std::move(handler)), stop_event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+IpcServer::IpcServer(Handler handler) : handler_(std::move(handler)), stop_event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
 
 IpcServer::~IpcServer() { stop(); }
 
 HANDLE IpcServer::create_pipe() {
     SharedSecurity sec;
     return CreateNamedPipeW(kPipeName, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                            PIPE_UNLIMITED_INSTANCES, kBufferSize, kBufferSize, 0, sec.get());
+                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, PIPE_UNLIMITED_INSTANCES,
+                            kBufferSize, kBufferSize, 0, sec.get());
 }
 
 bool IpcServer::start() {

@@ -1,0 +1,18 @@
+# C++ の書式。VS Code では保存時に clang-format で整える (.vscode/settings.json)。
+# 確かめる・まとめて整える: tools/format/check.ps1 (CI でも確かめる)
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 140
+AccessModifierOffset: -4
+IndentCaseLabels: false
+DerivePointerAlignment: false
+PointerAlignment: Left
+SpacesBeforeTrailingComments: 2
+AllowShortFunctionsOnASingleLine: All
+# if (x) a; else b; を各行 1 文で書いてよい (今の書き方)
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+# include の順は手で決めている (windows.h を先に読むなど) ので並べ替えない
+SortIncludes: Never
+IncludeBlocks: Preserve

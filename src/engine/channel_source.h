@@ -50,7 +50,7 @@ struct ChannelStats {
     std::string last_resync_reason;
     std::atomic<uint64_t> underruns{0};
     std::atomic<uint64_t> resyncs{0};
-    std::atomic<float> peak_l{0};       // 出力ごとにリセットする
+    std::atomic<float> peak_l{0};  // 出力ごとにリセットする
     std::atomic<float> peak_r{0};
 };
 
@@ -105,7 +105,7 @@ private:
     uint64_t read_pos_ = 0;
     uint64_t epoch_ = 0;
     std::atomic<bool> mute_{false};
-    float fade_ = 0.0f;  // フェードの包絡 (0..1)
+    float fade_ = 0.0f;       // フェードの包絡 (0..1)
     double error_avg_ = 0.0;  // 目標位置とのずれ (平滑化、ソースのフレーム数)
     int frames_since_slip_ = 0;
 

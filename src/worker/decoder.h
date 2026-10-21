@@ -27,8 +27,7 @@ namespace denpachan::worker {
 
 class Decoder {
 public:
-    Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, AudioWriter* audio,
-            ChannelMetrics& metrics, bool allow_hw);
+    Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, AudioWriter* audio, ChannelMetrics& metrics, bool allow_hw);
     ~Decoder();
 
     // URL (rtmp:// など) を直接読む。切れたら間隔を空けて繋ぎ直す。start() の前に呼ぶ。

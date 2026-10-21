@@ -51,10 +51,8 @@ public:
         return VcamFilter::Create(cam_, riid, ppv);
     }
     STDMETHODIMP LockServer(BOOL fLock) override {
-        if (fLock)
-            ++g_module_refs;
-        else
-            --g_module_refs;
+        if (fLock) ++g_module_refs;
+        else --g_module_refs;
         return S_OK;
     }
 
@@ -86,16 +84,14 @@ std::wstring module_path() {
 }
 
 HRESULT set_string(HKEY root, const std::wstring& key, const wchar_t* name, const std::wstring& value) {
-    const LSTATUS st = RegSetKeyValueW(root, key.c_str(), name, REG_SZ, value.c_str(),
-                                      DWORD((value.size() + 1) * sizeof(wchar_t)));
+    const LSTATUS st = RegSetKeyValueW(root, key.c_str(), name, REG_SZ, value.c_str(), DWORD((value.size() + 1) * sizeof(wchar_t)));
     return HRESULT_FROM_WIN32(st);
 }
 
 std::wstring clsid_key(int cam) { return L"Software\\Classes\\CLSID\\" + guid_string(kCamClsid[cam - 1]); }
 
 std::wstring instance_key(int cam) {
-    return std::wstring(L"Software\\Classes\\CLSID\\") + kVideoInputCategory + L"\\Instance\\" +
-           guid_string(kCamClsid[cam - 1]);
+    return std::wstring(L"Software\\Classes\\CLSID\\") + kVideoInputCategory + L"\\Instance\\" + guid_string(kCamClsid[cam - 1]);
 }
 
 std::wstring device_path(int cam) { return L"denpachan:vcam" + std::to_wstring(cam); }
@@ -131,8 +127,7 @@ HRESULT register_machine(int cam) {
     rf.rgPins2 = &pin;
 
     const auto name = cam_name(cam);
-    hr = mapper->RegisterFilter(kCamClsid[cam - 1], name.c_str(), nullptr, &CLSID_VideoInputDeviceCategory,
-                                nullptr, &rf);
+    hr = mapper->RegisterFilter(kCamClsid[cam - 1], name.c_str(), nullptr, &CLSID_VideoInputDeviceCategory, nullptr, &rf);
     mapper->Release();
     if (FAILED(hr)) return hr;
 
@@ -172,10 +167,8 @@ HRESULT for_all_cams(bool user, bool install) {
     HRESULT result = S_OK;
     for (int cam = 1; cam <= kNumCams; ++cam) {
         HRESULT hr;
-        if (install)
-            hr = user ? register_user(cam) : register_machine(cam);
-        else
-            hr = user ? unregister_user(cam) : unregister_machine(cam);
+        if (install) hr = user ? register_user(cam) : register_machine(cam);
+        else hr = user ? unregister_user(cam) : unregister_machine(cam);
         if (FAILED(hr) && SUCCEEDED(result)) result = hr;
     }
     if (SUCCEEDED(co)) CoUninitialize();

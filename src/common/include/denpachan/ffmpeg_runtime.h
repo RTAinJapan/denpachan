@@ -28,8 +28,8 @@ inline constexpr const char* kSeries = "9.x";
 inline constexpr unsigned kAvcodecMajor = 63;
 
 struct Lib {
-    const char* name;       // "avcodec" など
-    unsigned major;         // ビルドに使ったヘッダの版 (LIBAVCODEC_VERSION_MAJOR など)
+    const char* name;  // "avcodec" など
+    unsigned major;    // ビルドに使ったヘッダの版 (LIBAVCODEC_VERSION_MAJOR など)
     unsigned minor;
     unsigned (*version)();  // avcodec_version など。DLL を読めてから呼ぶ
 };
@@ -74,11 +74,10 @@ inline Result check(std::initializer_list<Lib> libs) {
         const unsigned major = v >> 16;
         const unsigned minor = (v >> 8) & 0xff;
         if (major != lib.major || minor < lib.minor) {
-            return {false, ui_message("ffmpeg.version",
-                                      {{"lib", std::string("lib") + lib.name},
-                                       {"found", std::to_string(major) + "." + std::to_string(minor)},
-                                       {"required", std::to_string(lib.major) + "." + std::to_string(lib.minor)},
-                                       {"series", kSeries}})};
+            return {false, ui_message("ffmpeg.version", {{"lib", std::string("lib") + lib.name},
+                                                         {"found", std::to_string(major) + "." + std::to_string(minor)},
+                                                         {"required", std::to_string(lib.major) + "." + std::to_string(lib.minor)},
+                                                         {"series", kSeries}})};
         }
     }
     return {};

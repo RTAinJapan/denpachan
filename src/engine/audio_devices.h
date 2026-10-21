@@ -11,9 +11,9 @@
 namespace denpachan::engine {
 
 struct AudioDeviceInfo {
-    std::wstring id;       // WASAPI: エンドポイント ID、ASIO: "asio:{CLSID}"
-    std::wstring name;     // ASIO は "ASIO: ドライバ名"
-    int channels = 0;      // WASAPI: 共有モードのミックス形式、ASIO: 出力チャンネル数 (分からなければ 0)
+    std::wstring id;    // WASAPI: エンドポイント ID、ASIO: "asio:{CLSID}"
+    std::wstring name;  // ASIO は "ASIO: ドライバ名"
+    int channels = 0;   // WASAPI: 共有モードのミックス形式、ASIO: 出力チャンネル数 (分からなければ 0)
     int sample_rate = 0;
     bool asio = false;
 };

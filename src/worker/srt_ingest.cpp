@@ -51,10 +51,7 @@ const char* last_error() { return srt_getlasterror_str(); }
 }  // namespace
 
 SrtIngest::SrtIngest(SrtOptions options, ByteQueue& queue, ChannelMetrics& metrics)
-    : options_(std::move(options)),
-      queue_(queue),
-      metrics_(metrics),
-      stop_event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+    : options_(std::move(options)), queue_(queue), metrics_(metrics), stop_event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
 
 SrtIngest::~SrtIngest() { stop(); }
 
@@ -66,10 +63,8 @@ bool SrtIngest::start() {
     stop_ = false;
     ResetEvent(stop_event_.get());
     thread_ = std::thread([this] {
-        if (options_.mode == "caller")
-            run_caller();
-        else
-            run_listener();
+        if (options_.mode == "caller") run_caller();
+        else run_listener();
     });
     return true;
 }
@@ -105,16 +100,14 @@ bool SrtIngest::configure(int sock, bool listener) {
     if (ok && listener) ok = set_int(SRTO_RCVSYN, 0, "RCVSYN");
     if (ok && !listener) ok = set_int(SRTO_CONNTIMEO, 3000, "CONNTIMEO");
     if (ok && !options_.passphrase.empty()) {
-        if (srt_setsockflag(sock, SRTO_PASSPHRASE, options_.passphrase.data(), int(options_.passphrase.size())) ==
-            SRT_ERROR) {
+        if (srt_setsockflag(sock, SRTO_PASSPHRASE, options_.passphrase.data(), int(options_.passphrase.size())) == SRT_ERROR) {
             spdlog::error("SRT: passphrase rejected (10-79 chars): {}", last_error());
             ok = false;
         }
         if (ok && options_.pbkeylen) ok = set_int(SRTO_PBKEYLEN, options_.pbkeylen, "PBKEYLEN");
     }
     if (ok && !listener && !options_.streamid.empty()) {
-        ok = srt_setsockflag(sock, SRTO_STREAMID, options_.streamid.data(), int(options_.streamid.size())) !=
-             SRT_ERROR;
+        ok = srt_setsockflag(sock, SRTO_STREAMID, options_.streamid.data(), int(options_.streamid.size())) != SRT_ERROR;
     }
     return ok;
 }
@@ -172,15 +165,12 @@ void SrtIngest::run_listener() {
         const SRTSOCKET lsn = srt_create_socket();
         sockaddr_storage addr{};
         int addr_len = 0;
-        if (lsn == SRT_INVALID_SOCK || !configure(lsn, true) ||
-            !resolve(options_.host, options_.port, true, addr, addr_len) ||
-            srt_bind(lsn, reinterpret_cast<sockaddr*>(&addr), addr_len) == SRT_ERROR ||
-            srt_listen(lsn, 4) == SRT_ERROR) {
+        if (lsn == SRT_INVALID_SOCK || !configure(lsn, true) || !resolve(options_.host, options_.port, true, addr, addr_len) ||
+            srt_bind(lsn, reinterpret_cast<sockaddr*>(&addr), addr_len) == SRT_ERROR || srt_listen(lsn, 4) == SRT_ERROR) {
             spdlog::error("SRT: cannot listen on {}:{}: {}", options_.host, options_.port, last_error());
             {
                 std::lock_guard lk(metrics_.mutex);
-                metrics_.last_error = ui_message("srt.cannotListen", {{"port", std::to_string(options_.port)},
-                                                                      {"detail", last_error()}});
+                metrics_.last_error = ui_message("srt.cannotListen", {{"port", std::to_string(options_.port)}, {"detail", last_error()}});
             }
             if (lsn != SRT_INVALID_SOCK) srt_close(lsn);
             if (!sleep_interruptible(2000)) return;
@@ -275,8 +265,7 @@ void SrtIngest::run_caller() {
             }
         }
         if (!reason.empty()) {
-            spdlog::warn("SRT: connect to {}:{} failed: {} (retry in {} ms)", options_.host, options_.port, reason,
-                         backoff_ms);
+            spdlog::warn("SRT: connect to {}:{} failed: {} (retry in {} ms)", options_.host, options_.port, reason, backoff_ms);
             {
                 std::lock_guard lk(metrics_.mutex);
                 metrics_.last_error = reason;
