@@ -81,6 +81,10 @@ public:
         data_ = ring_data(mapping_.data());
         SharedSecurity sec;
         event_.reset(CreateEventW(sec.get(), FALSE, FALSE, event_name(ch).c_str()));
+        // 前の書き手 (rtmpd) が publish の途中で落ちていれば、そのセッションは「publish 中」のまま残っている。
+        // 書き手は 1 チャンネルに 1 つなので、開いた時点で残っているものは終わらせる (読み手が受信中のままにならないように)
+        if (header_->session_open.load(std::memory_order_acquire)) end_session();
+        heartbeat();
         return true;
     }
 
@@ -93,6 +97,7 @@ public:
         header_->bytes_in.store(0);
         header_->resync_request.store(0);
         header_->session_start_pos.store(start, std::memory_order_relaxed);
+        heartbeat();  // 読み手は、ハートビートが止まった書き手のセッションを終わらせる (flv_ring_ingest)
         header_->session_open.store(1, std::memory_order_relaxed);
         header_->session.fetch_add(1, std::memory_order_release);
         signal();

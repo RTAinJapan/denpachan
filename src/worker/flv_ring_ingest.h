@@ -31,6 +31,8 @@ private:
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> resync_{false};
+    // 書き手 (rtmpd) のハートビート (1 秒ごと) がこれだけ止まったら、publish は終わったとみなす
+    static constexpr int64_t kWriterTimeoutMs = 3000;
 };
 
 }  // namespace denpachan::worker
