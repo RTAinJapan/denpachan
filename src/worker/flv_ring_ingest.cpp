@@ -116,6 +116,17 @@ void FlvRingIngest::run() {
         }
         if (!h->session_open.load(std::memory_order_acquire)) close_session();
 
+        // 書き手 (rtmpd) が落ちて起動し直されないと、セッションは「publish 中」のまま残る。ハートビート (1 秒ごと) が
+        // kWriterTimeoutMs 止まったら、publish は終わったとみなす (受信中のまま固まらないように)。
+        // rtmpd が止まっていただけ (システム全体の一時停止など) で同じ publish が続いていれば、
+        // 区切り直しを頼んでおくと、次のキーフレームから新しいセッションとして読み直せる
+        if (active && qpc_now() - h->writer_heartbeat_qpc.load(std::memory_order_relaxed) > qpc_from_ms(kWriterTimeoutMs)) {
+            spdlog::warn("RTMP: rtmpd is not responding; ending the publish (resync at the next keyframe if it resumes)");
+            close_session();
+            h->resync_request.store(1, std::memory_order_release);
+            continue;
+        }
+
         if (const int64_t now = qpc_now(); now - last_stats > qpc_from_ms(1000)) {
             last_stats = now;
             metrics_.tcp_rtt_us = h->tcp_rtt_us.load();

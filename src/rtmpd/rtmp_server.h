@@ -86,6 +86,11 @@ private:
     bool publishing_ = false;
     int64_t last_data_qpc_ = 0;
     int64_t last_stats_qpc_ = 0;
+    int64_t connected_qpc_ = 0;
+
+    // publish までの期限と、publish 前に受け取る量の上限 (recv_exact)
+    static constexpr int64_t kPublishDeadlineMs = 30'000;
+    static constexpr uint64_t kPrePublishMaxBytes = 1024 * 1024;
 };
 
 class Server {

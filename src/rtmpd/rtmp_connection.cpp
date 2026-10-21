@@ -83,6 +83,19 @@ bool Connection::recv_exact(uint8_t* buf, size_t n) {
         if (kicked_ || server_.stopping()) return false;
         const int r = recv(sock_, reinterpret_cast<char*>(buf), int(std::min<size_t>(n, 1 << 20)), 0);
         const int64_t now = qpc_now();
+        // publish までの期限と、publish 前に受け取る量の上限。publish しないまま何かを送り続ける相手 (宛先違い、
+        // 壊れたクライアント、いたずら) が接続の枠と受信バッファを使い続けないように。正しい送出元は、
+        // ハンドシェイクと connect / createStream / publish の数 KB を数秒で送る
+        if (!publishing_) {
+            if (now - connected_qpc_ > qpc_from_ms(kPublishDeadlineMs)) {
+                spdlog::warn("RTMP: {} did not publish within {} s; closing", peer_, kPublishDeadlineMs / 1000);
+                return false;
+            }
+            if (total_in_ > kPrePublishMaxBytes) {
+                spdlog::warn("RTMP: {} sent {} bytes without publishing; closing", peer_, total_in_);
+                return false;
+            }
+        }
         if (r > 0) {
             buf += r;
             n -= size_t(r);
@@ -422,6 +435,7 @@ void Connection::run() {
     DWORD send_timeout = 5000;  // 受け取らない相手で send() に固まらない
     setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&send_timeout), sizeof(send_timeout));
     last_data_qpc_ = qpc_now();
+    connected_qpc_ = last_data_qpc_;
     try {
         if (handshake()) {
             while (read_chunk()) {}
@@ -433,6 +447,9 @@ void Connection::run() {
         server_.end_publish(ch_, this);
         spdlog::info("ch{}: RTMP publish from {} ended", ch_, peer_);
     }
+    // ソケットを閉じるのは後片付け (Server が終わった接続を捨てるとき) なので、それまで相手に切ったことが伝わらない。
+    // ここで送受信を止めて、すぐに伝える
+    shutdown(sock_, SD_BOTH);
     finished_ = true;
 }
 
