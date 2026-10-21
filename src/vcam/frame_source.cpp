@@ -125,7 +125,7 @@ bool FrameSource::has_frame() const { return header_ && header_->write_seq.load(
 bool FrameSource::fill(uint8_t* dst) {
     if (ensure_open()) ensure_reader_slot();
 
-    // 受信中なら新しいフレームを最大 2 フレーム期間待つ。それ以外は 1 フレーム期間ごとに出す。
+    // 受信中なら新しいフレームを待つ (live_wait_ms)。それ以外は 1 フレーム期間ごとに出す。
     // 開いた直後でまだフレームがなく、書き手が生きているときは、書き手が保持しているフレームを
     // 書いてくれるのを少し待つ (誰も見ていない間は書き手が書き込みを省いているため)。
     const bool live = writer_live();
@@ -133,18 +133,43 @@ bool FrameSource::fill(uint8_t* dst) {
         first_fill_ && !has_frame() && header_ && heartbeat_alive(header_->writer_heartbeat_qpc.load(), kWriterTimeoutMs);
     first_fill_ = false;
     if (!live || header_->write_seq.load(std::memory_order_acquire) == last_seq_) {
-        const DWORD timeout = wait_for_writer ? 200 : live ? frame_period_ms_ * 2 : frame_period_ms_;
+        const DWORD timeout = wait_for_writer ? 200 : live ? live_wait_ms() : frame_period_ms_;
         HANDLE handles[2] = {interrupt_event_.get(), frame_event_.get()};
         WaitForMultipleObjects(frame_event_ ? 2 : 1, handles, FALSE, timeout);
     }
 
     // 一度でもフレームが書かれていれば、途絶中でも書き手が落ちていても最後のフレームを出す
     if (has_frame()) {
+        const uint64_t prev_seq = last_seq_;
         const bool fresh = header_->write_seq.load(std::memory_order_acquire) != last_seq_;
-        if (copy_latest(dst)) return fresh;
+        if (copy_latest(dst)) {
+            if (fresh) measure_interval(prev_seq);
+            return fresh;
+        }
     }
     fill_slate(dst);
     return false;
+}
+
+void FrameSource::measure_interval(uint64_t prev_seq) {
+    const int64_t now = qpc_now();
+    if (last_fresh_qpc_ != 0 && prev_seq != 0 && last_seq_ > prev_seq) {
+        // 前に読んでから書き手が何枚進んだかで割る (読み手が間に合わず飛ばしたフレームの分)
+        const int64_t us = qpc_to_us(now - last_fresh_qpc_) / int64_t(last_seq_ - prev_seq);
+        // 途絶をまたいだ間隔は映像の間隔ではないので使わない
+        if (us < kMaxLiveWaitMs * 1000) {
+            source_interval_us_ = source_interval_us_ == 0 ? us : source_interval_us_ + (us - source_interval_us_) / 8;
+        }
+    }
+    last_fresh_qpc_ = now;
+}
+
+DWORD FrameSource::live_wait_ms() const {
+    // 映像のフレーム間隔の 1.5 倍 (届く時刻の揺れの分の余裕)。出力の fps より遅い映像 (60 fps で出す 30 fps の映像など) で、
+    // 次のフレームが届く直前に待ちが切れて同じ絵をもう 1 枚挟まないように。最低 2 フレーム期間、最大 kMaxLiveWaitMs。
+    const DWORD min_ms = frame_period_ms_ * 2;
+    const DWORD source_ms = DWORD(source_interval_us_ * 3 / 2 / 1000);
+    return std::max(min_ms, std::min(source_ms, kMaxLiveWaitMs));
 }
 
 }  // namespace denpachan::vcam
