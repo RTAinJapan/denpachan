@@ -1,5 +1,5 @@
 {
-  "_comment": "映像も音も出ているが悪くなっている: ch1 SW デコード + 推奨 latency 不足 + 音切れ、ch2 途絶 + 取りこぼし + 音声デバイス無し、ch3 再起動中、ch4 録画エラー + ロック",
+  "_comment": "映像も音も出ているが悪くなっている: ch1 SW デコード + 推奨 latency 不足 + 音切れ、ch2 途絶 + 取りこぼし + 別の送出元を断った + 音声デバイス無し、ch3 再起動中、ch4 録画エラー + ロック",
   "channels": [
     {
       "name": "Game A", "enabled": true, "vcam": 1,
@@ -43,7 +43,8 @@
         "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9002 },
         "worker": { "state": "running", "pid": 4124, "restarts": 0, "uptimeSec": 7200, "lastEvent": "" },
         "video": { "state": "hold", "connected": true, "connections": 1, "peer": "192.168.1.11:40022", "codec": "h264", "width": 1920, "height": 1080,
-                   "hwDecode": true, "bitrateMbps": 0.4, "decodeFps": 3, "outputFps": 60, "delayMs": 50, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
+                   "hwDecode": true, "bitrateMbps": 0.4, "decodeFps": 3, "outputFps": 60, "delayMs": 50, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "",
+                   "rejectedSenders": 5 },
         "srt": { "latencyMs": 120, "rttMs": 95.0, "rcvBufMs": 140, "recvMbps": 0.4, "lost": 5000, "retrans": 2100, "dropped": 320, "configuredLatencyMs": 120,
                  "recommend": { "latencyMs": 400, "multiplier": 8, "rttMs": 95.0, "lossPct": 6.5, "drops": 320, "windowSec": 60 } },
         "audioIn": { "peakDb": [-100, -100], "delayMs": 0, "avOffsetMs": 0, "gaps": 12 },
