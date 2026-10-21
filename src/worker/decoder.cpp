@@ -463,7 +463,8 @@ bool Decoder::run_session(uint64_t session) {
             if (url_mode && !stop_) spdlog::info("decoder: read ended: {}", av_error_string(err));
             break;
         }
-        if (test_rewind_at != 0 && qpc_now() >= test_rewind_at) {
+        // 映像以外は 0.3 秒遅れて戻す (MPEG-TS の折り返しはストリームごとに別の時刻で起きるので、その代わり)
+        if (test_rewind_at != 0 && qpc_now() >= test_rewind_at + (pkt->stream_index == vidx ? 0 : qpc_from_ms(kTestRewindAudioLagMs))) {
             if (!test_rewound) spdlog::warn("decoder: test: timestamps rewound by {} s", kTestRewindSec);
             test_rewound = true;
             const int64_t d =

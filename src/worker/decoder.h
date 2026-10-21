@@ -38,7 +38,8 @@ public:
     // 受信側に区切り直し (次のキーフレームから新しいセッション) を頼む。start() の前に呼ぶ。
     void set_resync(std::function<void()> resync) { resync_ = std::move(resync); }
     // 試験用: セッションが始まってからこの秒数後に、受信したパケットのタイムスタンプを kTestRewindSec 秒戻す
-    // (同じ接続のまま送出側が再起動した、MPEG-TS の折り返しなどの代わり)。start() の前に呼ぶ。
+    // (同じ接続のまま送出側が再起動した、MPEG-TS の折り返しなどの代わり)。音声は kTestRewindAudioLagMs 遅れて戻す。
+    // start() の前に呼ぶ。
     void set_test_ts_rewind(int after_sec) { test_ts_rewind_after_sec_ = after_sec; }
 
     void start();
@@ -89,6 +90,7 @@ private:
     int64_t last_pts_us_ = AV_NOPTS_VALUE;
     int test_ts_rewind_after_sec_ = 0;
     static constexpr int64_t kTestRewindSec = 8;
+    static constexpr int64_t kTestRewindAudioLagMs = 300;
 
     std::thread thread_;
     std::atomic<bool> stop_{false};

@@ -455,7 +455,10 @@ void Recorder::process(Item& item) {
     }
     case Item::Kind::AudioPacket:
         if (segment_ && segment_->audio_index >= 0 && info_ && info_->audio) {
-            write_packet(segment_->audio_index, item.packet.get(), info_->audio_tb);
+            AVPacket* pkt = item.packet.get();
+            const int64_t in_ts = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
+            if (in_ts != AV_NOPTS_VALUE && audio_far_from_video(av_rescale_q(in_ts, info_->audio_tb, kUs))) break;
+            write_packet(segment_->audio_index, pkt, info_->audio_tb);
         }
         break;
     case Item::Kind::VideoFrame: {
@@ -473,7 +476,7 @@ void Recorder::process(Item& item) {
         break;
     }
     case Item::Kind::AudioBlock:
-        if (segment_ && segment_->aenc) {
+        if (segment_ && segment_->aenc && !audio_far_from_video(item.pts_us)) {
             encode_audio(item.samples.data(), int(item.samples.size() / 2), remap_us(item.pts_us, false));
         }
         break;
@@ -534,6 +537,17 @@ bool Recorder::video_ts_jumped(int64_t in_us) {
     last_in_video_us_ = in_us;
     last_in_video_qpc_ = now;
     return jumped;
+}
+
+// 映像が戻った (飛んだ) のに、音声がまだ戻っていない。MPEG-TS の折り返しはストリームごとに、そのストリームの時刻が
+// 境界を越えたときに起きるので、映像と音声で数十〜数百 ms ずれる。その間の音声を書くと、新しい時間軸で遠く (折り返しなら
+// 約 26.5 時間) 先に置かれ、以後の音声がすべてそれより前になって捨てられる (再エンコードでは時刻が逆行する)。
+// 映像が届き続けている間に、入力の時刻が映像と 2 秒を超えて離れた音声は捨てる。
+// 映像だけが止まっている間 (1 秒以上届いていない) は、音声が先に進むのが正しいので捨てない
+bool Recorder::audio_far_from_video(int64_t in_us) const {
+    constexpr int64_t kFarUs = 2'000'000;
+    if (!have_last_in_video_ || qpc_now() - last_in_video_qpc_ > qpc_from_ms(1000)) return false;
+    return std::abs(in_us - last_in_video_us_) > kFarUs;
 }
 
 void Recorder::housekeeping() {

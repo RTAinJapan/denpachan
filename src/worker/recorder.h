@@ -105,6 +105,7 @@ private:
     void reap_external();
     bool write_packet(int stream_index, AVPacket* pkt, AVRational src_tb);  // 書いたら true
     bool video_ts_jumped(int64_t in_us);
+    bool audio_far_from_video(int64_t in_us) const;
     void encode_video(const AVFrame* frame, int64_t out_us);
     void encode_audio(const float* data, int frames, int64_t out_us);
     void drain_encoder(AVCodecContext* ctx, int stream_index);
