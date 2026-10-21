@@ -151,6 +151,7 @@ private:
     int64_t last_size_check_qpc_ = 0;
     uint64_t seq_ = 0;
     std::vector<std::unique_ptr<ExternalEncoder>> finishing_;  // 入力を閉じて書き終わりを待っている ffmpeg
+    static constexpr int64_t kFinishTimeoutMs = 60'000;        // 入力を閉じてこれだけ経っても終わらない ffmpeg は止める
 };
 
 }  // namespace denpachan::worker

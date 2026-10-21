@@ -16,6 +16,8 @@
 #include <thread>
 #include <vector>
 
+#include "denpachan/win_util.h"
+
 namespace denpachan::worker {
 
 class ExternalEncoder {
@@ -32,15 +34,28 @@ public:
     static void kill_all();
 
     bool start(const std::wstring& exe, const std::vector<std::string>& args, std::string& error);
-    bool write(const uint8_t* data, size_t size);  // ffmpeg が終わっていたら false
+    bool write(const uint8_t* data, size_t size);  // ffmpeg が終わっていたら (止められたら) false
     void close_input();
     bool exited(DWORD& code) const;
     void kill();
+    // 固まったので止める (stalled() が true になる。終わり方をエラーとして扱わないため)
+    void kill_stalled() {
+        stalled_ = true;
+        kill();
+    }
     DWORD pid() const { return pid_; }
     std::string last_message() const;
+    // 固まったので止めた (write が kWriteStallMs 終わらなかった、入力を閉じても終わらなかった)
+    bool stalled() const { return stalled_; }
+    // close_input してから経った時間 (ms)。閉じていなければ 0
+    int64_t ms_since_input_closed() const;
+
+    // ffmpeg がこの時間入力を読まなければ (write が終わらなければ) 止める。録画スレッドが書き込みで止まったままにならないように
+    static constexpr int64_t kWriteStallMs = 10'000;
 
 private:
     void read_stderr();
+    void watch_writes();
 
     HANDLE process_ = nullptr;
     HANDLE stdin_ = nullptr;
@@ -48,6 +63,11 @@ private:
     DWORD pid_ = 0;
     std::thread reader_;
     std::atomic<bool> reader_done_{false};
+    std::thread watchdog_;
+    UniqueHandle watchdog_stop_;
+    std::atomic<int64_t> write_started_qpc_{0};  // 書いている間だけ 0 以外
+    std::atomic<bool> stalled_{false};
+    int64_t input_closed_qpc_ = 0;
     mutable std::mutex mutex_;
     std::string last_message_;
 };

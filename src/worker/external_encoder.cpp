@@ -59,6 +59,10 @@ ExternalEncoder::~ExternalEncoder() {
         std::lock_guard lk(g_registry_mutex);
         g_registry.erase(this);
     }
+    if (watchdog_.joinable()) {
+        SetEvent(watchdog_stop_.get());
+        watchdog_.join();
+    }
     close_input();
     if (reader_.joinable()) {
         // ffmpeg がまだ動いていれば、エラー出力を読むのをやめて別れる (ffmpeg は動き続けて書き終える)
@@ -145,25 +149,49 @@ bool ExternalEncoder::start(const std::wstring& exe, const std::vector<std::stri
     stdin_ = in_write;
     stderr_ = err_read;
     reader_ = std::thread(&ExternalEncoder::read_stderr, this);
+    watchdog_stop_.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    watchdog_ = std::thread(&ExternalEncoder::watch_writes, this);
     return true;
 }
 
 bool ExternalEncoder::write(const uint8_t* data, size_t size) {
+    write_started_qpc_ = qpc_now();
+    bool ok = true;
     while (size > 0) {
-        if (!stdin_) return false;
         DWORD n = 0;
-        if (!WriteFile(stdin_, data, DWORD(std::min<size_t>(size, 1 << 20)), &n, nullptr) || n == 0) return false;
+        if (!stdin_ || !WriteFile(stdin_, data, DWORD(std::min<size_t>(size, 1 << 20)), &n, nullptr) || n == 0) {
+            ok = false;
+            break;
+        }
         data += n;
         size -= n;
     }
-    return true;
+    write_started_qpc_ = 0;
+    return ok;
+}
+
+// ffmpeg が入力を読まなくなると (固まった、ディスクが詰まった)、パイプが一杯になって WriteFile が戻らず、録画スレッドが
+// 止まったままになる (チャンネルを止めるまで録画も途切れの判定もできない)。書き込みが kWriteStallMs 終わらなければ
+// ffmpeg を止める。パイプの読み手がいなくなるので WriteFile は失敗で戻り、録画はファイルを閉じて間を空けて開き直す
+void ExternalEncoder::watch_writes() {
+    while (WaitForSingleObject(watchdog_stop_.get(), 500) == WAIT_TIMEOUT) {
+        const int64_t started = write_started_qpc_;
+        if (started == 0 || stalled_ || qpc_now() - started < qpc_from_ms(kWriteStallMs)) continue;
+        spdlog::warn("record: ffmpeg (pid {}) has not read its input for {} s; stopping it", pid_, kWriteStallMs / 1000);
+        kill_stalled();
+    }
 }
 
 void ExternalEncoder::close_input() {
     if (stdin_) {
         CloseHandle(stdin_);
         stdin_ = nullptr;
+        input_closed_qpc_ = qpc_now();
     }
+}
+
+int64_t ExternalEncoder::ms_since_input_closed() const {
+    return input_closed_qpc_ == 0 ? 0 : qpc_to_us(qpc_now() - input_closed_qpc_) / 1000;
 }
 
 bool ExternalEncoder::exited(DWORD& code) const {
