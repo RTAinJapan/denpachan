@@ -8,6 +8,7 @@
     A. 受信中に閉じる → 確認が出る → キャンセル → 画面も engine も動いたまま
     B. 受信中に閉じる → 確認 → OK → 画面・engine・worker が終わる
     C. 受信中のチャンネルがないときに閉じる → 確認なしで画面と engine が終わる
+    D. engine が落ちた直後 (繋がっていない間) に閉じる → 例外を出さずに画面が終わる
   build.ps1 のあとに実行する。FFmpeg は tools/testsrc/dev_env.sh と同じく out/deps のものを使う。
 
 .EXAMPLE
@@ -120,6 +121,20 @@ Check ($null -eq $dialog) '確認ダイアログは出ない'
 Start-Sleep -Seconds 5
 Check $ui.HasExited '画面が終わった'
 Check ((Running 'denpachan-engine') -eq 0) 'engine が終わった'
+
+Step 'D. engine が落ちた直後 (繋がっていない間) に閉じる → 例外を出さずに画面が終わる'
+# 画面は engine が居ないと 1 秒後に自分で起動する。そのとき普段の設定を読まないよう、設定の場所を試験用にする
+$env:APPDATA = Join-Path $out 'close-appdata'
+New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+Stop-All
+Start-Engine
+& $ctl stop 1
+$ui = Start-Ui
+Get-Process denpachan-engine | Stop-Process -Force
+Start-Sleep -Milliseconds 300  # 画面が切れたことに気づくまで (起動し直すより前)
+$ui.CloseMainWindow() | Out-Null
+Start-Sleep -Seconds 4
+Check $ui.HasExited '画面が終わった (閉じられないまま残らない)'
 
 Stop-All
 Write-Host ''
