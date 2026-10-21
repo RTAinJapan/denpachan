@@ -192,8 +192,14 @@ void SrtIngest::run_listener() {
         };
 
         int64_t last_stats = qpc_now();
+        int64_t last_data_qpc = 0;  // 今の相手から最後にデータを受けた時刻 (接続した時刻を含む)
+        uint64_t seen_bytes = 0;
         while (!stop_) {
             metrics_.heartbeat_ingest();
+            if (const uint64_t b = metrics_.bytes_in.load(); b != seen_bytes) {
+                seen_bytes = b;
+                last_data_qpc = qpc_now();
+            }
             SRT_EPOLL_EVENT events[4];
             const int n = srt_epoll_uwait(eid, events, 4, 100);
             for (int i = 0; i < n; ++i) {
@@ -203,9 +209,20 @@ void SrtIngest::run_listener() {
                     const SRTSOCKET c = srt_accept(lsn, reinterpret_cast<sockaddr*>(&peer), &peer_len);
                     if (c == SRT_INVALID_SOCK) continue;
                     if (client != SRT_INVALID_SOCK) {
-                        spdlog::warn("SRT: new connection from {} replaces the current one", address_string(peer));
+                        // 今の相手が送り続けていれば、新しい方を断る (2 つの送出元が同じポートに送ると、置き換えるたびに
+                        // 切られた方が繋ぎ直して、交互に切り替わり続けるため)。送ってこなくなっていれば置き換える
+                        const int64_t idle_ms = qpc_to_us(qpc_now() - last_data_qpc) / 1000;
+                        if (idle_ms < kActiveSenderMs) {
+                            spdlog::warn("SRT: connection from {} rejected: the current sender is still sending", address_string(peer));
+                            srt_close(c);
+                            continue;
+                        }
+                        spdlog::warn("SRT: new connection from {} replaces the current one (no data for {} ms)", address_string(peer),
+                                     idle_ms);
                         close_client();
                     }
+                    last_data_qpc = qpc_now();
+                    seen_bytes = metrics_.bytes_in.load();
                     client = c;
                     const int no = 0;
                     srt_setsockflag(client, SRTO_RCVSYN, &no, sizeof(no));

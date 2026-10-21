@@ -103,7 +103,7 @@ public:
     const ServerOptions& options() const { return options_; }
     bool stopping() const { return stop_; }
     int resolve(const std::string& app, const std::string& key);  // チャンネル (なければ 0)
-    void begin_publish(int ch, Connection* c);
+    bool begin_publish(int ch, Connection* c);                    // false = 今の送出元が送り続けているので断る
     void end_publish(int ch, Connection* c);
     bool write_media(int ch, Connection* c, uint8_t type, uint32_t timestamp, const uint8_t* data, uint32_t size);
     void update_tcp_stats(int ch, Connection* c, int32_t rtt_us, uint64_t retrans_bytes);
@@ -112,7 +112,8 @@ private:
     struct Channel {
         std::mutex mutex;
         Connection* publisher = nullptr;
-        std::string app;  // publish を受けたときの振り分け
+        int64_t last_media_qpc = 0;  // publisher から最後にメディアを受けた時刻 (publish の開始を含む)
+        std::string app;             // publish を受けたときの振り分け
         std::string key;
         flv_ring::Writer ring;
         bool ring_open = false;
@@ -121,6 +122,9 @@ private:
         std::vector<uint8_t> audio_config;
         std::vector<uint8_t> video_config;
     };
+
+    // 今の送出元からこの時間内にメディアが届いていれば、同じキーへの新しい publish を断る
+    static constexpr int64_t kActivePublisherMs = 1000;
 
     void accept_loop();
     bool read_routes(rtmp_routes::Route (&out)[rtmp_routes::kMaxRoutes]);

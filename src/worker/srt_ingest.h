@@ -40,6 +40,9 @@ private:
     void update_stats(int sock);
     bool sleep_interruptible(int ms);
 
+    // listener: 今の相手からこの時間内にデータが届いていれば、新しい接続を断る
+    static constexpr int64_t kActiveSenderMs = 1000;
+
     const SrtOptions options_;
     ByteQueue& queue_;
     ChannelMetrics& metrics_;

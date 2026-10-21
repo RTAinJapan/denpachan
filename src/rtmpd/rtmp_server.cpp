@@ -151,14 +151,23 @@ int Server::resolve(const std::string& app, const std::string& key) {
     return 0;
 }
 
-void Server::begin_publish(int ch, Connection* c) {
+bool Server::begin_publish(int ch, Connection* c) {
     auto& channel = channels_[ch - 1];
     std::lock_guard lk(channel.mutex);
+    const int64_t now = qpc_now();
     if (channel.publisher && channel.publisher != c) {
-        spdlog::warn("ch{}: new publish from {} replaces {}", ch, c->peer(), channel.publisher->peer());
+        // 今の送出元が送り続けていれば、新しい方を断る (2 つの送出元が同じキーに送ると、置き換えるたびに切られた方が
+        // 繋ぎ直して、交互に切り替わり続けるため)。送ってこなくなっていれば (瞬断で半開きの TCP など) 置き換える
+        if (now - channel.last_media_qpc < qpc_from_ms(kActivePublisherMs)) {
+            spdlog::warn("ch{}: publish from {} rejected: {} is still sending", ch, c->peer(), channel.publisher->peer());
+            return false;
+        }
+        spdlog::warn("ch{}: new publish from {} replaces {} (no data for {} ms)", ch, c->peer(), channel.publisher->peer(),
+                     qpc_to_us(now - channel.last_media_qpc) / 1000);
         channel.publisher->kick();
     }
     channel.publisher = c;
+    channel.last_media_qpc = now;
     channel.metadata.clear();
     channel.audio_config.clear();
     channel.video_config.clear();
@@ -168,6 +177,7 @@ void Server::begin_publish(int ch, Connection* c) {
         channel.app = routes[ch - 1].app;
         channel.key = routes[ch - 1].key;
     }
+    return true;
 }
 
 void Server::end_publish(int ch, Connection* c) {
@@ -182,6 +192,7 @@ bool Server::write_media(int ch, Connection* c, uint8_t type, uint32_t timestamp
     auto& channel = channels_[ch - 1];
     std::lock_guard lk(channel.mutex);
     if (channel.publisher != c) return false;
+    channel.last_media_qpc = qpc_now();
     if (!channel.ring_open) return true;
 
     // 途中から読み始める worker のために、メタデータとコーデック設定を保持する
