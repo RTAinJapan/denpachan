@@ -61,6 +61,7 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 | `vcam_pace_test.sh` | 仮想カメラ (60 fps) が 30 fps / 60 fps の映像を受けたときに、同じ絵を余分に挟まないこと |
 | `burst_test.sh` | 送出側が短く止まってからまとめて送ったときに、増えた遅延が数秒で戻ること (VB-Audio Virtual Cable を使う) |
 | `record_test.sh` | 録画 (パススルー / GPU / CPU、区切り、再接続時の継続、ファイル名) |
+| `ext_encoder_stall_test.sh` | CPU 録画で外部 ffmpeg が入力を読まなくなったとき、10 秒で止めて新しいファイルで続けること |
 | `rewind_test.sh` | 録画中に同じ接続のままタイムスタンプが戻ったとき (worker の `--test-ts-rewind`) に、ファイルが壊れず音声も続くこと |
 | `ffmpeg_missing_test.sh` | FFmpeg が無いときの動きと、置いたあとの自動復帰 |
 | `package_test.sh` | 配布用の zip を展開して起動 (仮想カメラの登録、DirectShow での取り込み) |
