@@ -1,5 +1,5 @@
 {
-  "_comment": "engine に繋がっていない (起動を待っている)。状態は届かないので全チャンネル停止表示、操作は無効",
+  "_comment": "engine に繋がっていない (切れた、起動を待っている)。状態が分からないので全チャンネル「状態不明」、操作は無効",
   "connected": false,
   "channels": [
     { "name": "Game A", "enabled": true, "vcam": 1 },
@@ -15,10 +15,10 @@
     "connected": false,
     "ffmpegMissing": false,
     "channels": [
-      { "statusText": "停止" },
-      { "statusText": "停止" },
-      { "statusText": "停止" },
-      { "statusText": "停止" }
+      { "statusText": "状態不明 (engine と切れています)" },
+      { "statusText": "状態不明 (engine と切れています)" },
+      { "statusText": "状態不明 (engine と切れています)" },
+      { "statusText": "状態不明 (engine と切れています)" }
     ]
   }
 }

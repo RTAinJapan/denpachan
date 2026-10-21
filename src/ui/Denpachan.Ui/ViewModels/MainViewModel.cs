@@ -41,6 +41,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         _previewTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(66), DispatcherPriority.Render, (_, _) =>
         {
+            // 最小化している間は読まない (見えないものを描かない。読まなければ worker も 2 秒で縮小をやめる)
+            if (Application.Current?.MainWindow?.WindowState == WindowState.Minimized) return;
             foreach (var ch in VisibleChannels) ch.PollPreview();
         }, _dispatcher);
 
@@ -222,8 +224,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _systemSampling = true;
         try
         {
-            // 録画先: 録画がオンのチャンネルのフォルダ (空 = Videos\denpachan)。無ければシステムドライブ
-            var drives = Channels.Where(c => c.Config != null && c.Config.At("record").Bool("enabled"))
+            // 録画先: 使っている (画面に出している) チャンネルのうち、録画がオンのもののフォルダ (空 = Videos\denpachan)。
+            // 無ければシステムドライブ。使っていないチャンネルは録画しないので入れない
+            var drives = VisibleChannels.Where(c => c.Config != null && c.Config.At("record").Bool("enabled"))
                 .Select(c => (Dir: c.Config!.At("record").Str("dir") is { Length: > 0 } d ? d : DefaultRecordDir,
                               MinFreeGb: (double)c.Config!.At("record").Int("minFreeGb", 5)))
                 .ToList();
@@ -275,6 +278,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             _ = LoadDevicesAsync();
             _ = LoadConfigAsync();
+        }
+        else
+        {
+            foreach (var ch in Channels) ch.SetEngineDisconnected();
         }
     }
 
@@ -471,6 +478,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void LoadUiSettings()
     {
+        // 言語は ui.json が無くても (初回起動) 「自動」で決める (決めないと、英語の環境でも日本語で出る)
+        Loc.Instance.SetLanguage(Loc.Auto);
         try
         {
             if (!File.Exists(UiSettingsPath)) return;

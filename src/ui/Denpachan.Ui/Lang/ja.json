@@ -169,6 +169,7 @@
   "status.waitingVideo": "映像を待っています",
   "status.connecting": "接続中…",
   "status.listening": "待ち受け中",
+  "status.engineDisconnected": "状態不明 (engine と切れています)",
   "event.channel": "{name}: {text}",
   "event.workerRestarted": "worker を再起動しました ({reason})",
   "event.stopped": "停止しました",
