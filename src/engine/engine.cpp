@@ -275,6 +275,7 @@ json Engine::handle(const std::string& method, const json& params) {
         j.merge_patch(params.at("patch"));
         Config candidate = config_;
         candidate.general = general_from_json(j);
+        make_room_for_new_channels(candidate, config_.general.channel_count);
         if (auto err = validate(candidate)) throw std::runtime_error(*err);
         stop_unused_channels(candidate);  // 使うチャンネル数を減らしたら、外れたチャンネルは止める
         config_ = candidate;

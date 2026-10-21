@@ -400,6 +400,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             GeneralConfig = await _client.CallAsync("patchGeneral", new JsonObject { ["patch"] = patch });
+            // チャンネル数を増やすと、engine が新しく使うチャンネルのポートやカメラを付け替えることがあるので読み直す
+            await LoadConfigAsync();
             return null;
         }
         catch (EngineException e)
