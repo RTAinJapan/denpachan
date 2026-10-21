@@ -455,11 +455,21 @@ bool Decoder::run_session(uint64_t session) {
     };
 
     bool started = false;  // 映像を 1 枚でもデコーダに渡せた
+    const int64_t test_rewind_at = test_ts_rewind_after_sec_ > 0 ? qpc_now() + qpc_from_ms(int64_t(test_ts_rewind_after_sec_) * 1000) : 0;
+    bool test_rewound = false;
     while (!stop_ && (codec_ || vidx < 0)) {
         err = av_read_frame(fmt, pkt.get());  // ネットワーク待ちでブロックしうる
         if (err < 0) {                        // セッション終了 (EOF) / 停止
             if (url_mode && !stop_) spdlog::info("decoder: read ended: {}", av_error_string(err));
             break;
+        }
+        if (test_rewind_at != 0 && qpc_now() >= test_rewind_at) {
+            if (!test_rewound) spdlog::warn("decoder: test: timestamps rewound by {} s", kTestRewindSec);
+            test_rewound = true;
+            const int64_t d =
+                av_rescale_q(kTestRewindSec * 1'000'000, AVRational{1, 1'000'000}, fmt->streams[pkt->stream_index]->time_base);
+            if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= d;
+            if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= d;
         }
         if (url_mode) {
             io_deadline_qpc_ = qpc_now() + qpc_from_ms(kReadTimeoutMs);

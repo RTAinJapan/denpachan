@@ -427,6 +427,7 @@ void Recorder::process(Item& item) {
             need_keyframe_ = true;         // 途中から届いたストリームはキーフレームまで書かない
         }
         info_ = item.info;
+        have_last_in_video_ = false;
         retry_open_qpc_ = 0;
         open_failures_ = 0;
         break;
@@ -434,6 +435,11 @@ void Recorder::process(Item& item) {
         if (!config_.enabled || !uses_packets(config_) || disk_full_ || !info_ || !info_->video) break;
         AVPacket* pkt = item.packet.get();
         const bool key = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
+        const int64_t in_ts = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
+        if (in_ts != AV_NOPTS_VALUE && video_ts_jumped(av_rescale_q(in_ts, info_->video_tb, kUs)) && segment_) {
+            continuation_pending_ = true;
+            need_keyframe_ = true;
+        }
         if (need_keyframe_) {
             if (!key) break;
             need_keyframe_ = false;
@@ -444,8 +450,7 @@ void Recorder::process(Item& item) {
             if (ts == AV_NOPTS_VALUE || !try_open_segment(nullptr)) break;
             offset_us_ = -av_rescale_q(ts, info_->video_tb, kUs);
         }
-        last_video_qpc_ = qpc_now();
-        write_packet(segment_->video_index, pkt, info_->video_tb);
+        if (write_packet(segment_->video_index, pkt, info_->video_tb)) last_video_qpc_ = qpc_now();
         break;
     }
     case Item::Kind::AudioPacket:
@@ -456,13 +461,15 @@ void Recorder::process(Item& item) {
     case Item::Kind::VideoFrame: {
         if (!config_.enabled || uses_packets(config_) || disk_full_) break;
         const AVFrame* f = item.frame.get();
+        if (video_ts_jumped(item.pts_us) && segment_) continuation_pending_ = true;
         if (segment_ && (f->width != segment_->width || f->height != segment_->height)) close_segment("resolution changed");
         if (!segment_) {
             if (!try_open_segment(f)) break;
             offset_us_ = -item.pts_us;
         }
-        last_video_qpc_ = qpc_now();
-        encode_video(f, remap_us(item.pts_us, true));
+        const int64_t out_us = remap_us(item.pts_us, true);
+        if (out_us >= 0) last_video_qpc_ = qpc_now();
+        encode_video(f, out_us);
         break;
     }
     case Item::Kind::AudioBlock:
@@ -508,6 +515,25 @@ int64_t Recorder::remap_us(int64_t in_us, bool video) {
         spdlog::info("record: continuing the same file after reconnect");
     }
     return in_us + offset_us_;
+}
+
+// 同じ接続のまま、映像のタイムスタンプが戻った・実時間より大きく進んだ (送出側の再起動、MPEG-TS の 33 bit の折り返し、
+// RTMP の publish 中の巻き戻りなど)。そのまま書くと、戻った分を 1 tick ずつ詰めて書き、音声は捨て続けるので、
+// 再接続と同じく、次の映像を前の映像の 1 フレーム後ろに置いてつなぐ
+bool Recorder::video_ts_jumped(int64_t in_us) {
+    constexpr int64_t kBackUs = 500'000;       // これより戻ったら
+    constexpr int64_t kForwardUs = 5'000'000;  // 実際に経った時間よりこれ以上進んだら
+    const int64_t now = qpc_now();
+    bool jumped = false;
+    if (have_last_in_video_) {
+        const int64_t delta = in_us - last_in_video_us_;
+        jumped = delta < -kBackUs || delta > qpc_to_us(now - last_in_video_qpc_) + kForwardUs;
+        if (jumped && segment_) spdlog::info("record: timestamps jumped by {} ms in the same connection; continuing", delta / 1000);
+    }
+    have_last_in_video_ = true;
+    last_in_video_us_ = in_us;
+    last_in_video_qpc_ = now;
+    return jumped;
 }
 
 void Recorder::housekeeping() {
@@ -805,20 +831,20 @@ bool Recorder::open_encoders(Segment& seg, const AVFrame* frame) {
     return true;
 }
 
-void Recorder::write_packet(int stream_index, AVPacket* pkt, AVRational src_tb) {
+bool Recorder::write_packet(int stream_index, AVPacket* pkt, AVRational src_tb) {
     AVStream* st = segment_->oc->streams[stream_index];
     const int64_t dts_in = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
-    if (dts_in == AV_NOPTS_VALUE) return;
+    if (dts_in == AV_NOPTS_VALUE) return false;
     const int64_t pts_in = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : dts_in;
     const int64_t dts_us = av_rescale_q(dts_in, src_tb, kUs);
     const int64_t pts_us = av_rescale_q(pts_in, src_tb, kUs);
     const bool video = stream_index == segment_->video_index;
     const int64_t out_dts = remap_us(dts_us, video);
     const int64_t out_pts = out_dts + (pts_us - dts_us);
-    if (out_dts < 0) return;  // 映像より前の音声など
+    if (out_dts < 0) return false;  // 映像より前の音声など
 
     PacketPtr p(av_packet_clone(pkt));
-    if (!p) return;
+    if (!p) return false;
     p->stream_index = stream_index;
     p->dts = av_rescale_q(out_dts, kUs, st->time_base);
     p->pts = av_rescale_q(out_pts, kUs, st->time_base);
@@ -826,8 +852,8 @@ void Recorder::write_packet(int stream_index, AVPacket* pkt, AVRational src_tb) 
     p->pos = -1;
     int64_t& last = segment_->last_dts[size_t(stream_index)];
     if (last != AV_NOPTS_VALUE && p->dts <= last) {
-        if (!video) return;  // 再接続のつなぎ目で前の音声と重なる分は捨てる
-        p->dts = last + 1;   // 単調増加を保つ
+        if (!video) return false;  // 再接続のつなぎ目で前の音声と重なる分は捨てる
+        p->dts = last + 1;         // 単調増加を保つ
         if (p->pts < p->dts) p->pts = p->dts;
     }
     if (video) last_video_out_us_ = std::max(last_video_out_us_, out_dts);
@@ -838,7 +864,9 @@ void Recorder::write_packet(int stream_index, AVPacket* pkt, AVRational src_tb) 
         set_error(ui_message("rec.writeFailed", {{"detail", detail}}));
         close_segment("write error");
         retry_open_qpc_ = qpc_now() + qpc_from_ms(10'000);
+        return false;
     }
+    return true;
 }
 
 void Recorder::drain_encoder(AVCodecContext* ctx, int stream_index) {

@@ -52,6 +52,7 @@ struct Options {
     bool hw = true;
     bool audio = true;
     bool av_sync = true;
+    int test_ts_rewind_after_sec = 0;  // 試験用: この秒数後に受信のタイムスタンプを戻す (Decoder::set_test_ts_rewind)
     std::string log_file;
 };
 
@@ -126,6 +127,7 @@ std::optional<Options> parse_args(int argc, char** argv) {
         else if (a == "--no-audio") o.audio = false;
         else if (a == "--no-av-sync") o.av_sync = false;
         else if (a == "--test-hang-playout") ok = int_value(o.playout.test_hang_after_sec);
+        else if (a == "--test-ts-rewind") ok = int_value(o.test_ts_rewind_after_sec);
         else if (a == "--log-file") ok = str_value(o.log_file);
         else ok = false;
 
@@ -368,6 +370,7 @@ int main(int argc, char** argv) {
     Decoder decoder(input_format, bytes, frames, audio.get(), metrics, opts->hw);
     if (opts->input == "url") decoder.set_url(opts->url);
     if (flv_ingest) decoder.set_resync([&] { flv_ingest->request_resync(); });
+    decoder.set_test_ts_rewind(opts->test_ts_rewind_after_sec);
     Recorder recorder(opts->ch, metrics);
     decoder.set_recorder(&recorder);
     recorder.start();

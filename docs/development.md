@@ -58,6 +58,7 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 | `rtmp_test.sh` | RTMP の push (キーの振り分け、二重 publish、rtmpd の再起動) と pull |
 | `hold_test.sh` | 途絶えたときに最後の映像を保持する、NO SIGNAL の出し方 |
 | `record_test.sh` | 録画 (パススルー / GPU / CPU、区切り、再接続時の継続、ファイル名) |
+| `rewind_test.sh` | 録画中に同じ接続のままタイムスタンプが戻ったとき (worker の `--test-ts-rewind`) に、ファイルが壊れず音声も続くこと |
 | `ffmpeg_missing_test.sh` | FFmpeg が無いときの動きと、置いたあとの自動復帰 |
 | `package_test.sh` | 配布用の zip を展開して起動 (仮想カメラの登録、DirectShow での取り込み) |
 | `close_test.ps1` | 画面を閉じたときの確認ダイアログと、受信の停止 |
