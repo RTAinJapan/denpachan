@@ -83,7 +83,7 @@ struct Config {
 bool stop_unused_channels(Config& c);
 
 // 使うチャンネル数を old_count から増やしたとき、新しく使うチャンネルの待ち受けポートや仮想カメラが
-// 前からのチャンネルとぶつかっていれば、空いているポート・「なし」に変える (validate で拒否されないように)
+// 前からのチャンネルとぶつかっていれば、空いているポート・カメラに変える (validate で拒否されないように)
 void make_room_for_new_channels(Config& c, int old_count);
 
 enum class JsonForm {

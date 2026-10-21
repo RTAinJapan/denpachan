@@ -3,7 +3,7 @@
 #
 # ch1 が 9005 番 (8ch 化で増えた ch5 の既定のポート) で待ち受ける 0.1.x の設定で engine を起動し、次を確かめる。
 # - 設定が捨てられない (.broken に退避されない)
-# - 使うチャンネル数を 5 に増やせる。ch5 のポートはぶつからない番号に変わる
+# - 使うチャンネル数を 5 に増やせる。ch5 のポートとカメラはぶつからない番号に変わる (ch4 はカメラ 5 を使っておく)
 # - 使っているチャンネル同士の重複は、これまでどおり拒否される
 #
 # 試験用の設定ファイル (out/check/upgrade-config.json) を使うので、普段の設定は触らない。
@@ -26,6 +26,7 @@ check() {  # check <説明> <条件の結果 (0 = OK)>
     if [ "$2" = 0 ]; then echo "OK   $1"; else echo "FAIL $1"; FAIL=1; fi
 }
 port_of() { "$CTL" set "$1" '{}' 2>&1 | grep -oE '"port": [0-9]+' | grep -oE '[0-9]+'; }
+cam_of() { "$CTL" set "$1" '{}' 2>&1 | grep -oE '"vcam": [0-9]+' | grep -oE '[0-9]+'; }
 
 # 0.1.x の設定: channelCount が無く、チャンネルは 4 つだけ
 cat >"$CFG" <<'EOF'
@@ -36,7 +37,7 @@ cat >"$CFG" <<'EOF'
     { "id": 1, "name": "A", "enabled": false, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9005 }, "vcam": 1 },
     { "id": 2, "name": "B", "enabled": false, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9002 }, "vcam": 2 },
     { "id": 3, "name": "C", "enabled": false, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9003 }, "vcam": 3 },
-    { "id": 4, "name": "D", "enabled": false, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9004 }, "vcam": 4 }
+    { "id": 4, "name": "D", "enabled": false, "source": { "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9004 }, "vcam": 5 }
   ]
 }
 EOF
@@ -54,6 +55,9 @@ check "3. 使うチャンネル数を 5 に増やせる" $?
 P5=$(port_of 5)
 [ -n "$P5" ] && [ "$P5" != 9005 ] && [ "$P5" != 9002 ] && [ "$P5" != 9003 ] && [ "$P5" != 9004 ]
 check "4. ch5 のポートはぶつからない番号に変わる (got $P5)" $?
+C5=$(cam_of 5)
+[ "$C5" = 4 ]
+check "4b. ch5 のカメラ (既定の 5 は ch4 が使用中) は空いている最小の 4 に変わる (got $C5)" $?
 
 ! "$CTL" set 5 '{"source":{"port":9005}}' >/dev/null 2>&1
 check "5. 使っているチャンネル同士の重複は拒否される" $?

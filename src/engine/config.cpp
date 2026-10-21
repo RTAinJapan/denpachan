@@ -298,8 +298,12 @@ void make_room_for_new_channels(Config& c, int old_count) {
             ch.source.port = port;
         }
         if (ch.vcam != 0 && vcams.count(ch.vcam)) {
-            spdlog::info("ch{}: vcam {} is used by another channel; changed to none", id, ch.vcam);
-            ch.vcam = 0;
+            // 空いている最小の番号にする (カメラはチャンネルと同じ数あるので、普通は空きがある)。無ければ「なし」
+            int cam = 1;
+            while (cam <= kMaxChannels && vcams.count(cam)) ++cam;
+            if (cam > kMaxChannels) cam = 0;
+            spdlog::info("ch{}: vcam {} is used by another channel; changed to {}", id, ch.vcam, cam);
+            ch.vcam = cam;
         }
     }
 }
