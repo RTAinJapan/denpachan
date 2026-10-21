@@ -32,6 +32,7 @@ struct ChannelMetrics {
     std::atomic<uint64_t> overflow_bytes{0};  // デコーダが詰まって捨てた受信データ
     std::atomic<int32_t> tcp_rtt_us{0};       // RTMP push (rtmpd が測った TCP の RTT)
     std::atomic<uint64_t> tcp_retrans_bytes{0};
+    std::atomic<uint64_t> rejected_senders{0};  // 今の送出元が送っている間に来て断った接続 (SRT listener / RTMP push)
 
     // decode
     std::atomic<uint64_t> frames_decoded{0};

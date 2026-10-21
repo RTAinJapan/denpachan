@@ -368,6 +368,7 @@ json Engine::state_locked() {
                           {"droppedLate", m.dropped_late},
                           {"droppedQueue", m.dropped_queue},
                           {"decodeErrors", m.decode_errors},
+                          {"rejectedSenders", w.rejected_senders},  // 今の送出元が送っている間に来て断った接続 (累計)
                           {"lastError", message_json(m.last_error)}};
             if (c.source.protocol == "srt") {
                 j["srt"] = {{"latencyMs", m.srt_latency_ms},

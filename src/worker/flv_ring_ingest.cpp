@@ -120,6 +120,7 @@ void FlvRingIngest::run() {
             last_stats = now;
             metrics_.tcp_rtt_us = h->tcp_rtt_us.load();
             metrics_.tcp_retrans_bytes = h->tcp_retrans_bytes.load();
+            metrics_.rejected_senders = h->rejected_publishers.load();
         }
     }
     close_session();

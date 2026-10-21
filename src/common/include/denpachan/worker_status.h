@@ -96,6 +96,13 @@ struct Header {
     // engine → worker: 録画の設定 (JSON)。再起動せずに変えられるよう、コマンドラインでなくここで渡す。
     std::atomic<uint32_t> control_seq;  // 書き込み中は奇数
     char record_json[4096];
+
+    // ---- ここから後ろは後から足したもの ----
+    // 版 (layout_version) を上げずに末尾に足す: 前の版の worker / engine はここを読み書きしないだけで、それより前の位置は
+    // 変わらないので、版をまたいで引き継ぎ・停止ができる (engine の kill_orphan_locked)。前の版が作った共有メモリでは 0 のまま。
+
+    // 同じ宛先に、今の送出元が送っている間に来て断った接続の数 (SRT の listener と RTMP の push。累計)
+    std::atomic<uint64_t> rejected_senders;
 };
 
 static_assert(sizeof(Header) <= kMappingBytes);

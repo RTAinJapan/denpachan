@@ -76,6 +76,8 @@ sleep 2
 "$CTL" start 1
 sleep 3
 run "${RTMP_OUT[@]}"
+# 断った回数は engine の状態にも出る (画面の詳細とイベントログに出す)
+REJECTED_STATE=$("$CTL" state | grep -oE '"rejectedSenders": [0-9]+' | head -1 | grep -oE '[0-9]+')
 "$CTL" stop 1 >/dev/null
 taskkill //IM denpachan-engine.exe //F >/dev/null 2>&1
 LOG=$(tail -n +"$((SKIP + 1))" "$RTMPD_LOG")
@@ -86,4 +88,6 @@ echo "  断った (全体): $(rejected_total <<<"$LOG") 回、ログ $(grep -c "
 check "RTMP: A が送っている間は B を断り、A のまま" $?
 grep -q "replaces .* (no data" <<<"$LOG"
 check "RTMP: A が止まると B に置き換わる" $?
+[ "${REJECTED_STATE:-0}" -ge 1 ]
+check "RTMP: 断った回数が engine の状態 (video.rejectedSenders) に出る (got ${REJECTED_STATE:-none})" $?
 exit $FAIL

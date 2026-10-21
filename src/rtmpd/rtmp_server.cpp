@@ -169,6 +169,7 @@ bool Server::begin_publish(int ch, Connection* c) {
             // 断られた送出側は数秒ごとに繋ぎ直すので、ログは kRejectLogMs に 1 回、回数を添えてまとめる
             ++channel.rejected;
             channel.rejected_peer = c->peer();
+            if (channel.ring_open) channel.ring.header()->rejected_publishers.fetch_add(1);  // 画面に出す (worker 経由)
             if (now - channel.rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) log_rejected_locked(ch, channel, now);
             return false;
         }
