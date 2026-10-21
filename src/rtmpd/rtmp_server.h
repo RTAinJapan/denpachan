@@ -113,7 +113,10 @@ private:
         std::mutex mutex;
         Connection* publisher = nullptr;
         int64_t last_media_qpc = 0;  // publisher から最後にメディアを受けた時刻 (publish の開始を含む)
-        std::string app;             // publish を受けたときの振り分け
+        int rejected = 0;            // まだログに出していない、断った publish の数
+        std::string rejected_peer;   // 最後に断った相手
+        int64_t rejected_log_qpc = 0;
+        std::string app;  // publish を受けたときの振り分け
         std::string key;
         flv_ring::Writer ring;
         bool ring_open = false;
@@ -125,8 +128,11 @@ private:
 
     // 今の送出元からこの時間内にメディアが届いていれば、同じキーへの新しい publish を断る
     static constexpr int64_t kActivePublisherMs = 1000;
+    // 断った publish のログをまとめる間隔 (断られた送出側は数秒ごとに繋ぎ直すので、1 回ずつ出すとログが溢れる)
+    static constexpr int64_t kRejectLogMs = 10'000;
 
     void accept_loop();
+    void log_rejected_locked(int ch, Channel& channel, int64_t now);
     bool read_routes(rtmp_routes::Route (&out)[rtmp_routes::kMaxRoutes]);
 
     const ServerOptions options_;

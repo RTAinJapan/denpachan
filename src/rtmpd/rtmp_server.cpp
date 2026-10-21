@@ -151,6 +151,13 @@ int Server::resolve(const std::string& app, const std::string& key) {
     return 0;
 }
 
+void Server::log_rejected_locked(int ch, Channel& channel, int64_t now) {
+    spdlog::warn("ch{}: rejected {} publish(es) in the last {} s (latest from {}): {} is still sending", ch, channel.rejected,
+                 kRejectLogMs / 1000, channel.rejected_peer, channel.publisher ? channel.publisher->peer() : "the current publisher");
+    channel.rejected = 0;
+    channel.rejected_log_qpc = now;
+}
+
 bool Server::begin_publish(int ch, Connection* c) {
     auto& channel = channels_[ch - 1];
     std::lock_guard lk(channel.mutex);
@@ -159,7 +166,10 @@ bool Server::begin_publish(int ch, Connection* c) {
         // 今の送出元が送り続けていれば、新しい方を断る (2 つの送出元が同じキーに送ると、置き換えるたびに切られた方が
         // 繋ぎ直して、交互に切り替わり続けるため)。送ってこなくなっていれば (瞬断で半開きの TCP など) 置き換える
         if (now - channel.last_media_qpc < qpc_from_ms(kActivePublisherMs)) {
-            spdlog::warn("ch{}: publish from {} rejected: {} is still sending", ch, c->peer(), channel.publisher->peer());
+            // 断られた送出側は数秒ごとに繋ぎ直すので、ログは kRejectLogMs に 1 回、回数を添えてまとめる
+            ++channel.rejected;
+            channel.rejected_peer = c->peer();
+            if (now - channel.rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) log_rejected_locked(ch, channel, now);
             return false;
         }
         spdlog::warn("ch{}: new publish from {} replaces {} (no data for {} ms)", ch, c->peer(), channel.publisher->peer(),
@@ -230,6 +240,10 @@ void Server::housekeeping() {
         auto& channel = channels_[i];
         std::lock_guard lk(channel.mutex);
         if (channel.ring_open) channel.ring.heartbeat();
+        // まとめている「断った」の回数を出す (断られ続けていなくても、最後の分が残らないように)
+        if (const int64_t now = qpc_now(); channel.rejected > 0 && now - channel.rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) {
+            log_rejected_locked(i + 1, channel, now);
+        }
         if (!channel.publisher || !have_routes) continue;
         // チャンネルが止められた / キーが変わった: 今の publish を切る
         const auto& r = routes[i];

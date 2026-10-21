@@ -194,6 +194,15 @@ void SrtIngest::run_listener() {
         int64_t last_stats = qpc_now();
         int64_t last_data_qpc = 0;  // 今の相手から最後にデータを受けた時刻 (接続した時刻を含む)
         uint64_t seen_bytes = 0;
+        int rejected = 0;  // まだログに出していない、断った接続の数
+        std::string rejected_peer;
+        int64_t rejected_log_qpc = 0;
+        auto log_rejected = [&] {
+            spdlog::warn("SRT: rejected {} connection(s) in the last {} s (latest from {}): the current sender is still sending", rejected,
+                         kRejectLogMs / 1000, rejected_peer);
+            rejected = 0;
+            rejected_log_qpc = qpc_now();
+        };
         while (!stop_) {
             metrics_.heartbeat_ingest();
             if (const uint64_t b = metrics_.bytes_in.load(); b != seen_bytes) {
@@ -213,7 +222,10 @@ void SrtIngest::run_listener() {
                         // 切られた方が繋ぎ直して、交互に切り替わり続けるため)。送ってこなくなっていれば置き換える
                         const int64_t idle_ms = qpc_to_us(qpc_now() - last_data_qpc) / 1000;
                         if (idle_ms < kActiveSenderMs) {
-                            spdlog::warn("SRT: connection from {} rejected: the current sender is still sending", address_string(peer));
+                            // 断られた送出側は数秒ごとに繋ぎ直すので、ログは kRejectLogMs に 1 回、回数を添えてまとめる
+                            ++rejected;
+                            rejected_peer = address_string(peer);
+                            if (qpc_now() - rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) log_rejected();
                             srt_close(c);
                             continue;
                         }
@@ -250,6 +262,8 @@ void SrtIngest::run_listener() {
             if (const int64_t now = qpc_now(); now - last_stats >= qpc_from_ms(1000)) {
                 last_stats = now;
                 if (client != SRT_INVALID_SOCK) update_stats(client);
+                // まとめている「断った」の回数を出す (断られ続けていなくても、最後の分が残らないように)
+                if (rejected > 0 && now - rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) log_rejected();
             }
         }
         close_client();

@@ -42,6 +42,8 @@ private:
 
     // listener: 今の相手からこの時間内にデータが届いていれば、新しい接続を断る
     static constexpr int64_t kActiveSenderMs = 1000;
+    // 断った接続のログをまとめる間隔 (断られた送出側は数秒ごとに繋ぎ直すので、1 回ずつ出すとログが溢れる)
+    static constexpr int64_t kRejectLogMs = 10'000;
 
     const SrtOptions options_;
     ByteQueue& queue_;
