@@ -345,6 +345,22 @@ bool Connection::handle_command(const std::vector<AmfValue>& args) {
     }
 
     if (name == "publish") {
+        if (publishing_) {
+            // 1 つの接続で 2 回目の publish は断る (今の publish は続ける)。受け付けて ch_ を付け替えると、前のチャンネルの
+            // publisher がこの接続を指したまま残り、接続が終わったあとに解放済みの接続を触る (rtmpd が落ちうる)
+            spdlog::warn("ch{}: RTMP {} sent a second publish on the same connection; rejected", ch_, peer_);
+            AmfWriter w;
+            w.string("onStatus").number(0).null();
+            w.begin_object()
+                .key("level")
+                .string("error")
+                .key("code")
+                .string("NetStream.Publish.BadConnection")
+                .key("description")
+                .string("Already publishing on this connection.")
+                .end_object();
+            return send_command(5, kPublishStreamId, w);
+        }
         const std::string key = args.size() >= 4 && args[3].type == AmfValue::Type::String ? normalize_key(args[3].str) : "";
         const int ch = server_.resolve(app_, key);
         if (ch == 0) {
