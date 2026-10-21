@@ -161,6 +161,9 @@ public static class EngineLauncher
 {
     public static string EngineDirectory => AppContext.BaseDirectory;
 
+    /// <summary>engine のプロセスが動いているか</summary>
+    public static bool IsRunning() => Process.GetProcessesByName("denpachan-engine").Length > 0;
+
     public static void EnsureRunning()
     {
         if (Process.GetProcessesByName("denpachan-engine").Length > 0) return;
