@@ -21,8 +21,11 @@ constexpr int64_t kSettleMs = 500;
 constexpr int64_t kMeasureMs = 1'000;
 constexpr int64_t kTightenWindowMs = 10'000;  // この間ずっと余裕があれば遅延を詰める
 constexpr int64_t kTightenKeepMs = 1;         // 詰めるときに残す余裕
-constexpr int64_t kTightenMaxStepUs = 500;    // 1 回に詰める量の上限 (送出元とのクロック差の吸収)
-constexpr int64_t kTightenJumpMs = 50;        // これ以上の余裕は一度に詰める (読み手は合わせ直す)
+// 1 回 (kTightenWindowMs) に詰める量の上限 (送出元とのクロック差の吸収)。2 ms / 10 秒 = 200 ppm まで追える。
+// 0.5 ms (50 ppm) では、送出元の時計が 100 ppm 速いと余裕が溜まり続け、50 ms を超えるたびに一度に詰めて
+// 音が飛んだ (約 17 分ごと)。engine はこの程度の動きをサンプルの重複・間引きで追う (合わせ直しになるのは 50 ms 超)
+constexpr int64_t kTightenMaxStepUs = 2000;
+constexpr int64_t kTightenJumpMs = 50;  // これ以上の余裕は一度に詰める (読み手は合わせ直す)
 
 int64_t frames_from_us(int64_t us) { return us * kSampleRate / 1'000'000; }
 int64_t us_from_frames(int64_t frames) { return frames * 1'000'000 / kSampleRate; }
