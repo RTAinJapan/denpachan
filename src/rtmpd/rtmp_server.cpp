@@ -151,14 +151,33 @@ int Server::resolve(const std::string& app, const std::string& key) {
     return 0;
 }
 
-void Server::begin_publish(int ch, Connection* c) {
+void Server::log_rejected_locked(int ch, Channel& channel, int64_t now) {
+    spdlog::warn("ch{}: rejected {} publish(es) in the last {} s (latest from {}): {} is still sending", ch, channel.rejected,
+                 kRejectLogMs / 1000, channel.rejected_peer, channel.publisher ? channel.publisher->peer() : "the current publisher");
+    channel.rejected = 0;
+    channel.rejected_log_qpc = now;
+}
+
+bool Server::begin_publish(int ch, Connection* c) {
     auto& channel = channels_[ch - 1];
     std::lock_guard lk(channel.mutex);
+    const int64_t now = qpc_now();
     if (channel.publisher && channel.publisher != c) {
-        spdlog::warn("ch{}: new publish from {} replaces {}", ch, c->peer(), channel.publisher->peer());
+        // 今の送出元が送り続けていれば、新しい方を断る (2 つの送出元が同じキーに送ると、置き換えるたびに切られた方が
+        // 繋ぎ直して、交互に切り替わり続けるため)。送ってこなくなっていれば (瞬断で半開きの TCP など) 置き換える
+        if (now - channel.last_media_qpc < qpc_from_ms(kActivePublisherMs)) {
+            // 断られた送出側は数秒ごとに繋ぎ直すので、ログは kRejectLogMs に 1 回、回数を添えてまとめる
+            ++channel.rejected;
+            channel.rejected_peer = c->peer();
+            if (now - channel.rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) log_rejected_locked(ch, channel, now);
+            return false;
+        }
+        spdlog::warn("ch{}: new publish from {} replaces {} (no data for {} ms)", ch, c->peer(), channel.publisher->peer(),
+                     qpc_to_us(now - channel.last_media_qpc) / 1000);
         channel.publisher->kick();
     }
     channel.publisher = c;
+    channel.last_media_qpc = now;
     channel.metadata.clear();
     channel.audio_config.clear();
     channel.video_config.clear();
@@ -168,6 +187,7 @@ void Server::begin_publish(int ch, Connection* c) {
         channel.app = routes[ch - 1].app;
         channel.key = routes[ch - 1].key;
     }
+    return true;
 }
 
 void Server::end_publish(int ch, Connection* c) {
@@ -182,6 +202,7 @@ bool Server::write_media(int ch, Connection* c, uint8_t type, uint32_t timestamp
     auto& channel = channels_[ch - 1];
     std::lock_guard lk(channel.mutex);
     if (channel.publisher != c) return false;
+    channel.last_media_qpc = qpc_now();
     if (!channel.ring_open) return true;
 
     // 途中から読み始める worker のために、メタデータとコーデック設定を保持する
@@ -219,6 +240,10 @@ void Server::housekeeping() {
         auto& channel = channels_[i];
         std::lock_guard lk(channel.mutex);
         if (channel.ring_open) channel.ring.heartbeat();
+        // まとめている「断った」の回数を出す (断られ続けていなくても、最後の分が残らないように)
+        if (const int64_t now = qpc_now(); channel.rejected > 0 && now - channel.rejected_log_qpc >= qpc_from_ms(kRejectLogMs)) {
+            log_rejected_locked(i + 1, channel, now);
+        }
         if (!channel.publisher || !have_routes) continue;
         // チャンネルが止められた / キーが変わった: 今の publish を切る
         const auto& r = routes[i];

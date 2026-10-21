@@ -161,6 +161,7 @@ flowchart LR
 | 設定 | ポート (チャンネルごとに別)、待ち受けアドレスまたは接続先、latency (ms)、パスフレーズと鍵長 (AES-128/192/256)、Stream ID |
 | ペイロード | MPEG-TS |
 | 再接続 | listener はすぐ待ち受けに戻る。caller は 0.5 秒から最大 5 秒の間隔で接続し直す |
+| 二重の接続 (listener) | 今の相手が送り続けていれば (直近 1 秒にデータが届いている) 新しい接続を断る。送ってこなくなっていれば (半開きなど) 新しい方に置き換える。RTMP の二重 publish と同じ考え方 |
 | 繋がらない理由 | caller では「名前を引けない」「応答がない」「拒否された (理由付き)」を分けて画面に出す |
 
 **latency の推奨値** (`src/worker/srt_advisor.h`): 受信状況から推奨値を出し、画面 (詳細、タイル、チャンネル設定の latency の欄。「推奨値にする」ボタン付き) に出す。目安は Haivision の SRT Deployment Guide の「latency ≥ RTT × 倍率」で、倍率はパケットロス率で決める (〜1%: 3、〜3%: 4、〜7%: 6、〜10%: 8、それ以上: 10)。
@@ -188,7 +189,7 @@ application live {
 | --- | --- |
 | 対応範囲 | RTMP ハンドシェイク (単純ハンドシェイク。S1 の版数の欄を 0 にして、complex ハンドシェイクを送ってくる FFmpeg / nginx-rtmp / OBS も受け入れる)、チャンク層 (拡張タイムスタンプ、Set Chunk Size、Abort、Ack、Ping)、AMF0 コマンド (`connect` / `releaseStream` / `FCPublish` / `createStream` / `publish` / `FCUnpublish` / `deleteStream`)。FLV タグはそのまま通す (Enhanced RTMP の HEVC / AV1 も FFmpeg が扱う) |
 | 振り分け | チャンネルごとに `app` とストリームキーを設定する。一致しないキーの publish は `NetStream.Publish.BadName` で断る (キーが合言葉を兼ねる。キーはログに出さない)。振り分け表は engine が共有メモリ `Local\denpachan_rtmp_routes` に書き、rtmpd は publish のたびと 1 秒ごとに読む (チャンネルの追加・停止で rtmpd を起動し直さない) |
-| 同じキーの二重 publish | **後から来た接続を優先し、古い接続を切る**。瞬断で古い TCP 接続が半開きのまま残っても、送出側の再接続ですぐ戻れるように |
+| 同じキーの二重 publish | **今の送出元が送り続けていれば (直近 1 秒にメディアが届いている) 新しい方を断る。送ってこなくなっていれば新しい方に置き換え、古い接続を切る**。瞬断で古い TCP 接続が半開きのまま残っても、送出側の再接続ですぐ戻れるように。無条件に置き換えると、2 つの送出元が同じキーに送ったときに、切られた方が繋ぎ直して交互に切り替わり続ける。1 つの接続からの 2 回目の publish は断る |
 | チャンネルの開始・停止 | 停止中のチャンネルのキーは断り、publish 中なら切る。rtmpd は RTMP push のチャンネルが 1 つでも開始していれば engine が起動する |
 | worker への受け渡し | publish が確立したら、FLV ヘッダと FLV タグを `Local\denpachan_flv_{ch}` のリング (8 MB) に書く (`@setDataFrame` は外して onMetaData から始まるスクリプトタグにする)。worker はそれを libavformat の FLV デマクサに AVIO で渡す (SRT の TS と同じ形で扱える) |
 | worker の再起動・追い越し | worker が publish の途中から読み始めるとき (再起動、追い越された、デコーダが読み始められなかった) は、リングに再同期を頼む。rtmpd は最新のメタデータと音声・映像のコーデック設定を持っておき、次のキーフレームで新しいセッションを始めてそれらを先に書く。**送出側の再接続を待たずに、キーフレーム間隔ほどで戻る** |

@@ -63,7 +63,7 @@ publish wrongkey 3 wrong
 grep -iE "error|fail|refused|reset|closed" "$OUT/rtmp-wrong.txt" | head -2
 line 1
 
-step "4. 同じキーで 2 本目の publish → 新しい方に切り替わる (映像は途切れない)"
+step "4. 同じキーで 2 本目の publish → 今の送出元が送っているので断られる (映像は途切れない)"
 publish ch1key 8 b &
 sleep 5
 line 1
