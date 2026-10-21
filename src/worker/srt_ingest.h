@@ -44,6 +44,10 @@ private:
     static constexpr int64_t kActiveSenderMs = 1000;
     // 断った接続のログをまとめる間隔 (断られた送出側は数秒ごとに繋ぎ直すので、1 回ずつ出すとログが溢れる)
     static constexpr int64_t kRejectLogMs = 10'000;
+    // 受信バッファの大きさの目安 (configure)。4K60 の HEVC / H.264 の上限くらい
+    static constexpr int64_t kMaxExpectedMbps = 60;
+    static constexpr int64_t kDefaultRcvBufBytes = 8192LL * (1500 - 28);  // libsrt の既定 (8192 パケット)
+    static constexpr int64_t kPayloadBytes = 1316;                        // TS 7 パケット (送出側の pkt_size の既定)
 
     const SrtOptions options_;
     ByteQueue& queue_;
