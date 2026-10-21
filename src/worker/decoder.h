@@ -37,6 +37,10 @@ public:
     // 接続は生きているのにストリームを読み始められなかったとき (FLV は途中からでは読めない) に、
     // 受信側に区切り直し (次のキーフレームから新しいセッション) を頼む。start() の前に呼ぶ。
     void set_resync(std::function<void()> resync) { resync_ = std::move(resync); }
+    // 試験用: セッションが始まってからこの秒数後に、受信したパケットのタイムスタンプを kTestRewindSec 秒戻す
+    // (同じ接続のまま送出側が再起動した、MPEG-TS の折り返しなどの代わり)。音声は kTestRewindAudioLagMs 遅れて戻す。
+    // start() の前に呼ぶ。
+    void set_test_ts_rewind(int after_sec) { test_ts_rewind_after_sec_ = after_sec; }
 
     void start();
     void stop();
@@ -84,6 +88,9 @@ private:
     std::atomic<int64_t> io_deadline_qpc_{0};
     std::atomic<bool> io_timed_out_{false};  // interrupt_cb が時間切れで打ち切った (繋がらない理由の表示用)
     int64_t last_pts_us_ = AV_NOPTS_VALUE;
+    int test_ts_rewind_after_sec_ = 0;
+    static constexpr int64_t kTestRewindSec = 8;
+    static constexpr int64_t kTestRewindAudioLagMs = 300;
 
     std::thread thread_;
     std::atomic<bool> stop_{false};

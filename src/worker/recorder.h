@@ -103,7 +103,9 @@ private:
     bool open_external(Segment& seg);
     void add_copy_streams(Segment& seg);
     void reap_external();
-    void write_packet(int stream_index, AVPacket* pkt, AVRational src_tb);
+    bool write_packet(int stream_index, AVPacket* pkt, AVRational src_tb);  // 書いたら true
+    bool video_ts_jumped(int64_t in_us);
+    bool audio_far_from_video(int64_t in_us) const;
     void encode_video(const AVFrame* frame, int64_t out_us);
     void encode_audio(const float* data, int frames, int64_t out_us);
     void drain_encoder(AVCodecContext* ctx, int stream_index);
@@ -136,7 +138,11 @@ private:
     bool continuation_pending_ = false;  // 新しいセッションの最初の映像でタイムスタンプをつなぐ
     int64_t offset_us_ = 0;
     int64_t last_video_out_us_ = 0;  // 書いた映像の最後の時刻 (パススルーは dts)
-    int64_t last_video_qpc_ = 0;
+    int64_t last_video_qpc_ = 0;     // 最後に映像を書いた時刻 (途切れでファイルを閉じる判定)
+    // 受信した映像の直前のタイムスタンプと、それを処理した時刻 (同じ接続のままタイムスタンプが戻った・飛んだのを見つける)
+    bool have_last_in_video_ = false;
+    int64_t last_in_video_us_ = 0;
+    int64_t last_in_video_qpc_ = 0;
     int64_t last_disk_check_qpc_ = 0;
     bool disk_full_ = false;
     int64_t retry_open_qpc_ = 0;  // ファイルやエンコーダを開けなかったとき、次に試す時刻 (毎フレーム試さない)
