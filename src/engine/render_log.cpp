@@ -19,6 +19,9 @@ void setup_render_log() {
                                                          spdlog::async_overflow_policy::overrun_oldest);
     logger->set_pattern("%Y-%m-%d %H:%M:%S.%e [%n] %^%l%$ %v");
     logger->set_level(base->level());
+    // 警告以上はすぐディスクに書き出す (engine が落ちる直前の ASIO ドライバのエラーなどを残すため)。
+    // 非同期のロガーでは書き出しも別のスレッドで行うので、描画スレッドは待たない
+    logger->flush_on(spdlog::level::warn);
     g_render_log = std::move(logger);
 }
 
