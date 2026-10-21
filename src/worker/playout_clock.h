@@ -183,8 +183,8 @@ private:
     static constexpr int64_t kSettleMs = 500;
     static constexpr int64_t kMaxStepMs = 1;   // 鳴り始めてから 1 回 (1 秒) に動かす上限
     static constexpr int64_t kDeadbandMs = 2;  // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
-    static constexpr int kCatchUpWindows =
-        2;  // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す          // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す
+    // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す
+    static constexpr int kCatchUpWindows = 2;
     static constexpr int64_t kAudioHeadroomMinMs = 10;  // 音声の揺れの備え (最初の値と下限)
     static constexpr int64_t kAudioHeadroomMaxMs = 200;
     static constexpr int64_t kVideoHeadroomMaxMs = 200;
