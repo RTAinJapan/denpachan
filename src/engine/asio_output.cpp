@@ -28,15 +28,16 @@ void AsioOutput::start() {
     }
     stopping_ = false;
     const std::wstring clsid = options_.id.substr(options_.id.find(L':') + 1);
-    denpachan_asio_callbacks callbacks{};
-    callbacks.user = this;
-    callbacks.opened = [](void* user, const denpachan_asio_format* format) { static_cast<AsioOutput*>(user)->on_opened(*format); };
-    callbacks.closed = [](void* user) { static_cast<AsioOutput*>(user)->on_closed(); };
-    callbacks.render = [](void* user, float* mix, int frames, int64_t first_hear_qpc) {
+    // コールバックの表はメンバに置く (DLL が値で写していても、ポインタを持ち続ける作りに変わっても壊れないように)
+    callbacks_ = {};
+    callbacks_.user = this;
+    callbacks_.opened = [](void* user, const denpachan_asio_format* format) { static_cast<AsioOutput*>(user)->on_opened(*format); };
+    callbacks_.closed = [](void* user) { static_cast<AsioOutput*>(user)->on_closed(); };
+    callbacks_.render = [](void* user, float* mix, int frames, int64_t first_hear_qpc) {
         static_cast<AsioOutput*>(user)->on_render(mix, frames, first_hear_qpc);
     };
-    callbacks.log = [](void* user, int level, const char* message) { static_cast<AsioOutput*>(user)->on_log(level, message); };
-    output_ = plugin.open(clsid.c_str(), kPreferredRate, &callbacks);
+    callbacks_.log = [](void* user, int level, const char* message) { static_cast<AsioOutput*>(user)->on_log(level, message); };
+    output_ = plugin.open(clsid.c_str(), kPreferredRate, &callbacks_);
 }
 
 void AsioOutput::stop() {

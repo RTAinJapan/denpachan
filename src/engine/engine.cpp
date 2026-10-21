@@ -230,12 +230,9 @@ void Engine::apply_channel_locked(int ch) {
 }
 
 json Engine::handle(const std::string& method, const json& params) {
-    std::lock_guard lk(mutex_);
-
-    if (method == "getConfig") return to_json(config_, JsonForm::Ipc);
-    if (method == "getState") return state_locked();
-
     if (method == "listAudioDevices") {
+        // engine の状態を使わないので、ロックの外で作る。ASIO ドライバを初期化してチャンネル数を調べるので時間がかかることがあり、
+        // ドライバが固まるとロックを持ったままになって、tick (worker の監視) まで止まってしまう
         json arr = json::array();
         for (const auto& d : list_output_devices()) {
             arr.push_back({{"id", to_utf8(d.id)},
@@ -246,6 +243,11 @@ json Engine::handle(const std::string& method, const json& params) {
         }
         return arr;
     }
+
+    std::lock_guard lk(mutex_);
+
+    if (method == "getConfig") return to_json(config_, JsonForm::Ipc);
+    if (method == "getState") return state_locked();
 
     if (method == "startChannel" || method == "stopChannel") {
         const int ch = channel_param(params);

@@ -45,6 +45,7 @@ private:
     std::vector<RouteOptions> routes_;  // mute だけ変わる (sources_mutex_ で保護)
 
     denpachan_asio_output* output_ = nullptr;
+    denpachan_asio_callbacks callbacks_{};  // open に渡すコールバックの表 (output_ が開いている間は残す)
     std::atomic<bool> stopping_{false};
     int64_t base_delay_qpc_ = 0;
 

@@ -360,6 +360,8 @@ void DeviceOutput::run() {
             continue;
         }
         open_failures_ = 0;
+        const int64_t opened_qpc = qpc_now();
+        bool lost = false;
         // 排他モードで、デバイスからの呼び出しが周期どおりに来ているかを見る
         const double expected_calls = double(rate_) / buffer_frames_;
         int64_t check_start = qpc_now();
@@ -369,7 +371,12 @@ void DeviceOutput::run() {
             const DWORD w = WaitForMultipleObjects(2, handles, FALSE, 500);
             if (w == WAIT_OBJECT_0 + 1) break;
             if (!render()) {
-                spdlog::warn("audio [{}]: device lost, reopening", name);
+                // 開いてすぐ失うのが続くときは、最初の数回と 10 回ごとにだけ出す
+                if (quick_losses_ < 3 || quick_losses_ % 10 == 0) {
+                    spdlog::warn("audio [{}]: device lost, reopening{}", name,
+                                 quick_losses_ > 0 ? fmt::format(" ({} times in a row soon after opening)", quick_losses_ + 1) : "");
+                }
+                lost = true;
                 break;
             }
             ++check_calls;
@@ -396,6 +403,12 @@ void DeviceOutput::run() {
         if (!stop_) {
             std::lock_guard lk(status_mutex_);
             ++status_.reopens;
+        }
+        // 開いてすぐ (5 秒以内) 失うのが続くなら、開き直すまでの間を延ばす (1 → 2 → 4 → 8 → 10 秒)。排他モードのデバイスが
+        // 止まったときなどに、500 ms ごとに開き直しとログを繰り返さないように
+        quick_losses_ = lost && qpc_now() - opened_qpc < qpc_from_ms(kQuickLossMs) ? quick_losses_ + 1 : 0;
+        if (quick_losses_ > 0 && !stop_) {
+            WaitForSingleObject(stop_event_.get(), DWORD(std::min<int64_t>(500LL << std::min(quick_losses_, 5), 10'000)));
         }
     }
 
