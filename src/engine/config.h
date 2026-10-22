@@ -5,6 +5,7 @@
 // - SRT のパスフレーズは DPAPI で暗号化して保存する。IPC では返さない (設定済みかどうかだけ返す)。
 // - RTMP のストリームキーと pull の URL も DPAPI で暗号化して保存する。キーは送出側 (Nginx) に
 //   設定してもらう必要があるので IPC では返す (パイプは同じユーザーしか開けない)。
+// - メトリクスの受信口 (WebSocket) のトークンも DPAPI で暗号化して保存する。IPC では返さない (設定済みかどうかだけ)。
 
 #include <nlohmann/json.hpp>
 
@@ -57,9 +58,27 @@ struct ChannelConfig {
     // コマンドラインではなく共有メモリで渡すので、変えても worker は再起動しない。
     nlohmann::json record;
     std::string debug_args;  // 試験用: worker のコマンドラインに足す引数 (UI には出さない)
+    // 配信テスト用のチャンネル。メトリクスの受信口 (WebSocket) からの操作 (開始・停止・録画・latency) は、
+    // この印のあるチャンネルにだけ許す (イベント中に bot が本番のチャンネルを触らないように)
+    bool test_slot = false;
 };
 
 nlohmann::json default_record_json();
+
+// メトリクスの受信口 (WebSocket)。配信テストの bot が状態を受け取り、配信テスト用のチャンネルを操作する。
+// docs/stream-test-automation.md §3.2
+struct MetricsConfig {
+    bool enabled = false;
+    std::string bind = "127.0.0.1";
+    int port = 9100;
+    std::string token;  // 空なら認証なし (loopback に bind するときだけ許す)
+    bool allow_control = false;
+
+    bool operator==(const MetricsConfig&) const = default;
+};
+
+// bind が loopback (127.0.0.0/8、::1、localhost) か
+bool is_loopback_bind(const std::string& bind);
 
 struct GeneralConfig {
     // 使うチャンネル数 (1〜kMaxChannels)。画面にはこの数だけ出す。これより後ろのチャンネルは止めておく
@@ -72,6 +91,7 @@ struct GeneralConfig {
     std::string rtmp_bind = "0.0.0.0";
     int rtmp_port = 1935;
     int rtmp_idle_timeout_ms = 5000;
+    MetricsConfig metrics;
 };
 
 struct Config {
@@ -95,7 +115,7 @@ enum class JsonForm {
 Config default_config();
 nlohmann::json to_json(const Config& c, JsonForm form);
 nlohmann::json to_json(const ChannelConfig& c, JsonForm form);
-nlohmann::json to_json(const GeneralConfig& g);
+nlohmann::json to_json(const GeneralConfig& g, JsonForm form);
 // 足りない項目は既定値で埋める。型が違えば例外 (nlohmann::json::exception)。
 ChannelConfig channel_from_json(const nlohmann::json& j, int id);
 GeneralConfig general_from_json(const nlohmann::json& j);

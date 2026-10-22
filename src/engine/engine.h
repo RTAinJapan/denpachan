@@ -8,12 +8,14 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 
 #include "audio_router.h"
 #include "config.h"
 #include "denpachan/rtmp_routes.h"
 #include "denpachan/vcam_shm.h"
 #include "denpachan/win_util.h"
+#include "metrics_view.h"
 #include "worker_process.h"
 
 namespace denpachan::engine {
@@ -30,6 +32,17 @@ public:
     // IPC の要求を処理する。エラーは例外で返す。
     nlohmann::json handle(const std::string& method, const nlohmann::json& params);
     nlohmann::json state();
+    // 状態 (IPC の state 通知) と、メトリクスの受信口へ送る channels を 1 回のロックで作る。main が 1 秒ごとに呼ぶ
+    std::pair<nlohmann::json, nlohmann::json> state_with_channels();
+
+    // ---- メトリクスの受信口 (WebSocket。docs/stream-test-automation.md §3.2) ----
+    MetricsConfig metrics_config();
+    // 繋がったクライアントに最初に送る hello
+    nlohmann::json metrics_hello();
+    // 受信口からの要求。読むもの (getState / getConfig / getChannels) はいつでも、操作 (startChannel / stopChannel /
+    // setRecording / patchChannel) は allowControl が on で、対象が配信テスト用のチャンネル (testSlot) のときだけ通す。
+    // patchChannel は source.latencyMs と name だけを受け付ける。エラーは例外で返す
+    nlohmann::json handle_remote(const std::string& method, const nlohmann::json& params);
     // stop_workers = false なら worker は動かしたまま終わる (engine を入れ替えるとき用)
     void shutdown(bool stop_workers);
     // IPC で終了を求められたか (0: なし / 1: worker も止める / 2: worker は残す)
@@ -62,6 +75,8 @@ private:
     bool ffmpeg_ok_ = false;
     std::string ffmpeg_message_;  // 見つからないときの説明
     int64_t last_ffmpeg_check_qpc_ = 0;
+    ChannelsView channels_view_;
+    nlohmann::json last_channels_;  // 最後に作った channels (getChannels で返す)
 };
 
 // FFmpeg の DLL を使えるか (音声のリサンプルが確かめてから使う)

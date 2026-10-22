@@ -1,5 +1,5 @@
 {
-  "_comment": "8 チャンネル (全体設定のチャンネル数 8、タイルは 4x2): ch1〜ch6 受信中 (SRT 4 本、RTMP 2 本)、ch7 接続中、ch8 停止",
+  "_comment": "8 チャンネル (全体設定のチャンネル数 8、タイルは 4x2): ch1〜ch6 受信中 (SRT 4 本、RTMP 2 本)、ch7 接続中 (配信テスト用)、ch8 停止",
   "general": { "channelCount": 8 },
   "channels": [
     { "name": "Game A", "enabled": true, "vcam": 1, "source": { "protocol": "srt", "mode": "listener", "port": 9001 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 1 } },
@@ -8,7 +8,7 @@
     { "name": "Game D", "enabled": true, "vcam": 4, "source": { "protocol": "rtmp", "mode": "push", "app": "live", "key": "gamed" }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 7 } },
     { "name": "Game E", "enabled": true, "vcam": 5, "source": { "protocol": "srt", "mode": "listener", "port": 9005 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 9 } },
     { "name": "Game F", "enabled": true, "vcam": 6, "source": { "protocol": "srt", "mode": "listener", "port": 9006 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 11 } },
-    { "name": "Game G", "enabled": true, "vcam": 7, "source": { "protocol": "srt", "mode": "caller", "host": "192.168.1.27", "port": 9000 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 13 } },
+    { "name": "Game G", "enabled": true, "vcam": 7, "testSlot": true, "source": { "protocol": "srt", "mode": "caller", "host": "192.168.1.27", "port": 9000 }, "audio": { "device": "Dante Virtual Soundcard", "startChannel": 13 } },
     { "name": "CH8", "enabled": false, "vcam": 8 }
   ],
   "state": {
@@ -116,8 +116,8 @@
     "connected": true,
     "channels": [
       { "statusText": "受信中" }, { "statusText": "受信中" }, { "statusText": "受信中" }, { "statusText": "受信中" },
-      { "statusText": "受信中" }, { "statusText": "受信中" }, { "statusText": "接続中…", "previewMessage": "NO SIGNAL" },
-      { "statusText": "停止", "enabled": false, "previewMessage": "停止中" }
+      { "statusText": "受信中" }, { "statusText": "受信中" }, { "statusText": "接続中…", "previewMessage": "NO SIGNAL", "testSlot": true },
+      { "statusText": "停止", "enabled": false, "previewMessage": "停止中", "testSlot": false }
     ]
   }
 }

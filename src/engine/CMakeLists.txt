@@ -15,7 +15,11 @@ add_executable(denpachan-engine
     asio_output.cpp
     channel_source.cpp
     render_log.cpp
+    ws_server.cpp
+    metrics_view.cpp
 )
+# メトリクスの受信口の hello に載せる版
+target_compile_definitions(denpachan-engine PRIVATE DENPACHAN_VERSION="${denpachan_VERSION}")
 target_include_directories(denpachan-engine SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
 # ASIO 出力は別のリポジトリ (denpachan-asio-driver、GPL-3.0) の DLL を実行時に読み込む (asio_plugin.cpp)。
 # engine が使うのは C の関数の宣言 (denpachan_asio.h。向こうと同じもの) だけで、ASIO SDK のヘッダは使わない
@@ -31,6 +35,8 @@ target_link_libraries(denpachan-engine PRIVATE
     winmm
     crypt32
     dbghelp
+    ws2_32
+    bcrypt
 )
 # engine が FFmpeg を使うのは 48 kHz 以外の音声デバイスへのリサンプルだけ。FFmpeg が無くても engine は動き、
 # worker を起動する前に DLL の有無と版を確かめる (ffmpeg_runtime.h)

@@ -131,6 +131,10 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     // ---- 映像も音も出ているが劣化している状態 (タイルで色を変える) ----
 
+    private bool _testSlot;
+    /// <summary>配信テスト用のチャンネル (配信テストの bot が操作してよい)。タイルに「テスト用」と出す</summary>
+    public bool TestSlot { get => _testSlot; private set => SetProperty(ref _testSlot, value); }
+
     private bool _softwareDecode;
     /// <summary>受信中に HW デコードが使えず CPU でデコードしている (HW のときは何も出さない)</summary>
     public bool SoftwareDecode { get => _softwareDecode; private set => SetProperty(ref _softwareDecode, value); }
@@ -395,6 +399,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         _audioStartChannel = audio.Int("startChannel", 1);
         Mute = audio.Bool("mute");
         RecordEnabled = config.At("record").Bool("enabled");
+        TestSlot = config.Bool("testSlot");
         SourceSummary = DescribeSource(config.At("source"));
         _applying = false;
         RefreshAudioDeviceChoices();

@@ -28,6 +28,7 @@ public partial class ChannelSettingsWindow : Window
         var c = channel.Config!;
         var s = c.At("source");
         NameBox.Text = c.Str("name");
+        TestSlotBox.IsChecked = c.Bool("testSlot");
         Select(InputBox, $"{s.Str("protocol", "srt")}:{s.Str("mode", "listener")}");
         HostBox.Text = s.Str("host", "0.0.0.0");
         PortBox.Text = s.Int("port").ToString();
@@ -242,6 +243,7 @@ public partial class ChannelSettingsWindow : Window
         var patch = new JsonObject
         {
             ["name"] = NameBox.Text.Trim(),
+            ["testSlot"] = TestSlotBox.IsChecked == true,
             ["source"] = source,
             ["playoutBufferMs"] = buffer,
             ["audio"] = new JsonObject
