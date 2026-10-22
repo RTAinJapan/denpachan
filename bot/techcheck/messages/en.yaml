@@ -1,0 +1,115 @@
+# Messages for streamers (English). Keep the same keys and placeholders ({name}) as ja.yaml (the bot refuses to start otherwise).
+
+start:
+  wrongChannel: "Please run `/techcheck start` in {channel}."
+  alreadyRunning: "Your stream test is in progress: {url}"
+  alreadyQueued: "You are in the waiting list (#{position}). We will let you know when it is your turn."
+  threadCreated: "Your stream test thread is ready. Follow the instructions there: {url}"
+  prepareProblem: "Something went wrong while preparing. The staff will check it. We will let you know when it is your turn again."
+
+queue:
+  joined: "Someone else is testing now. You joined the waiting list (#{position}). We will let you know when it is your turn."
+  paused: "Tests are paused right now. You joined the waiting list (#{position}). We will let you know when they resume."
+  notQueued: "You are not in the waiting list."
+  left: "You left the waiting list."
+  notYourTurn: "It is not your turn yet. We will let you know."
+  removed: "\"Start\" was not pressed twice in a row, so you were removed from the waiting list. Please run `/techcheck start` again."
+  yourTurn: "{user} It is your turn for the stream test. Press \"Start\" within {minutes} minutes."
+
+button:
+  expired: "This button is no longer active."
+  notYours: "Only the streamer can press this button."
+  ack: "Got it."
+  claim: "Start"
+  started: "I started streaming"
+  abort: "Stop the test"
+  set: "Done"
+  yes: "Yes"
+  no: "No"
+  stepStart: "Start"
+  retry: "Retry"
+  next: "Continue anyway"
+  done: "Finish"
+
+prepare:
+  preparing: "Preparing your stream test. This takes about a minute."
+
+guide:
+  first: |-
+    **Let's start your stream test.**
+    1. Make sure you are using the OBS settings we provided (**{profile}**). Output: {width}x{height} / {fps} fps / {bitrate} kbps / keyframe interval {keyframe} s.
+    2. In OBS, open Settings > Stream and set the server to this URL:
+    ```
+    {url}
+    ```
+    3. Start streaming in OBS. We will tell you when it arrives.
+    Next we check video, then audio (10-15 minutes in total).
+
+wait:
+  arrived: "Your stream is arriving. Keep streaming for about 2 minutes (moving around in the game makes it easier to check)."
+  remind: "Your stream has not arrived yet. Check that the URL (including the passphrase) is correct and that no firewall blocks it."
+  opsChecking: "Your stream is arriving, but we are checking our receiving side. Please wait a moment."
+  notYet: "Nothing has arrived yet. We will tell you in this thread when it does."
+
+metadata:
+  noAudio: "no audio"
+  mismatch: "Your stream differs from the instructions ({actual}). Please set the OBS output to {width}x{height} / {fps} fps."
+
+audio:
+  silent: "No audio is arriving. Check the audio settings in OBS (game audio source and mute)."
+
+judge:
+  ok: "Your video is arriving cleanly. Please keep the latency at **{latencyMs} ms** for the event."
+  generous: "(Your connection has headroom. You may lower the latency to {recommendMs} ms, but you do not have to.)"
+  okRtmp: "Your video is arriving cleanly over RTMP. Please use RTMP for the event."
+
+latency:
+  ask: |-
+    Your video may break up. Please raise the latency to **{latencyMs} ms**.
+    Stop streaming in OBS, change `latency=` in the URL to **{latencyUs}** (you can paste the URL below), and start streaming again. Then press "Done".
+    ```
+    {url}
+    ```
+  remeasure: "Measuring again with latency {latencyMs} ms. Keep streaming."
+  remind: "We are waiting for the latency change. Stop streaming, change the URL, and start streaming again."
+  waitRestart: "Thanks. We continue once you start streaming again."
+
+rtmp:
+  ask: |-
+    SRT is not stable for you, so let's try RTMP. Change the OBS stream settings as follows and start streaming again. Then press "Done".
+    Server: `{url}`
+    Stream key: `{key}`
+  arrived: "Your RTMP stream is arriving. Keep streaming for about a minute."
+  remind: "We are waiting for the switch to RTMP. Change the OBS stream settings and start streaming again."
+  waitArrive: "Thanks. We continue once it arrives."
+  unavailable: "Your video is not stable. The staff will contact you. Let's continue with the audio checks."
+  unstable: "Your video is not stable over RTMP either. The staff will contact you. Let's continue with the audio checks."
+
+checks:
+  intro: "Next we check audio and a few other things ({count} steps). For each step, press \"Start\" and follow the instructions."
+  header: "**Step {n}/{total}**"
+  running: "Keep going for about {seconds} seconds..."
+  ok: "OK."
+  recorded: "Recorded."
+  ng: "Something looks wrong."
+  done: "All checks are done. Review the results and press \"Finish\"."
+  skipped: "continued anyway"
+
+verdict:
+  ok: "OK"
+  ng: "problem"
+  unknown: "recorded"
+
+finish:
+  summaryTitle: "**Stream test results**"
+  abortedTitle: "**The stream test was stopped**"
+  protocol: "Protocol: {protocol}"
+  latency: "Latency for the event: {latencyMs} ms"
+  bye: "You can stop streaming in OBS now. Thank you!"
+
+modal:
+  doneTitle: "Finish the stream test"
+  doneLabel: "Anything you noticed? (optional)"
+  abortTitle: "Stop the stream test"
+  abortLabel: "Reason (optional)"
+  received: "Got it."

@@ -1,0 +1,65 @@
+# 配信テストの bot の設定 (docs/stream-test-automation.md §4.1 の表)。config.yaml にコピーして書き換える。
+# 秘密 (トークン、パスフレーズ、キー、webhook の URL) は ${環境変数名} で環境変数から読める。
+
+discord:
+  token: ${DISCORD_TOKEN}
+  guildId: "123456789012345678"
+  techcheckChannelId: "223456789012345678"   # /techcheck start を受け付けるチャンネル (ここにスレッドを作る)
+  staffRoleId: "323456789012345678"          # 運営のロール
+  opsChannelId: "423456789012345678"         # 運営への通知のチャンネル
+
+notify:
+  webhookUrl: ${TECHCHECK_WEBHOOK_URL}       # 結果の通知。未設定なら送らない
+
+aws:
+  region: ap-northeast-1                     # 認証は AWS_ACCESS_KEY_ID などの環境変数か AWS のプロファイル
+
+# bot が開始・停止・監視してよいフロー。フローと配信用のドメインを組で持つ
+flows:
+  - name: flow-a
+    arn: arn:aws:mediaconnect:ap-northeast-1:123456789012:flow:1-AAAA:runner-a
+    domain: srt-a.example.jp
+    passphrase: ${FLOW_A_PASSPHRASE}
+  - name: flow-b
+    arn: arn:aws:mediaconnect:ap-northeast-1:123456789012:flow:1-BBBB:runner-b
+    domain: srt-b.example.jp
+    passphrase: ${FLOW_B_PASSPHRASE}
+
+rtmp:
+  domain: rtmp.example.jp                    # ECS の RTMP サーバ
+  app: live
+  key: ${RTMP_KEY}
+  # statsUrl: http://rtmp.example.jp:8080/stat
+
+# 枠の初期値。/techcheck slot で設定し直した値の方が優先する
+slots:
+  srt: { flow: flow-a, channel: 7 }
+  rtmp: { channel: 8 }
+
+denpachan:
+  host: 127.0.0.1                            # メトリクスの受信口
+  port: 9100
+  # token: ${DENPACHAN_TOKEN}                # loopback 以外に繋ぐときは必須
+
+sheet:
+  spreadsheetId: 1AbCdEfGhIjKlMnOpQrStUvWxYz
+  tabName: techcheck
+  credentialsFile: ./google-service-account.json
+
+guide:
+  obsProfile: "RTA 配信用 2026"
+  expected: { width: 1920, height: 1080, fps: 60, bitrateKbps: 6000, keyframeSec: 2 }
+
+latency:
+  initialMs: 120                             # フローの MinLatency はこれ以下にしておく
+  maxMs: 2000
+  maxRaises: 4
+
+i18n:
+  dir: ./messages                            # ja.yaml と en.yaml
+  fallback: en
+
+db:
+  path: ./techcheck.db
+
+# judge、timeouts、checks は省けば既定値 (docs/stream-test-automation.md §4.1、§7.1)

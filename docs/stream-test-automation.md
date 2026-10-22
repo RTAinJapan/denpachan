@@ -310,12 +310,12 @@ i18n:
 | --- | --- | --- |
 | `/techcheck start [language:日本語\|English]` | 配信者 (配信テストのチャンネルでだけ) | テストを始める。枠が使われていれば待ちの列に入る (§5.1)。返事はその人にだけ見える (ephemeral)。`language` を省くと Discord の言語設定で決める (§4.3) |
 | `/techcheck leave` | 配信者 | 待ちの列から抜ける |
-| `/techcheck slot` | 運営 | 今の枠の設定と状態 (使用中の配信者、待ちの列) を出す |
+| `/techcheck slot show` | 運営 | 今の枠の設定と状態 (使用中の配信者、待ちの列) を出す |
 | `/techcheck slot srt <組の名前> <ch>` / `/techcheck slot rtmp <ch>` | 運営 | 枠に使うフロー (とドメイン) の組と denpachan のチャンネルを設定し直す (§5.6)。組の名前は一覧から選ぶ (補完を出す) |
 | `/techcheck slot off <srt\|rtmp>` / `/techcheck slot on <srt\|rtmp>` | 運営 | 枠を止める / 戻す (空いているフロー・チャンネルが無いとき)。止めている間も待ちの列は残す |
 | `/techcheck status [配信者]` | 運営 | 進行中のテストの段階と数字 (MediaConnect と denpachan の両方) を出す |
 | `/techcheck shot [配信者]` | 運営 | `DescribeFlowSourceThumbnail` の静止画を貼る |
-| `/techcheck latency <配信者> <ms>` | 運営 | 配信者に案内する latency を手で決める (自動の途中でも)。`/techcheck latency receiver <ch> <ms>` は denpachan 側 (MediaConnect → 運営の区間) |
+| `/techcheck latency <配信者> <ms>` | 運営 | 配信者に案内する latency を手で決める (自動の途中でも)。`/techcheck latency-receiver <ch> <ms>` は denpachan 側 (MediaConnect → 運営の区間) |
 | `/techcheck rtmp <配信者>` | 運営 | RTMP (ECS の RTMP サーバ) の案内に切り替える (自動の判定を待たずに) |
 | `/techcheck cancel <配信者>` | 運営 | 中止して枠を空ける (記録は「中断」) |
 | `/techcheck review <配信者> 音声:OK/NG [メモ]` | 運営 (後日) | 録画を聞いた結果をシートの音声の欄に書く |
@@ -570,7 +570,7 @@ sequenceDiagram
 
 | 段 | 内容 | 大きさの目安 |
 | --- | --- | --- |
-| 1 | bot: `/techcheck start` (配信テストのチャンネルで絞る) と待ちの列、`/techcheck slot` (枠の設定し直し)、スレッド、初回の案内、MediaConnect の読み取り (`DescribeFlow`、CloudWatch、`DescribeFlowSourceMetadata`、サムネイル)、配信の開始の検出、`StartFlow` / `StopFlow`、終わりとシートへの記録 | bot の骨格。denpachan の変更なし (チャンネルと録画は運営が画面で始める) |
+| 1 | bot: `/techcheck start` (配信テストのチャンネルで絞る) と待ちの列、`/techcheck slot ...` (枠の設定し直し)、スレッド、初回の案内、MediaConnect の読み取り (`DescribeFlow`、CloudWatch、`DescribeFlowSourceMetadata`、サムネイル)、配信の開始の検出、`StartFlow` / `StopFlow`、終わりとシートへの記録 | bot の骨格。denpachan の変更なし (チャンネルと録画は運営が画面で始める) |
 | 2 | bot: §6 の判定と latency の調整 (値を決めて伝える、「設定した」ボタン、繋ぎ直しの検出) | |
 | 3 | engine: `general.metrics` の設定、WebSocket サーバ、`hello` / `channels` の配信、`getState` / `getChannels`、チャンネルの `testSlot` の印 (設定・画面・操作の制限)、`allowControl` と `startChannel` / `stopChannel` / `setRecording`。bot: denpachan の受信状態・デコード・録画を取り込み、チャンネルと録画を自動で始める・止める、`/techcheck slot` での確認 | C++ 600 行前後 + 画面 (全体設定、チャンネル設定の印、タイルの表示) |
 | 4 | bot: §7 の音声とその他のチェック (手順の YAML、録画の区間の記録、レベルによる参考の判定) | 段 3 の音声レベルを使う |

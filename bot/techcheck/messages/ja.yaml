@@ -1,0 +1,115 @@
+# 配信者に向けた文言 (日本語)。en.yaml と同じキー・同じ差し込み ({name}) にする (違えば bot は起動しない)。
+
+start:
+  wrongChannel: "配信テストは {channel} で `/techcheck start` を実行してください。"
+  alreadyRunning: "配信テストは進行中です: {url}"
+  alreadyQueued: "待ちの列に入っています ({position} 番目)。順番が来たらお知らせします。"
+  threadCreated: "配信テストのスレッドを作りました。こちらで案内します: {url}"
+  prepareProblem: "準備に問題がありました。運営が確認します。直りしだい順番をお知らせしますので、少しお待ちください。"
+
+queue:
+  joined: "今は別の方がテスト中です。待ちの列に入りました ({position} 番目)。順番が来たらお知らせします。"
+  paused: "今は受付を止めています。待ちの列に入りました ({position} 番目)。再開したらお知らせします。"
+  notQueued: "待ちの列には入っていません。"
+  left: "待ちの列から抜けました。"
+  notYourTurn: "今はあなたの順番ではありません。順番が来たらお知らせします。"
+  removed: "2 回続けて「始める」が押されなかったので、待ちの列から外しました。もう一度 `/techcheck start` を実行してください。"
+  yourTurn: "{user} 配信テストの順番が来ました。{minutes} 分以内に「始める」を押してください。"
+
+button:
+  expired: "このボタンはもう使えません。"
+  notYours: "このボタンは配信者の方だけが押せます。"
+  ack: "受け付けました。"
+  claim: "始める"
+  started: "配信を始めた"
+  abort: "中断する"
+  set: "設定した"
+  yes: "はい"
+  no: "いいえ"
+  stepStart: "始める"
+  retry: "やり直す"
+  next: "次へ進む"
+  done: "完了"
+
+prepare:
+  preparing: "配信テストの準備をしています。1 分ほどお待ちください。"
+
+guide:
+  first: |-
+    **配信テストを始めます。**
+    1. 配布した OBS の設定 (**{profile}**) を使っているか確かめてください。出力は {width}x{height} / {fps} fps / {bitrate} kbps / キーフレーム間隔 {keyframe} 秒です。
+    2. OBS の「設定 → 配信」で、サーバに次の URL を入れてください。
+    ```
+    {url}
+    ```
+    3. OBS で配信を始めてください。届いたらお知らせします。
+    このあと、映像の確認、音声の確認の順に進めます (全体で 10〜15 分)。
+
+wait:
+  arrived: "配信が届きました。そのまま 2 分ほど配信を続けてください (ゲーム画面を動かしていると確かめやすいです)。"
+  remind: "まだ配信が届いていません。URL (パスフレーズを含む) が正しいか、ファイアウォールで止められていないかを確かめてください。"
+  opsChecking: "配信は届いていますが、運営側の受信を確認しています。少しお待ちください。"
+  notYet: "まだ届いていません。届いたらこのスレッドでお知らせします。"
+
+metadata:
+  noAudio: "音声がありません"
+  mismatch: "配信の形が案内と違います ({actual})。OBS の出力を {width}x{height} / {fps} fps にしてください。"
+
+audio:
+  silent: "音が届いていません。OBS の音声の設定 (ゲーム音の入力とミュート) を確かめてください。"
+
+judge:
+  ok: "映像は問題なく届いています。latency は **{latencyMs} ms** のままで本番もお願いします。"
+  generous: "(回線に余裕があります。latency は {recommendMs} ms まで下げても大丈夫です。下げなくても構いません。)"
+  okRtmp: "RTMP で映像は問題なく届いています。本番も RTMP でお願いします。"
+
+latency:
+  ask: |-
+    映像が乱れる可能性があります。latency を **{latencyMs} ms** に上げてください。
+    OBS の配信を止め、URL の `latency=` を **{latencyUs}** にして (下の URL をそのまま貼れます)、配信を始め直してください。終わったら「設定した」を押してください。
+    ```
+    {url}
+    ```
+  remeasure: "latency {latencyMs} ms で計測し直します。そのまま配信を続けてください。"
+  remind: "latency の変更を待っています。OBS の配信を止めて URL を変え、配信を始め直してください。"
+  waitRestart: "ありがとうございます。配信を始め直すと続きに進みます。"
+
+rtmp:
+  ask: |-
+    SRT では安定しないので、RTMP で試します。OBS の配信の設定を次のように変えて、配信を始め直してください。終わったら「設定した」を押してください。
+    サーバ: `{url}`
+    ストリームキー: `{key}`
+  arrived: "RTMP で届きました。そのまま 1 分ほど配信を続けてください。"
+  remind: "RTMP への切り替えを待っています。OBS の配信の設定を変えて、配信を始め直してください。"
+  waitArrive: "ありがとうございます。届いたら続きに進みます。"
+  unavailable: "映像が安定しません。運営から連絡します。音声の確認は続けて進めます。"
+  unstable: "RTMP でも映像が安定しません。運営から連絡します。音声の確認は続けて進めます。"
+
+checks:
+  intro: "次に、音声とその他の確認をします ({count} 手順)。手順ごとに「始める」を押してから、指示どおりにしてください。"
+  header: "**手順 {n}/{total}**"
+  running: "{seconds} 秒ほど続けてください…"
+  ok: "OK です。"
+  recorded: "記録しました。"
+  ng: "おかしいところがあります。"
+  done: "確認はすべて終わりました。結果を見て「完了」を押してください。"
+  skipped: "そのまま進めた"
+
+verdict:
+  ok: "OK"
+  ng: "おかしい"
+  unknown: "記録のみ"
+
+finish:
+  summaryTitle: "**配信テストの結果**"
+  abortedTitle: "**配信テストを中断しました**"
+  protocol: "プロトコル: {protocol}"
+  latency: "本番の latency: {latencyMs} ms"
+  bye: "OBS の配信を止めてください。おつかれさまでした。"
+
+modal:
+  doneTitle: "配信テストの完了"
+  doneLabel: "気になったことがあれば書いてください (任意)"
+  abortTitle: "配信テストの中断"
+  abortLabel: "中断する理由 (任意)"
+  received: "受け付けました。"

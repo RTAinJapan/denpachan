@@ -1,0 +1,36 @@
+# 配信テストの Discord bot (bot/techcheck/) の型の確認と試験。bot のファイルが変わったときだけ動く
+name: techcheck-bot
+
+on:
+  push:
+    branches: [main]
+    paths: ["bot/techcheck/**", ".github/workflows/techcheck-bot.yml"]
+  pull_request:
+    paths: ["bot/techcheck/**", ".github/workflows/techcheck-bot.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: techcheck-bot-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: bot/techcheck
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bot/techcheck/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
