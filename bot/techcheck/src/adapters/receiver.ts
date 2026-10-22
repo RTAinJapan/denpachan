@@ -70,7 +70,10 @@ export class WsReceiver implements ReceiverPort {
         }
         if (msg.event === "channels" && Array.isArray(msg.channels)) {
             const next = new Map<number, ReceiverChannel>();
-            for (const c of msg.channels as ReceiverChannel[]) next.set(c.ch, c);
+            for (const raw of msg.channels) {
+                const c = normalizeChannel(raw);
+                if (c) next.set(c.ch, c);
+            }
             this.channels = next;
             this.lastChannelsAt = Date.now();
             return;
@@ -121,4 +124,70 @@ export class WsReceiver implements ReceiverPort {
         setTimeout(() => this.open(), this.retryMs);
         this.retryMs = Math.min(this.retryMs * 2, 30_000);
     }
+}
+
+// ---- engine の channels の形を、bot の形にそろえる ----
+// engine は、値の無い数を null、当てはまらないかたまり (video、latency、tcp、audio、record) を null で送り、
+// lastError はメッセージのオブジェクト ({"id": ...}) で送る。bot の側では undefined と文字列にそろえる。
+
+type Obj = Record<string, unknown>;
+
+function obj(v: unknown): Obj | undefined {
+    return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : undefined;
+}
+
+function num(v: unknown): number | undefined {
+    return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function str(v: unknown): string | undefined {
+    return typeof v === "string" ? v : undefined;
+}
+
+/** {"id": "...", ...} のメッセージを 1 行の文字列にする */
+export function messageText(v: unknown): string {
+    if (typeof v === "string") return v;
+    const o = obj(v);
+    if (!o) return "";
+    const { id, ...rest } = o;
+    const args = Object.keys(rest).length > 0 ? ` ${JSON.stringify(rest)}` : "";
+    return `${typeof id === "string" ? id : ""}${args}`;
+}
+
+export function normalizeChannel(raw: unknown): ReceiverChannel | undefined {
+    const c = obj(raw);
+    const ch = num(c?.ch);
+    if (!c || ch === undefined) return undefined;
+    const source = obj(c.source) ?? {};
+    const video = obj(c.video);
+    const latency = obj(c.latency);
+    const tcp = obj(c.tcp);
+    const audio = obj(c.audio);
+    const record = obj(c.record);
+    const peak = Array.isArray(audio?.peakDb) ? (audio.peakDb as unknown[]).map(num) : [];
+    return {
+        ch,
+        name: str(c.name) ?? `CH${ch}`,
+        enabled: c.enabled === true,
+        testSlot: c.testSlot === true,
+        status: str(c.status) ?? "unknown",
+        source: { protocol: str(source.protocol) ?? "", mode: str(source.mode) ?? "", peer: str(source.peer), connectedSec: num(source.connectedSec) },
+        video: video && {
+            width: num(video.width),
+            height: num(video.height),
+            fps: num(video.fps),
+            codec: str(video.codec),
+            bitrateMbps: num(video.bitrateMbps),
+            decodeErrors: num(video.decodeErrors),
+        },
+        latency: latency && { rttMs: num(latency.rttMs), drops: num(latency.drops), verdict: str(latency.verdict) },
+        tcp: tcp && { rttMs: num(tcp.rttMs), retransBytes: num(tcp.retransBytes) },
+        audio: audio && {
+            peakDb: peak.length === 2 && peak[0] !== undefined && peak[1] !== undefined ? [peak[0], peak[1]] : undefined,
+            gaps: num(audio.gaps),
+            silentSec: num(audio.silentSec),
+        },
+        record: record && { state: str(record.state), file: str(record.file) || undefined, seconds: num(record.seconds) },
+        lastError: messageText(c.lastError),
+    };
 }

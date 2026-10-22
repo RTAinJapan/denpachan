@@ -21,6 +21,36 @@ describe("denpachan の受信口のクライアント", () => {
         rx.handle("not json");
     });
 
+    it("engine の channels の形 (null、メッセージのオブジェクト) をそろえる", async () => {
+        const { normalizeChannel } = await import("../src/adapters/receiver.js");
+        // engine (src/engine/metrics_view.cpp) が送る形: 止まっているチャンネル
+        const stopped = normalizeChannel({
+            ch: 7, name: "CH7", enabled: false, inUse: true, testSlot: true, status: "stopped",
+            source: { protocol: "srt", mode: "caller", host: "mc.example", port: 5000, peer: "", connectedSec: 0 },
+            video: null, latency: null, tcp: null, audio: null, record: null, rejectedSenders: null, lastError: null,
+        })!;
+        assert.equal(stopped.status, "stopped");
+        assert.equal(stopped.testSlot, true);
+        assert.equal(stopped.video, undefined);
+        assert.equal(stopped.lastError, "");
+        // 受信中: 値の無い数は null で来る
+        const live = normalizeChannel({
+            ch: 8, name: "CH8", enabled: true, testSlot: true, status: "live",
+            source: { protocol: "rtmp", mode: "pull", peer: "x", connectedSec: 12 },
+            video: { codec: "h264", width: 1920, height: 1080, fps: 59.9, outputFps: 60, bitrateMbps: 6, hwDecode: true, decodeErrors: null, droppedLate: 0, droppedQueue: 0 },
+            latency: null, tcp: null,
+            audio: { peakDb: [-12.5, -13], gaps: 0, silentSec: 0 },
+            record: { state: "recording", file: "D:\\rec\\a.mkv", seconds: null },
+            lastError: { id: "srt.unreachable", reason: "timeout" },
+        })!;
+        assert.equal(live.video?.fps, 59.9);
+        assert.equal(live.video?.decodeErrors, undefined);
+        assert.deepEqual(live.audio?.peakDb, [-12.5, -13]);
+        assert.equal(live.record?.seconds, undefined);
+        assert.equal(live.lastError, 'srt.unreachable {"reason":"timeout"}');
+        assert.equal(normalizeChannel({ name: "no ch" }), undefined);
+    });
+
     it("繋がっていなければ call は失敗する", async () => {
         const rx = new WsReceiver("ws://127.0.0.1:1/ws", () => {});
         await assert.rejects(rx.call("getState", {}), /繋がっていません/);
