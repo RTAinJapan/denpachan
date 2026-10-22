@@ -84,6 +84,7 @@ describe("テストの流れ", () => {
         assert.equal(row[3], "ja");
         assert.equal(row[6], "完了");
         assert.equal(row[9], 120);
+        assert.equal(row[19], 0, "繋ぎ直しの手順は「切れた回数」に数えない");
         assert.equal(row[27], "OK");
         assert.match(String(row[25]), /game-audio: OK.*mic: OK.*reconnect: OK/);
         assert.equal(row[30], "問題なし");
@@ -224,6 +225,29 @@ describe("準備と枠", () => {
         assert.equal(w.sheet.rows[0]![6], "中断");
         assert.match(await w.service.slotShow(), /止めている[\s\S]*1\. Runner A/);
         assert.match(await w.service.start(U2, "C-test", undefined, "ja"), /受付を止めています/);
+    });
+
+    it("準備の途中で中止したら、始めたフローとチャンネルを止める", async () => {
+        const w = makeWorld();
+        // 1 回目の describe は STANDBY (bot がフローを開始する)。2 回目 (ACTIVE になるのを待っているところ) で止めておき、その間に中止する
+        let release!: () => void;
+        const gate = new Promise<void>((r) => (release = r));
+        let calls = 0;
+        w.flow.describe = async (arn) => {
+            const info = { arn, ingestIp: "203.0.113.10", ingestPort: 5000 };
+            if (++calls === 1) return { ...info, status: "STANDBY" };
+            await gate;
+            return { ...info, status: "ACTIVE" };
+        };
+        await w.service.start(U1, "C-test", undefined, "ja");
+        await w.flush();
+        await w.service.cancel("U1");
+        release();
+        await w.flush();
+        assert.equal(w.flow.started, 1);
+        assert.equal(w.flow.stopped, 1, "bot が開始したフローを 1 回だけ止める");
+        assert.equal(w.rx.channels.get(7)!.status, "stopped");
+        assert.ok(!w.rx.calls.some((c) => c.method === "setRecording" && c.params.enabled === true), "録画を始めない");
     });
 
     it("「配信テスト用」の印の無いチャンネルは枠にできない", async () => {

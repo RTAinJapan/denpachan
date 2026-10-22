@@ -46,6 +46,13 @@ async function main(): Promise<void> {
         await guild.commands.set([buildCommand(config.flows).toJSON()]);
         log("/techcheck を登録しました");
         rx.start();
+        // 準備の途中で止まったテストは、denpachan に繋がってから準備をやり直す
+        const since = Date.now();
+        const resume = setInterval(() => {
+            if (!rx.connected() && Date.now() - since < 30_000) return;
+            clearInterval(resume);
+            service.resumePreparing();
+        }, 1_000);
         setInterval(() => {
             service.tick().catch((e) => log(`tick: ${errorText(e)}`));
         }, 1_000);

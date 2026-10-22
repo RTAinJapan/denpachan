@@ -45,7 +45,7 @@ const kCwPollMs = 10_000;
 const kCwLookbackSec = 240;
 const kCwMissingGraceSec = 120;
 const kWarmupSec = 5;
-const kOpsWarnAfterMs = 60_000;
+const kOpsWarnAfterSec = 60;
 const kAssumePressedMs = 30_000;
 const kReconnectLiveMs = 30_000;
 const kSenderDecodeErrors = 5;
@@ -378,31 +378,53 @@ export class TechcheckService {
         const s0 = get();
         if (!s0) return;
         const flowCfg = this.cfg.flows.find((f) => f.name === s0.srt.flowName)!;
+        const channel = s0.srt.channel;
         let startedFlow = false;
+        let channelStarted = false;
+        /**
+         * 待っている間に中止された (運営の cancel、中断) か。中止の後片付け (finish) は、そのときまでに始めたフロー
+         * (startedFlow を先に覚えている) とチャンネルを止める。そのあとでこちらが始めたチャンネルは、ここで止める
+         */
+        const cancelled = async (): Promise<boolean> => {
+            if (get()) return false;
+            if (channelStarted) await this.stopChannel(channel);
+            return true;
+        };
         try {
             let info = await this.d.flow.describe(flowCfg.arn);
             if (info.status !== "ACTIVE") {
                 if (info.status !== "STARTING") {
                     await this.d.flow.start(flowCfg.arn);
                     startedFlow = true;
+                    // 中止されたときに後片付けが止められるよう、すぐに覚えておく
+                    const s = get();
+                    if (s) s.srt.startedFlow = true;
+                    else {
+                        // 開始を待つ間に中止された (後片付けはこのフローを知らない)
+                        await this.d.flow.stop(flowCfg.arn).catch((e) => this.log(`StopFlow: ${errorText(e)}`));
+                        return;
+                    }
                 }
                 const until = this.now() + kFlowStartWaitMs;
                 while (info.status !== "ACTIVE") {
+                    if (await cancelled()) return;
                     if (this.now() > until) throw new Error(`フローが ACTIVE になりません (${info.status})`);
                     await (this.d.sleep ?? sleep)(5_000);
                     info = await this.d.flow.describe(flowCfg.arn);
                 }
             }
+            if (await cancelled()) return;
             if (!info.ingestIp || !info.ingestPort) throw new Error("フローの ingest の IP / ポートが分かりません");
             const ips = await this.d.dns.resolve(flowCfg.domain).catch(() => [] as string[]);
             if (!ips.includes(info.ingestIp)) {
                 throw new Error(`ドメイン ${flowCfg.domain} がこのフローの ingest の IP (${info.ingestIp}) を指していません (${ips.join(", ") || "引けない"})`);
             }
-            await this.d.rx.call("startChannel", { ch: s0.srt.channel });
-            await this.d.rx.call("setRecording", { ch: s0.srt.channel, enabled: true });
+            channelStarted = true;
+            await this.d.rx.call("startChannel", { ch: channel });
+            await this.d.rx.call("setRecording", { ch: channel, enabled: true });
             await this.locked(async () => {
-                const s = get();
-                if (!s) return;
+                if (await cancelled()) return;
+                const s = get()!;
                 s.srt.startedFlow = startedFlow;
                 s.recordStartAt = this.now();
                 await this.postGuide(s, info.ingestPort!);
@@ -410,8 +432,8 @@ export class TechcheckService {
             });
         } catch (e) {
             await this.locked(async () => {
-                const s = get();
-                if (!s) return;
+                if (await cancelled()) return;
+                const s = get()!;
                 s.srt.startedFlow = startedFlow;
                 await this.blockSlot([errorText(e)]);
                 await this.post(s, { content: this.t(s.lang, "start.prepareProblem") });
@@ -421,6 +443,11 @@ export class TechcheckService {
                 this.save();
             });
         }
+    }
+
+    /** bot を起動し直したとき、準備の途中だったテストの準備をやり直す */
+    resumePreparing(): void {
+        for (const s of this.sessions) if (s.phase === "preparing") void this.prepare(s.id);
     }
 
     /** 枠に問題があったとき: 運営に知らせ、枠を止める (次の人も同じ問題に当たらないように) */
@@ -527,7 +554,7 @@ export class TechcheckService {
         if (live && s.rx.droppedAt !== undefined) {
             s.rx.reconnectAt = now;
             s.rx.droppedAt = undefined;
-            if (s.phase !== "waitingStream") s.disconnects++;
+            if (this.unexpectedDrop(s)) s.disconnects++;
         }
         const sec = ch.source.connectedSec;
         if (sec !== undefined && s.rx.lastConnectedSec !== undefined && sec + 2 < s.rx.lastConnectedSec && live) s.rx.reconnectAt = now;
@@ -537,6 +564,12 @@ export class TechcheckService {
             s.rx.fps.push(ch.video.fps);
             if (s.rx.fps.length > 600) s.rx.fps.shift();
         }
+    }
+
+    /** 頼んでいない途切れか (latency の変更・RTMP への切り替え・繋ぎ直しの手順は数えない) */
+    private unexpectedDrop(s: Session): boolean {
+        if (s.phase === "measuring" || s.phase === "confirming" || s.phase === "awaitingDone") return true;
+        return s.phase === "checks" && !(this.checks[s.checkIndex]?.kind === "reconnect" && s.checkState === "running");
     }
 
     private async pollCloudWatch(s: Session): Promise<void> {
@@ -571,9 +604,17 @@ export class TechcheckService {
         return [...map.values()].filter((x) => x.t >= fromSec).sort((a, b) => a.t - b.t);
     }
 
-    private mcConnectedFor(s: Session, ms: number): boolean {
-        const w = this.window(s, Math.floor((this.now() - ms) / 1000));
-        return w.length > 0 && w.every((x) => x.connected);
+    /** CloudWatch で見て、いま繋がっているか (CloudWatch は数十秒遅れて届くので、最近 2 分の最後の値で見る) */
+    private mcConnected(s: Session): boolean {
+        const w = this.window(s, Math.floor(this.now() / 1000) - 120);
+        return w.length > 0 && w[w.length - 1]!.connected;
+    }
+
+    /** CloudWatch で見て、しばらく (秒数分の値が) 繋がったままか */
+    private mcConnectedFor(s: Session, sec: number): boolean {
+        const w = this.window(s, Math.floor(this.now() / 1000) - sec - 120);
+        const connected = w.filter((x) => x.connected).length;
+        return connected >= sec && w[w.length - 1]!.connected;
     }
 
     private async silenceAlert(s: Session, ch: ReceiverChannel | undefined): Promise<void> {
@@ -594,14 +635,14 @@ export class TechcheckService {
     private async tickWaiting(s: Session, ch: ReceiverChannel | undefined): Promise<void> {
         const now = this.now();
         const rxLive = ch?.status === "live";
-        const mcConnected = this.mcConnectedFor(s, 3_000);
+        const mcConnected = this.mcConnected(s);
         const connected = this.d.rx.connected() ? rxLive : mcConnected;
         if (connected) {
             s.connectedAt = now;
             await this.onConnected(s);
             return;
         }
-        if (this.d.rx.connected() && !rxLive && this.mcConnectedFor(s, kOpsWarnAfterMs) && !s.rx.opsWarned) {
+        if (this.d.rx.connected() && !rxLive && this.mcConnectedFor(s, kOpsWarnAfterSec) && !s.rx.opsWarned) {
             s.rx.opsWarned = true;
             await this.d.chat.ops(`運営側の問題の可能性: ${s.displayName} の配信は MediaConnect に届いているのに、denpachan の ch${s.srt.channel} が live になりません (${ch?.status ?? "不明"} ${ch?.lastError ?? ""})`);
             await this.post(s, { content: this.t(s.lang, "wait.opsChecking") });
