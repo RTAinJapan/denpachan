@@ -2,8 +2,10 @@
 // メトリクスの受信口 (WebSocket) で 1 秒ごとに送る channels を作る。docs/stream-test-automation.md §3.2。
 //
 // engine の状態 (Engine::state_locked) を、bot が使いやすい安定した形にまとめる:
-// - status は画面のタイルと同じ区分 (stopped / starting / listening / connecting / waiting / live / hold /
-//   unreachable / restarting / unavailable)
+// - status は画面のタイルとほぼ同じ区分 (stopped / starting / listening / connecting / waiting / live / hold /
+//   unreachable / restarting / unavailable)。違いは 2 つ: worker が動いていてまだメトリクスが届かない間は starting、
+//   listener (SRT listener、RTMP push) が繋がって映像がまだのときは waiting (画面は「待ち受け中」のまま)。
+//   bot は「繋がったか」を知りたいので、画面より細かく分ける
 // - latency.verdict は画面の経路の行の色と同じ規則 (直近 60 秒に取りこぼし = insufficient、推奨値に足りない = tight)
 // - connectedSec (繋がってからの秒数) と audio.silentSec (両チャンネルとも -60 dBFS 未満が続いた秒数) は、
 //   ここで数える (build を 1 秒ごとに呼ぶ前提。呼ぶ間隔が揺れても QPC の差で数える)

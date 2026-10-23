@@ -353,6 +353,14 @@ bool WsServer::handshake(Client& c) {
         send_http(c.sock, "404 Not Found");
         return false;
     }
+    // ブラウザからの接続は断る。WebSocket には CORS が無いので、断らないと、ユーザーのブラウザで開いた任意のページが
+    // 既定の 127.0.0.1 (トークン無し) に繋げ、allowControl が on なら配信テスト用のチャンネルを操作できてしまう。
+    // ブラウザは必ず Origin を付け、bot (Node の WebSocket、Python の websockets) は付けない
+    if (headers.count("origin")) {
+        spdlog::warn("metrics: {} was refused (browser connection, Origin: {})", c.peer, headers["origin"]);
+        send_http(c.sock, "403 Forbidden");
+        return false;
+    }
 
     // 認証: Authorization: Bearer <token> か ?token=<token>
     if (!options_.token.empty()) {
@@ -429,7 +437,8 @@ void WsServer::serve(std::shared_ptr<Client> c) {
 
     std::string message;
     uint8_t message_opcode = 0;
-    uint16_t close_code = 0;  // 0 = 相手が切った / こちらで切る (close フレームを送らない)
+    uint16_t close_code = 0;     // 0 = 相手が切った / こちらで切る (close フレームを送らない)
+    bool close_replied = false;  // 相手の close に応答を積んだ (書き込みスレッドが送ってから切る)
     while (!stop_) {
         uint8_t h[2];
         if (!read(h, 2)) break;
@@ -465,6 +474,7 @@ void WsServer::serve(std::shared_ptr<Client> c) {
 
         if (op == kClose) {
             c->enqueue(frame(kClose, std::string_view(payload).substr(0, std::min<size_t>(payload.size(), 2))), false, true);
+            close_replied = true;
             break;
         }
         if (op == kPing) {
@@ -513,7 +523,8 @@ void WsServer::serve(std::shared_ptr<Client> c) {
     }
     if (close_code != 0) {
         c->enqueue(close_frame(close_code), false, true);  // 書き込みスレッドが送ってから切る
-    } else {
+    } else if (!close_replied) {
+        // ここで切ると、積んだ close の応答を送らずに切ってしまう (相手には 1006 = 異常な切断に見える)
         c->close_async();
     }
     writer.join();
