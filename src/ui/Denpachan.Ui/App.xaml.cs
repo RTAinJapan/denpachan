@@ -31,6 +31,13 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // 画面は 1 つだけ。2 つ目は開いている画面を前に出して終わる (SingleInstance)。
+        // 試験 (--fixture / --screenshot) は画面を複数起動するので除く
+        if (!e.Args.Any(a => a is "--fixture" or "--screenshot") && !SingleInstance.TryAcquire())
+        {
+            Shutdown();
+            return;
+        }
         MainWindow? window = null;
         string? screenshot = null;
         var inHandler = false;
