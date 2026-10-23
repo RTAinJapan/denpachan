@@ -19,9 +19,13 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <Label Content="{l:Tr channel.name}" VerticalAlignment="Center" />
             <TextBox x:Name="NameBox" Grid.Column="1" Margin="0,3" />
+            <!-- 配信テストの bot が操作してよいチャンネル (docs/stream-test-automation.md §3.2) -->
+            <CheckBox x:Name="TestSlotBox" Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" Content="{l:Tr channel.testSlot}"
+                      ToolTip="{l:Tr channel.testSlotTip}" />
             <Label Grid.Row="1" Content="{l:Tr channel.input}" VerticalAlignment="Center" />
             <ComboBox x:Name="InputBox" Grid.Row="1" Grid.Column="1" Margin="0,3" SelectionChanged="InputBox_SelectionChanged">
                 <ComboBoxItem Content="{l:Tr channel.inputSrtListener}" Tag="srt:listener" />

@@ -177,22 +177,37 @@ json to_json(const ChannelConfig& c, JsonForm form) {
           {"fade", c.audio.fade}}},
     };
     j["record"] = c.record;
+    j["testSlot"] = c.test_slot;
     if (!c.debug_args.empty()) j["debugArgs"] = c.debug_args;
     return j;
 }
 
-json to_json(const GeneralConfig& g) {
+json to_json(const GeneralConfig& g, JsonForm form) {
+    const auto& m = g.metrics;
+    json metrics = {{"enabled", m.enabled}, {"bind", m.bind}, {"port", m.port}, {"allowControl", m.allow_control}};
+    switch (form) {
+    case JsonForm::File:
+        metrics["tokenProtected"] = protect(m.token);
+        break;
+    case JsonForm::Ipc:
+        metrics["hasToken"] = !m.token.empty();
+        break;
+    case JsonForm::Internal:
+        metrics["token"] = m.token;
+        break;
+    }
     return {{"channelCount", g.channel_count},
             {"stallMs", g.stall_ms},
             {"audioMarginMs", g.audio_margin_ms},
             {"avSync", g.av_sync},
-            {"rtmpServer", {{"bind", g.rtmp_bind}, {"port", g.rtmp_port}, {"idleTimeoutMs", g.rtmp_idle_timeout_ms}}}};
+            {"rtmpServer", {{"bind", g.rtmp_bind}, {"port", g.rtmp_port}, {"idleTimeoutMs", g.rtmp_idle_timeout_ms}}},
+            {"metrics", metrics}};
 }
 
 json to_json(const Config& c, JsonForm form) {
     json channels = json::array();
     for (const auto& ch : c.channels) channels.push_back(to_json(ch, form));
-    return {{"version", 1}, {"general", to_json(c.general)}, {"channels", channels}};
+    return {{"version", 1}, {"general", to_json(c.general, form)}, {"channels", channels}};
 }
 
 ChannelConfig channel_from_json(const json& j, int id) {
@@ -204,6 +219,7 @@ ChannelConfig channel_from_json(const json& j, int id) {
     c.playout_buffer_ms = get_or(j, "playoutBufferMs", def.playout_buffer_ms);
     c.vcam = get_or(j, "vcam", def.vcam);
     c.debug_args = get_or<std::string>(j, "debugArgs", "");
+    c.test_slot = get_or(j, "testSlot", def.test_slot);
     c.record = default_record_json();
     if (j.contains("record") && j.at("record").is_object()) c.record.merge_patch(j.at("record"));
     if (j.contains("source")) {
@@ -252,6 +268,19 @@ GeneralConfig general_from_json(const json& j) {
         g.rtmp_port = get_or(r, "port", def.rtmp_port);
         g.rtmp_idle_timeout_ms = get_or(r, "idleTimeoutMs", def.rtmp_idle_timeout_ms);
     }
+    if (j.contains("metrics")) {
+        const auto& m = j.at("metrics");
+        g.metrics.enabled = get_or(m, "enabled", def.metrics.enabled);
+        g.metrics.bind = get_or(m, "bind", def.metrics.bind);
+        g.metrics.port = get_or(m, "port", def.metrics.port);
+        g.metrics.allow_control = get_or(m, "allowControl", def.metrics.allow_control);
+        // 平文 (IPC / 内部) と暗号化 (保存ファイル) のどちらでも読む
+        if (m.contains("token")) {
+            g.metrics.token = get_or<std::string>(m, "token", "");
+        } else if (m.contains("tokenProtected")) {
+            g.metrics.token = unprotect(get_or<std::string>(m, "tokenProtected", ""));
+        }
+    }
     return g;
 }
 
@@ -265,6 +294,11 @@ Config config_from_json(const json& j) {
         }
     }
     return c;
+}
+
+bool is_loopback_bind(const std::string& bind) {
+    if (bind == "localhost" || bind == "::1" || bind == "[::1]") return true;
+    return bind.rfind("127.", 0) == 0;
 }
 
 bool stop_unused_channels(Config& c) {
@@ -316,6 +350,19 @@ std::optional<std::string> validate(const Config& c) {
 
     if (!in(c.general.rtmp_port, 1, 65535)) return "rtmpServer.port must be 1-65535";
     if (!in(c.general.rtmp_idle_timeout_ms, 1000, 60'000)) return "rtmpServer.idleTimeoutMs must be 1000-60000";
+
+    const auto& m = c.general.metrics;
+    if (!in(m.port, 1, 65535)) return "metrics.port must be 1-65535";
+    if (m.bind.empty()) return "metrics.bind is empty";
+    if (m.enabled && m.port == c.general.rtmp_port) return "metrics.port must differ from rtmpServer.port";
+    if (!m.token.empty() && (m.token.size() < 16 || m.token.size() > 128)) return "metrics.token must be 16-128 characters";
+    for (char ch : m.token) {
+        if (!isgraph(static_cast<unsigned char>(ch))) return "metrics.token must not contain spaces or control characters";
+    }
+    // loopback 以外で待ち受けるなら、トークンなしでは開かない (同じネットワークの誰でも配信テスト用のチャンネルを操作できてしまう)
+    if (m.enabled && !is_loopback_bind(m.bind) && m.token.empty()) {
+        return "metrics.token is required when metrics.bind is not a loopback address";
+    }
 
     auto valid_name = [](const std::string& s, size_t max) {
         if (s.empty() || s.size() > max) return false;

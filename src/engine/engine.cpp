@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cctype>
+#include <set>
 #include <stdexcept>
 
 #include "audio_devices.h"
@@ -58,6 +60,17 @@ int channel_param(const json& params) {
     const int ch = params.at("ch").get<int>();
     if (ch < 1 || ch > kMaxChannels) throw std::runtime_error("ch must be 1-" + std::to_string(kMaxChannels));
     return ch;
+}
+
+// メトリクスの受信口へ返すチャンネルの設定から、RTMP のキーと pull の URL を外す (有無だけ残す)
+void strip_channel_secrets(json& channel) {
+    if (!channel.contains("source") || !channel.at("source").is_object()) return;
+    auto& s = channel.at("source");
+    for (const char* key : {"key", "url"}) {
+        if (!s.contains(key)) continue;
+        s[std::string("has") + char(std::toupper(key[0])) + (key + 1)] = !s.at(key).get<std::string>().empty();
+        s.erase(key);
+    }
 }
 
 }  // namespace
@@ -280,7 +293,7 @@ json Engine::handle(const std::string& method, const json& params) {
     }
 
     if (method == "patchGeneral") {
-        json j = to_json(config_.general);
+        json j = to_json(config_.general, JsonForm::Internal);
         j.merge_patch(params.at("patch"));
         Config candidate = config_;
         candidate.general = general_from_json(j);
@@ -292,7 +305,7 @@ json Engine::handle(const std::string& method, const json& params) {
         apply_rtmp_locked();
         for (const auto& c : config_.channels) apply_channel_locked(c.id);
         audio_.apply(config_);
-        return to_json(config_.general);
+        return to_json(config_.general, JsonForm::Ipc);
     }
 
     if (method == "setRecording") {
@@ -332,6 +345,77 @@ json Engine::handle(const std::string& method, const json& params) {
 json Engine::state() {
     std::lock_guard lk(mutex_);
     return state_locked();
+}
+
+std::pair<json, json> Engine::state_with_channels() {
+    std::lock_guard lk(mutex_);
+    json state = state_locked();
+    json channels = channels_view_.build(state, config_, qpc_now());
+    last_channels_ = channels;
+    return {std::move(state), std::move(channels)};
+}
+
+MetricsConfig Engine::metrics_config() {
+    std::lock_guard lk(mutex_);
+    return config_.general.metrics;
+}
+
+json Engine::metrics_hello() {
+    std::lock_guard lk(mutex_);
+    return {{"event", "hello"},
+            {"version", DENPACHAN_VERSION},
+            {"channelCount", config_.general.channel_count},
+            {"allowControl", config_.general.metrics.allow_control},
+            {"intervalMs", 1000}};
+}
+
+json Engine::handle_remote(const std::string& method, const json& params) {
+    if (method == "getState") return state();
+    if (method == "getChannels") {
+        {
+            std::lock_guard lk(mutex_);
+            if (!last_channels_.is_null()) return last_channels_;
+        }
+        return state_with_channels().second;
+    }
+    if (method == "getConfig") {
+        json c = handle("getConfig", params);
+        for (auto& ch : c.at("channels")) strip_channel_secrets(ch);
+        return c;
+    }
+    static const std::set<std::string> control = {"startChannel", "stopChannel", "setRecording", "patchChannel"};
+    if (!control.count(method)) throw std::runtime_error("method not allowed: " + method);
+    const int ch = channel_param(params);
+    {
+        std::lock_guard lk(mutex_);
+        if (!config_.general.metrics.allow_control) throw std::runtime_error("control is disabled (metrics.allowControl is off)");
+        if (!config_.channels[size_t(ch - 1)].test_slot) {
+            throw std::runtime_error("ch" + std::to_string(ch) + " is not a test slot (testSlot is off)");
+        }
+    }
+    if (method == "patchChannel") {
+        // 変えてよいのは latency と名前だけ (ポート・パスフレーズ・録画先などは画面で決める)
+        const json& patch = params.at("patch");
+        const auto refuse = [] { throw std::runtime_error("only name and source.latencyMs can be changed"); };
+        if (!patch.is_object()) refuse();
+        for (const auto& [key, value] : patch.items()) {
+            if (key == "name") {
+                if (!value.is_string()) refuse();
+            } else if (key == "source") {
+                if (!value.is_object()) refuse();
+                for (const auto& [skey, svalue] : value.items()) {
+                    if (skey != "latencyMs" || !svalue.is_number_integer()) refuse();
+                }
+            } else {
+                refuse();
+            }
+        }
+        json result = handle("patchChannel", {{"ch", ch}, {"patch", patch}});
+        strip_channel_secrets(result);
+        return result;
+    }
+    if (method == "setRecording") return handle(method, {{"ch", ch}, {"enabled", params.at("enabled").get<bool>()}});
+    return handle(method, {{"ch", ch}});
 }
 
 json Engine::state_locked() {

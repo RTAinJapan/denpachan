@@ -30,12 +30,33 @@ public partial class GeneralSettingsWindow : Window
         BindBox.Text = rtmp.Str("bind", "0.0.0.0");
         RtmpPortBox.Text = rtmp.Int("port", 1935).ToString();
         IdleBox.Text = rtmp.Int("idleTimeoutMs", 5000).ToString();
+        var metrics = general.At("metrics");
+        MetricsEnabledBox.IsChecked = metrics.Bool("enabled");
+        MetricsBindBox.Text = metrics.Str("bind", "127.0.0.1");
+        MetricsPortBox.Text = metrics.Int("port", 9100).ToString();
+        MetricsAllowControlBox.IsChecked = metrics.Bool("allowControl");
+        // トークンは engine から返らない (設定済みかどうかだけ)。作り直したときだけ値を出す
+        MetricsTokenBox.Text = T(metrics.Bool("hasToken") ? "general.metricsTokenSet" : "general.metricsTokenUnset");
+    }
+
+    private string? _newToken;  // 作り直したトークン (保存するまで)
+
+    private void RegenerateToken_Click(object sender, RoutedEventArgs e)
+    {
+        // URL にそのまま入れられる文字だけ (Base64url、32 バイト = 43 文字)
+        _newToken = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        MetricsTokenBox.Text = _newToken;
+        MetricsTokenHint.Text = T("general.metricsTokenNew");
+        MetricsTokenBox.Focus();
+        MetricsTokenBox.SelectAll();
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(MarginBox.Text, out var margin) || !int.TryParse(StallBox.Text, out var stall) ||
-            !int.TryParse(RtmpPortBox.Text, out var port) || !int.TryParse(IdleBox.Text, out var idle))
+            !int.TryParse(RtmpPortBox.Text, out var port) || !int.TryParse(IdleBox.Text, out var idle) ||
+            !int.TryParse(MetricsPortBox.Text, out var metricsPort))
         {
             ShowError(T("general.notNumber"));
             return;
@@ -59,6 +80,15 @@ public partial class GeneralSettingsWindow : Window
             ["stallMs"] = stall,
             ["rtmpServer"] = new JsonObject { ["bind"] = BindBox.Text.Trim(), ["port"] = port, ["idleTimeoutMs"] = idle },
         };
+        var metrics = new JsonObject
+        {
+            ["enabled"] = MetricsEnabledBox.IsChecked == true,
+            ["bind"] = MetricsBindBox.Text.Trim(),
+            ["port"] = metricsPort,
+            ["allowControl"] = MetricsAllowControlBox.IsChecked == true,
+        };
+        if (_newToken != null) metrics["token"] = _newToken;  // 作り直したときだけ送る (送らなければ今のトークンのまま)
+        patch["metrics"] = metrics;
         SaveButton.IsEnabled = false;
         var error = await _main.TryPatchGeneralAsync(patch);
         SaveButton.IsEnabled = true;

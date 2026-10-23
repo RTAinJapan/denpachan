@@ -13,6 +13,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -27,6 +28,7 @@
 #include "ipc_server.h"
 #include "output_devices.h"
 #include "render_log.h"
+#include "ws_server.h"
 
 #include <timeapi.h>  // windows.h の後に置く
 
@@ -157,6 +159,30 @@ int wmain(int argc, wchar_t** argv) {
     IpcServer ipc([&](const std::string& method, const nlohmann::json& params) { return engine.handle(method, params); });
     ipc.start();
 
+    // メトリクスの受信口 (WebSocket)。設定 (general.metrics) が変わったら開き直す
+    WsServer ws([&](const std::string& method, const nlohmann::json& params) { return engine.handle_remote(method, params); },
+                [&] { return engine.metrics_hello(); });
+    MetricsConfig ws_config;
+    bool ws_applied = false;
+    int64_t ws_retry_qpc = 0;
+    auto apply_metrics = [&] {
+        MetricsConfig m = engine.metrics_config();
+        m.allow_control = false;  // 操作を許すかは要求ごとに見るので、開き直さない
+        const bool changed = !ws_applied || !(m == ws_config);
+        if (!changed && (!m.enabled || ws.running() || qpc_now() < ws_retry_qpc)) return;
+        if (changed) ws.stop();
+        ws_config = m;
+        ws_applied = true;
+        if (!m.enabled) return;
+        if (!is_loopback_bind(m.bind) && m.token.empty()) {
+            if (changed) spdlog::error("metrics: a token is required to listen on {} (not a loopback address); not listening", m.bind);
+            ws_retry_qpc = INT64_MAX;
+            return;
+        }
+        // 待ち受けられなければ (ポートが使われているなど) 10 秒ごとにやり直す
+        if (!ws.start({m.bind, m.port, m.token})) ws_retry_qpc = qpc_now() + qpc_from_ms(10'000);
+    };
+
     // 200ms ごとに監視、1 秒ごとに状態を全クライアントへ通知
     int ticks = 0;
     bool keep_workers = opts->keep_workers;
@@ -166,10 +192,16 @@ int wmain(int argc, wchar_t** argv) {
             break;
         }
         engine.tick();
-        if (++ticks % 5 == 0) ipc.broadcast({{"event", "state"}, {"data", engine.state()}});
+        apply_metrics();
+        if (++ticks % 5 == 0) {
+            auto [state, channels] = engine.state_with_channels();
+            ipc.broadcast({{"event", "state"}, {"data", std::move(state)}});
+            ws.broadcast(channels);
+        }
     }
 
     spdlog::info("engine stopping{}", keep_workers ? " (workers keep running)" : "");
+    ws.stop();
     ipc.stop();
     engine.shutdown(!keep_workers);
     timeEndPeriod(1);

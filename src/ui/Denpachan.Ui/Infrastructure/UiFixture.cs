@@ -126,6 +126,7 @@ public static class UiFixture
                 Expect(p + "audioKind", ch.AudioKind, e["audioKind"]);
                 Expect(p + "recordKind", ch.RecordKind, e["recordKind"]);
                 Expect(p + "isLocked", ch.IsLocked, e["isLocked"]);
+                Expect(p + "testSlot", ch.TestSlot, e["testSlot"]);
                 Expect(p + "previewMessage", ch.PreviewMessage, e["previewMessage"]);
             }
         }
@@ -153,6 +154,7 @@ public static class UiFixture
                 ["audioKind"] = ch.AudioKind,
                 ["recordKind"] = ch.RecordKind,
                 ["isLocked"] = ch.IsLocked,
+                ["testSlot"] = ch.TestSlot,
                 ["previewMessage"] = ch.PreviewMessage,
                 ["videoLine"] = ch.VideoLine,
                 ["transportLine"] = ch.TransportLine,
@@ -172,6 +174,10 @@ public static class UiFixture
         ["audioMarginMs"] = 10,
         ["avSync"] = true,
         ["rtmpServer"] = new JsonObject { ["bind"] = "0.0.0.0", ["port"] = 1935, ["idleTimeoutMs"] = 5000 },
+        ["metrics"] = new JsonObject
+        {
+            ["enabled"] = false, ["bind"] = "127.0.0.1", ["port"] = 9100, ["allowControl"] = false, ["hasToken"] = false,
+        },
     };
 
     private static JsonObject DefaultChannelConfig(int id) => new()
@@ -186,6 +192,7 @@ public static class UiFixture
         },
         ["playoutBufferMs"] = 100,
         ["vcam"] = id,
+        ["testSlot"] = false,
         ["audio"] = new JsonObject
         {
             ["device"] = "", ["startChannel"] = 1 + 2 * (id - 1), ["mode"] = "shared", ["offsetMs"] = 0, ["mute"] = false, ["fade"] = true,

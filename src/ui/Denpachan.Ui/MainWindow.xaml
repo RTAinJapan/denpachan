@@ -79,6 +79,12 @@
                                 Visibility="{Binding SoftwareDecode, Converter={StaticResource BoolToVis}}">
                             <TextBlock Text="{l:Tr main.tile.swDecode}" FontWeight="SemiBold" FontSize="12" />
                         </Border>
+                        <!-- 配信テスト用のチャンネル (配信テストの bot が操作することがある) -->
+                        <Border DockPanel.Dock="Right" CornerRadius="10" Padding="8,2" Margin="0,0,6,0" VerticalAlignment="Center"
+                                BorderBrush="{StaticResource DimTextBrush}" BorderThickness="1" ToolTip="{l:Tr main.tile.testSlotTip}"
+                                Visibility="{Binding TestSlot, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{l:Tr main.tile.testSlot}" FontSize="12" Foreground="{StaticResource DimTextBrush}" />
+                        </Border>
                         <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding SourceSummary}" Style="{StaticResource DimText}" Margin="10,0,0,0"
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />

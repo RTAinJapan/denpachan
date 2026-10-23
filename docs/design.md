@@ -575,7 +575,8 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
     "stallMs": 2000,
     "audioMarginMs": 10,
     "avSync": true,
-    "rtmpServer": { "bind": "0.0.0.0", "port": 1935, "idleTimeoutMs": 5000 }
+    "rtmpServer": { "bind": "0.0.0.0", "port": 1935, "idleTimeoutMs": 5000 },
+    "metrics": { "enabled": false, "bind": "127.0.0.1", "port": 9100, "tokenProtected": "", "allowControl": false }
   },
   "channels": [
     {
@@ -589,6 +590,7 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
       },
       "playoutBufferMs": 0,
       "vcam": 1,
+      "testSlot": false,
       "audio": { "device": "DVS Transmit 1-16 (Dante Virtual Soundcard)", "startChannel": 1,
                  "mode": "exclusive", "offsetMs": 0, "mute": false, "fade": true },
       "record": {
@@ -636,6 +638,13 @@ worker (録画スレッド)                              ffmpeg.exe (優先度: 
 
 - 設定の変更で worker に渡す内容が変われば、worker を起動し直す (繋ぎ直しになる)。ミュートと音声の出力先は worker を止めずに反映する (出力先の変わったデバイスだけ開き直す)。録画の設定も worker を止めずに反映する (§8.1)。
 - コマンドラインのクライアント `denpachan-ctl` (状態の確認、開始・停止、設定の変更) で、画面なしでも操作できる。
+
+**WebSocket の受信口** (配信テストの bot 向け。詳しくは `docs/stream-test-automation.md` §3.2。この文書は PR #30 にある)
+
+- 全体設定の `metrics` (`enabled` 既定 off、`bind` 既定 `127.0.0.1`、`port` 既定 9100、`token`、`allowControl` 既定 off) で開く。`ws://<bind>:<port>/ws`、認証は `Authorization: Bearer <token>` か `?token=`。トークンは DPAPI で暗号化して保存し、IPC では返さない (設定済みかどうかだけ)。loopback 以外で待ち受けるときはトークンが必須 (無ければ設定を受け付けない)。
+- 繋がると `hello` を 1 つ、以後 1 秒ごとに `channels` (チャンネルごとの状態・映像・SRT の latency と推奨値と余裕・音声のレベルと無音の秒数・録画) を送る。要求 / 応答はパイプと同じ形。
+- 読むメソッド (`getState`、`getConfig` (RTMP のキーと pull の URL は外す)、`getChannels`) はいつでも通す。操作 (`startChannel`、`stopChannel`、`setRecording`、`patchChannel`) は `allowControl` が on で、対象のチャンネルに**配信テスト用の印 (`testSlot`)** があるときだけ通す。`patchChannel` で変えられるのは `name` と `source.latencyMs` だけ。イベント中も同じ engine で本番のチャンネルが動いているので、bot が本番のチャンネルを触れないようにする。
+- engine の tick を止めない: 送信はクライアントごとのキューとスレッドで行い、溢れたら古い通知から捨てる。書き込みが 1 秒進まない相手、30 秒何も返さない相手は切る。同時接続は 8 まで。外部のライブラリは使わない (`src/engine/ws_server.cpp`、`src/engine/metrics_view.cpp`)。
 
 **engine ⇔ worker**: 設定は起動時のコマンドライン引数で渡す。状態 (pid、引数のハッシュ、スレッドごとのハートビート、1 秒ごとのメトリクス、録画の設定) は共有メモリ `Local\denpachan_worker_{ch}`、停止の要求は名前付きイベント。映像・音声・プレビュー・FLV も共有メモリ。パイプを使わないので、engine が落ちても worker は影響を受けない。
 
