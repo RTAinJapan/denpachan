@@ -15,13 +15,25 @@ public static class SingleInstance
     /// <summary>この画面が最初の 1 つなら true。2 つ目なら、既に開いている画面を前に出して false</summary>
     public static bool TryAcquire()
     {
-        // 前の画面が落ちていれば Mutex は OS が放す (abandoned) ので、起動し直せる
+        // 前の画面が落ちていればハンドルが閉じて Mutex は消えているので、起動し直せる
         _mutex = new Mutex(true, @"Local\denpachan_ui", out var createdNew);
         if (createdNew) return true;
         _mutex.Dispose();
         _mutex = null;
         BringExistingToFront();
         return false;
+    }
+
+    /// <summary>
+    /// 閉じると決まったところで放す (engine を止めるのを待つ数秒の間に起動し直せるように。放さないと、その間の起動は
+    /// 「開いている」とみなして終わり、画面が 1 つも無くなる)。取ったスレッド (UI スレッド) から呼ぶ
+    /// </summary>
+    public static void Release()
+    {
+        if (_mutex == null) return;
+        try { _mutex.ReleaseMutex(); } catch (ApplicationException) { }
+        _mutex.Dispose();
+        _mutex = null;
     }
 
     private static void BringExistingToFront()

@@ -73,6 +73,7 @@ public partial class MainWindow : Window
             }
             _closeConfirmed = true;
             IsEnabled = false;
+            Infrastructure.SingleInstance.Release();  // 閉じると決まった: engine を止めている間に起動し直せるように
             await ViewModel.StopEngineAsync();
             // engine に繋がっていないと StopEngineAsync はすぐ終わり、まだ Closing の中にいる。ここで Close() を呼ぶと
             // WPF が例外を出し、ウィンドウが操作できないまま残るので、Closing を抜けてから閉じる

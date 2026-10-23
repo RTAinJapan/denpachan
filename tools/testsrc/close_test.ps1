@@ -11,6 +11,7 @@
     D. engine が落ちた直後 (繋がっていない間) に閉じる → 画面が起動し直した engine に繋がってから止め、画面も engine も終わる
     E. 画面が engine を起動し直した直後 (まだ繋がっていない) に閉じる → 起動し直した engine も止まる
     F. 画面を 2 つ起動する → 2 つ目は開いている画面を前に出して終わる (画面は 1 つだけ)
+    G. 閉じている途中 (engine を止めている間) に起動する → 新しい画面が開く (画面が 1 つも無くならない)
   build.ps1 のあとに実行する。FFmpeg は tools/testsrc/dev_env.sh と同じく out/deps のものを使う。
 
 .EXAMPLE
@@ -155,10 +156,12 @@ Check $ui.HasExited '画面が終わった'
 Check ((Running 'denpachan-engine') -eq 0) '起動し直した engine も止まった (画面なしで残らない)'
 
 Step 'F. 画面を 2 つ起動する → 2 つ目は開いている画面を前に出して終わる'
-Add-Type -Namespace Denpachan -Name User32 -MemberDefinition @'
+if (-not ('Denpachan.User32' -as [type])) {  # 同じセッションで 2 回実行しても型の重複で止まらないように
+    Add-Type -Namespace Denpachan -Name User32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 '@
+}
 Stop-All
 Start-Engine
 & $ctl stop 1
@@ -173,6 +176,22 @@ Check ([Denpachan.User32]::GetForegroundWindow() -eq $ui.MainWindowHandle) '最�
 $ui.CloseMainWindow() | Out-Null
 Start-Sleep -Seconds 5
 Check $ui.HasExited '最初の画面は普段どおり閉じられる'
+
+Step 'G. 閉じている途中 (engine を止めている間) に起動する → 新しい画面が開く (画面が 1 つも無くならない)'
+Stop-All
+Start-Engine
+& $ctl stop 1
+$ui = Start-Ui
+$ui.CloseMainWindow() | Out-Null  # 受信中のチャンネルは無いので確認なしで閉じ始め、engine を止めるのを待つ
+Start-Sleep -Milliseconds 300
+$second = Start-Process (Join-Path $bin 'denpachan.exe') -PassThru
+Start-Sleep -Seconds 8  # 最初の画面が閉じ、2 つ目が engine を起動し直して繋がるまで
+Check $ui.HasExited '最初の画面は閉じた'
+Check (-not $second.HasExited) '閉じている途中に起動した画面は開いたまま'
+Check ((Running 'denpachan-engine') -eq 1) 'その画面が engine を起動し直した'
+$second.CloseMainWindow() | Out-Null
+Start-Sleep -Seconds 5
+Check $second.HasExited '2 つ目の画面も普段どおり閉じられる'
 
 Stop-All
 Write-Host ''
