@@ -10,6 +10,7 @@
     C. 受信中のチャンネルがないときに閉じる → 確認なしで画面と engine が終わる
     D. engine が落ちた直後 (繋がっていない間) に閉じる → 画面が起動し直した engine に繋がってから止め、画面も engine も終わる
     E. 画面が engine を起動し直した直後 (まだ繋がっていない) に閉じる → 起動し直した engine も止まる
+    F. 画面を 2 つ起動する → 2 つ目は開いている画面を前に出して終わる (画面は 1 つだけ)
   build.ps1 のあとに実行する。FFmpeg は tools/testsrc/dev_env.sh と同じく out/deps のものを使う。
 
 .EXAMPLE
@@ -152,6 +153,26 @@ $ui.CloseMainWindow() | Out-Null
 Start-Sleep -Seconds 10
 Check $ui.HasExited '画面が終わった'
 Check ((Running 'denpachan-engine') -eq 0) '起動し直した engine も止まった (画面なしで残らない)'
+
+Step 'F. 画面を 2 つ起動する → 2 つ目は開いている画面を前に出して終わる'
+Add-Type -Namespace Denpachan -Name User32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'@
+Stop-All
+Start-Engine
+& $ctl stop 1
+$ui = Start-Ui
+[void][Denpachan.User32]::ShowWindow($ui.MainWindowHandle, 6)  # 最小化しておく (前に出すときに戻るか)
+Start-Sleep -Seconds 1
+$second = Start-Process (Join-Path $bin 'denpachan.exe') -PassThru
+Start-Sleep -Seconds 4
+Check $second.HasExited '2 つ目の画面は終わった'
+Check (-not $ui.HasExited -and (Running 'denpachan') -eq 1) '最初の画面だけが開いている'
+Check ([Denpachan.User32]::GetForegroundWindow() -eq $ui.MainWindowHandle) '最初の画面が前に出ている (最小化から戻った)'
+$ui.CloseMainWindow() | Out-Null
+Start-Sleep -Seconds 5
+Check $ui.HasExited '最初の画面は普段どおり閉じられる'
 
 Stop-All
 Write-Host ''
