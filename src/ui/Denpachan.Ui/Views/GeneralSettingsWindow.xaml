@@ -72,6 +72,39 @@
             </Grid>
         </GroupBox>
 
+        <!-- 配信テストの bot の受信口 (WebSocket。docs/stream-test-automation.md §3.2) -->
+        <GroupBox Header="{l:Tr general.metrics}" Margin="0,10,0,0" Foreground="{StaticResource DimTextBrush}">
+            <Grid Margin="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="Label" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <CheckBox x:Name="MetricsEnabledBox" Grid.ColumnSpan="2" Content="{l:Tr general.metricsEnabled}" />
+                <Label Grid.Row="1" Content="{l:Tr general.metricsBind}" VerticalAlignment="Center" />
+                <TextBox x:Name="MetricsBindBox" Grid.Row="1" Grid.Column="1" Margin="0,3" />
+                <Label Grid.Row="2" Content="{l:Tr general.metricsPort}" VerticalAlignment="Center" />
+                <TextBox x:Name="MetricsPortBox" Grid.Row="2" Grid.Column="1" Width="100" Margin="0,3" HorizontalAlignment="Left" />
+                <Label Grid.Row="3" Content="{l:Tr general.metricsToken}" VerticalAlignment="Center" />
+                <DockPanel Grid.Row="3" Grid.Column="1" Margin="0,3">
+                    <Button DockPanel.Dock="Right" Content="{l:Tr general.metricsRegenerate}" Margin="6,0,0,0" Click="RegenerateToken_Click" />
+                    <!-- 作り直した直後だけ値を出す (選んでコピーできるよう TextBox で)。保存したあとは「設定済み」とだけ出す -->
+                    <TextBox x:Name="MetricsTokenBox" IsReadOnly="True" VerticalContentAlignment="Center" />
+                </DockPanel>
+                <TextBlock x:Name="MetricsTokenHint" Grid.Row="4" Grid.Column="1" Style="{StaticResource DimText}" FontSize="12"
+                           TextWrapping="Wrap" Margin="0,0,0,4" />
+                <CheckBox x:Name="MetricsAllowControlBox" Grid.Row="5" Grid.ColumnSpan="2" Content="{l:Tr general.metricsAllowControl}" />
+            </Grid>
+        </GroupBox>
+        <TextBlock Text="{l:Tr general.metricsNote}" Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+
         <TextBlock x:Name="ErrorText" Foreground="#FFF07178" TextWrapping="Wrap" Margin="0,10,0,0" Visibility="Collapsed" />
         <TextBlock Text="{l:Tr general.reconnectNote}" Style="{StaticResource DimText}"
                    FontSize="12" Margin="0,10,0,0" />
