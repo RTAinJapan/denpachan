@@ -1,13 +1,14 @@
 """メトリクスの受信口 (WebSocket) を叩くクライアント (tools/testsrc/ws_test.sh から呼ぶ。Python の websockets を使う)。
 
-    python -I tools/testsrc/ws_test.py <port> basic            hello / channels、読むメソッド、操作の拒否、ping、close
-    python -I tools/testsrc/ws_test.py <port> control          allowControl on のときの操作の制限 (ch1 に testSlot が要る)
-    python -I tools/testsrc/ws_test.py <port> limits           404 / 403 (Origin) / 503 (9 本目)
-    python -I tools/testsrc/ws_test.py <port> token <token>    401、Bearer と ?token=
-    python -I tools/testsrc/ws_test.py <port> idle             ping の間隔、pong を返さない相手を切るまで (約 30 秒)
-    python -I tools/testsrc/ws_test.py <port> closed           待ち受けていないこと
+    python -E tools/testsrc/ws_test.py <port> basic            hello / channels、読むメソッド、操作の拒否、ping、close
+    python -E tools/testsrc/ws_test.py <port> control          allowControl on のときの操作の制限 (ch1 に testSlot が要る)
+    python -E tools/testsrc/ws_test.py <port> limits           404 / 403 (Origin) / 503 (9 本目)
+    python -E tools/testsrc/ws_test.py <port> token <token>    401、Bearer と ?token=
+    python -E tools/testsrc/ws_test.py <port> idle             ping の間隔、pong を返さない相手を切るまで (約 30 秒、最大 45 秒)
+    python -E tools/testsrc/ws_test.py <port> closed           待ち受けていないこと
 
 項目ごとに OK / FAIL を出し、FAIL があれば終了コード 1。
+ほかの試験の .py と違い -I ではなく -E で動かす (-I は -s を含み、`pip install --user` で入れた websockets が見えない)。
 """
 
 import asyncio
@@ -22,7 +23,7 @@ import time
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
-# bash から呼ぶと標準出力が cp932 になり、日本語の行が化ける (-I では PYTHONIOENCODING も効かない)
+# bash から呼ぶと標準出力が cp932 になり、日本語の行が化ける (-E では PYTHONIOENCODING も効かない)
 sys.stdout.reconfigure(encoding="utf-8")
 
 PORT = int(sys.argv[1])
@@ -229,7 +230,11 @@ def idle():
     pings = []
     texts = 0
     closed_at = None
-    while True:
+    # 期限を付ける: engine は channels を 1 秒ごとに送るので recv は毎秒返り、ソケットのタイムアウトだけでは、
+    # 受信口が切らなくなったときに試験が終わらない。期限に達したら closed_at = None のまま抜けて FAIL にする
+    s.settimeout(5)
+    deadline = t0 + 45
+    while time.monotonic() < deadline:
         try:
             while True:
                 if len(buf) >= 2:
@@ -260,13 +265,16 @@ def idle():
                 closed_at = time.monotonic() - t0
                 break
             buf += d
-        except (ConnectionResetError, ConnectionAbortedError, OSError):
+        except TimeoutError:
+            continue  # 何も届かないだけ (切られてはいない)
+        except OSError:  # ConnectionResetError / ConnectionAbortedError など
             closed_at = time.monotonic() - t0
             break
+    s.close()
     check("2. ping は約 10 秒ごと", len(pings) >= 2 and all(8 < b - a < 13 for a, b in zip(pings, pings[1:])),
           "at " + ", ".join(f"{p:.1f}" for p in pings))
     check("3. pong を返さないと約 30 秒で切られる", closed_at is not None and 28 < closed_at < 36,
-          f"closed at {closed_at:.1f} s, {texts} text frames" if closed_at else "not closed")
+          f"closed at {closed_at:.1f} s, {texts} text frames" if closed_at else f"not closed in {deadline - t0:.0f} s")
 
 
 def closed():

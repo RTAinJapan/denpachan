@@ -25,16 +25,18 @@ PY="$ROOT/tools/testsrc/ws_test.py"
 PORT=9100
 TOKEN="0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 mkdir -p "$OUT"
-if ! python -I -c "import websockets" 2>/dev/null; then
-    echo "SKIP: Python の websockets がありません (pip install websockets)"
-    exit 0
+# websockets を探すのでユーザーの site-packages も見る (-I は -s を含むので、`pip install --user` で入れたものが
+# 見えない)。環境変数だけは無視する (-E)
+if ! python -E -c "import websockets" 2>/dev/null; then
+    echo "FAIL: Python の websockets がありません (pip install websockets)"
+    exit 1
 fi
 FAIL=0
 check() {  # check <説明> <0 = OK>
     if [ "$2" = 0 ]; then echo "OK   $1"; else echo "FAIL $1"; FAIL=1; fi
 }
 phase() {  # phase <名前> [引数...]: ws_test.py を実行し、失敗があれば FAIL にする
-    python -I "$PY" "$PORT" "$@" || FAIL=1
+    python -E "$PY" "$PORT" "$@" || FAIL=1
 }
 
 taskkill //IM denpachan-engine.exe //F >/dev/null 2>&1
