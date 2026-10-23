@@ -46,6 +46,7 @@ SRT / RTMP で受けた映像と音声 (最大 8 チャンネル。使う数は�
 
 - 開発 (ビルド・試験・画面の文言の直し方): [docs/development.md](docs/development.md)
 - 設計: [docs/design.md](docs/design.md)
+- 配信テストの自動化 (Discord bot とメトリクスの受信口) の設計: [docs/stream-test-automation.md](docs/stream-test-automation.md)
 - 依存関係・ライセンス: [docs/dependencies.md](docs/dependencies.md)
 
 ## ライセンス
