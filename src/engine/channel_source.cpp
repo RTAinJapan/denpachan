@@ -1,6 +1,7 @@
 #include "channel_source.h"
 
-#include "engine.h"  // ffmpeg_available
+#include "ffmpeg_available.h"
+#include "render_log.h"
 
 #include <algorithm>
 #include <climits>
@@ -19,6 +20,13 @@ constexpr double kResyncThresholdSec = 0.050;  // これ以上ずれたら (平�
 // 1,300〜2,500 回)。クロック差によるゆっくりしたずれは、重複・間引きで kSlipThresholdSec 付近に保たれるので届かない
 constexpr double kOffsetResyncThresholdSec = 0.005;
 constexpr double kSlipThresholdSec = 0.002;  // 48kHz デバイス: これ以上ずれたら 1 サンプル重複 / 間引き
+// 同じ向きの重複・間引きが 1 秒に kSlipRateResync 回を超えるのが kSlipRateSeconds 秒続いたら合わせ直す。
+// 時間軸がゆっくり動き続けると (1 秒に 1 ms = 48 回)、重複・間引きが追いついてずれは 2 ms 付近のまま
+// kOffsetResyncThresholdSec に届かず、何十秒も続く (DVS の起動直後に 900〜2,400 回)。
+// 24 回/秒 = 500 ppm。送出元とデバイスのクロック差 (実測 24 ppm ≈ 1.2 回/秒、試験の 150 ppm ≈ 7 回/秒) では届かない
+constexpr int kSlipRateResync = 24;
+constexpr int kSlipRateSeconds = 2;
+constexpr int kSlipLogPerSec = 5;  // 1 秒の重複・間引きがこれ以上なら debug ログに出す
 // 48kHz デバイス: 重複 / 間引きは 10ms に 1 回まで (最大約 2000ppm のクロック差まで追従できる)。
 // 実際に起きる回数はクロック差の分だけ (例: 50ppm なら 2〜3 回/秒)。
 constexpr int kMinSlipIntervalFrames = 480;
@@ -81,6 +89,28 @@ bool ChannelSource::ensure_open() {
     return header_ != nullptr;
 }
 
+// 重複・間引きを 1 秒ごとに数える (同じ向きが続いたら合わせ直す。多いときは debug ログに出す)
+void ChannelSource::count_slip(int slip, int frames) {
+    if (slip > 0) {
+        ++slip_window_dup_;
+        ++stats_.duplicated;
+    } else if (slip < 0) {
+        ++slip_window_drop_;
+        ++stats_.dropped;
+    }
+    slip_window_frames_ += frames;
+    if (slip_window_frames_ < int(device_rate_)) return;
+    const int net = slip_window_dup_ - slip_window_drop_;
+    slip_rate_seconds_ = std::abs(net) > kSlipRateResync ? slip_rate_seconds_ + 1 : 0;
+    if (slip_window_dup_ + slip_window_drop_ >= kSlipLogPerSec) {
+        render_log().debug("audio ch{}: {} duplicated / {} dropped in the last second, error {:+.2f} ms", options_.ch, slip_window_dup_,
+                           slip_window_drop_, error_avg_ * 1000.0 / kSampleRate);
+    }
+    slip_window_frames_ = 0;
+    slip_window_dup_ = 0;
+    slip_window_drop_ = 0;
+}
+
 void ChannelSource::start_at(uint64_t pos, uint64_t epoch) {
     read_pos_ = pos;
     epoch_ = epoch;
@@ -90,6 +120,10 @@ void ChannelSource::start_at(uint64_t pos, uint64_t epoch) {
     fade_ = options_.fade ? 0.0f : 1.0f;  // フェードインから
     playing_ = true;
     resync_pending_ = false;
+    slip_window_frames_ = 0;
+    slip_window_dup_ = 0;
+    slip_window_drop_ = 0;
+    slip_rate_seconds_ = 0;
     ++stats_.resyncs;
 }
 
@@ -187,6 +221,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
                                  : epoch != epoch_                                                ? "new epoch"
                                  : std::abs(error) > kResyncThresholdSec * kSampleRate            ? "position error"
                                  : std::abs(error_avg_) > kOffsetResyncThresholdSec * kSampleRate ? "position offset"
+                                 : slip_rate_seconds_ >= kSlipRateSeconds                         ? "slip rate"
                                  : double(read_pos_) < oldest                                     ? "overrun"
                                                                                                   : nullptr;
             if (reason) {
@@ -205,6 +240,7 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
                 }
                 if (slip != 0) frames_since_slip_ = 0;
                 error_avg_ -= slip;
+                count_slip(slip, frames);
             } else {
                 // 早く鳴っている (error > 0) なら出力サンプルを増やしてゆっくり進める
                 const double max_delta = device_rate_ * kMaxCompensation;

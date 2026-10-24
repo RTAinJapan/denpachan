@@ -5,6 +5,7 @@
 //   denpachan-worker --ch 2 --cam 2 --srt-mode caller --host 203.0.113.10 --port 5000 --passphrase xxxxxxxxxx
 
 #include <srt/srt.h>
+#include <spdlog/cfg/env.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -165,6 +166,8 @@ void setup_logging(const Options& o) {
     logger->set_pattern("%Y-%m-%d %H:%M:%S.%e [%n] %^%l%$ %v");
     logger->flush_on(spdlog::level::warn);
     spdlog::set_default_logger(logger);
+    // 調べるとき: 環境変数 SPDLOG_LEVEL=debug で debug のログも出す (worker は engine から引き継ぐ。設計書 §6.3)
+    spdlog::cfg::load_env_levels();
     spdlog::flush_every(std::chrono::seconds(1));
 }
 

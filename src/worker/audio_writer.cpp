@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 namespace denpachan::worker {
@@ -122,6 +123,17 @@ int64_t AudioWriter::update_clock(int64_t pts_us, int64_t arrival_qpc) {
 int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
     // 映像と同じ時計 C(pts) に鳴るよう、engine の出力遅延を差し引いた時刻に engine へ渡す
     const int64_t output_delay = header_->output_delay_qpc.load(std::memory_order_relaxed);
+    if (std::llabs(output_delay - last_output_delay_) > qpc_from_ms(1)) {
+        // 出力遅延が変わった (engine がデバイスを開いた・開き直した): 渡す時刻がその分動き、時計の目標とのずれも
+        // 残るので、しばらく大きなずれを一度に詰めてもらう。読み手には 1 回で合わせ直させる
+        if (published_) {
+            spdlog::info("audio: output delay {:.1f} -> {:.1f} ms", double(qpc_to_us(last_output_delay_)) / 1000,
+                         double(qpc_to_us(output_delay)) / 1000);
+            header_->epoch.fetch_add(1, std::memory_order_release);
+        }
+        video_clock_.allow_fast_adjust();
+        last_output_delay_ = output_delay;
+    }
     auto handoff = [&] { return video_clock_.due(session, pts_us, arrival_qpc) - output_delay; };
 
     // 接続直後のまとめ届きの間は時計に報告しない (到着が実際より遅く見えるため)
@@ -132,7 +144,15 @@ int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arr
     // 時計の最初の調整が済んでから鳴らし始める (鳴り始めてから時間軸が大きく動かないように)
     if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
         published_ = true;
+        clock_jumps_ = video_clock_.jumps();
         spdlog::info("audio: synced to video (output delay {:.1f} ms)", double(qpc_to_us(output_delay)) / 1000);
+    } else if (published_) {
+        // 時計が一度に大きく動いた: 読み手が重複・間引きで少しずつ追わずに、1 回で合わせ直すよう epoch を進める
+        const uint64_t jumps = video_clock_.jumps();
+        if (jumps != clock_jumps_) {
+            clock_jumps_ = jumps;
+            header_->epoch.fetch_add(1, std::memory_order_release);
+        }
     }
     return handoff();
 }

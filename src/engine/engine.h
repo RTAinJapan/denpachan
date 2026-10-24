@@ -12,6 +12,7 @@
 
 #include "audio_router.h"
 #include "config.h"
+#include "ffmpeg_available.h"
 #include "denpachan/rtmp_routes.h"
 #include "denpachan/vcam_shm.h"
 #include "denpachan/win_util.h"
@@ -79,8 +80,5 @@ private:
     ChannelsView channels_view_;
     nlohmann::json last_channels_;  // 最後に作った channels (getChannels で返す)
 };
-
-// FFmpeg の DLL を使えるか (音声のリサンプルが確かめてから使う)
-bool ffmpeg_available();
 
 }  // namespace denpachan::engine

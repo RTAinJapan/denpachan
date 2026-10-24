@@ -10,7 +10,15 @@
 //   1 秒ごとに、余裕の最も小さかった側が目標 (映像: 再生バッファ + 揺れの備え、音声: 揺れの備え) になるように動かす。
 // - 時間軸が動くと、engine は鳴らす位置を合わせ直す。大きく動くと音が途切れる (フェードして合わせ直す) ので、
 //   鳴り始めてからは 1 秒に 1 ms までしか動かさない (engine はサンプルの重複・間引きで追える)。
-//   一度に動かすのは、時間軸を作った直後の最初の調整と、遅れて届いたとき、遅延の余りが続いたときだけ。
+//   一度に動かすのは、時間軸を作った直後の最初の調整と、遅れて届いたとき、遅延の余りが続いたとき、
+//   鳴らし始めてから kFastAdjustMs の間 (下)。
+// - 鳴らし始めてすぐは、揺れの備えが増えたり engine の出力遅延が決まったりして、目標とのずれが大きく残りやすい。
+//   1 秒に 1 ms ずつ詰めると数十秒かかり、その間 engine は 1 秒に 48 サンプルずつ重複・間引きし続ける
+//   (DVS で起動直後に 900〜2,400 回)。そこで、時間軸を作ってから、または engine の出力遅延が変わってから
+//   kFastAdjustMs の間は、ずれが kFastJumpMs を超えたら一度に動かす。それより後は 1 ms ずつのまま
+//   (動き続けると重複・間引きが増える。kHeadroomDecayMs のコメント)。
+// - 一度に kFastJumpMs を超えて動かしたら jumps() が増える。音声の書き手はそれを見て音声の epoch を進め、
+//   engine に (重複・間引きで追わずに) 1 回で合わせ直させる。
 // - 遅延の余り: 短い途切れのあとにまとめて届くと、途切れた長さの分だけ遅らされ、揺れの備えを超えた分が余る。
 //   1 秒に 1 ms では何分も戻らず、その間は映像がキュー (24 フレーム) に収まらずコマ送りになる。
 //   余りが 3 フレームを超えたまま kCatchUpWindows 回続いたら一度に戻す (音声は 1 回合わせ直しになる)。
@@ -38,7 +46,9 @@ namespace denpachan::worker {
 
 class PlayoutClock {
 public:
-    explicit PlayoutClock(int buffer_ms) : buffer_(qpc_from_ms(buffer_ms)) {}
+    // now: 今の時刻 (QPC)。試験では仮想の時計を渡す (tools の audio_timing_test)
+    using NowFn = int64_t (*)();
+    explicit PlayoutClock(int buffer_ms, NowFn now = &qpc_now) : buffer_(qpc_from_ms(buffer_ms)), now_(now) {}
 
     // pts_us のフレームを出すべき時刻 (QPC)。時間軸がなければ (別セッションなら) ここで作る。
     int64_t due(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
@@ -63,7 +73,7 @@ public:
     void report_video(int64_t slack_qpc, int64_t frame_us) {
         std::unique_lock lk(mutex_);
         frame_us_ = frame_us;
-        if (qpc_now() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
+        if (now_() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
         min_video_slack_ = std::min(min_video_slack_, slack_qpc);
         adjust_if_due_locked();
         flush_log(lk);
@@ -72,21 +82,42 @@ public:
     // 音声チャンクの余裕 (鳴らすべき時刻から出力遅延を引いたもの - 到着時刻) を報告する
     void report_audio(int64_t slack_qpc) {
         std::unique_lock lk(mutex_);
-        const int64_t now = qpc_now();
+        const int64_t now = now_();
         last_audio_report_qpc_ = now;
         if (now < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
         if (slack_qpc < 0) {
             // 遅れて届いた: 即座に遅らせ、同じ大きさの揺れが次は間に合うよう備えを増やす。
             // このかたまりは窓の最小には入れない (入れると、増やした備えとの差で次の調整がもう一度動かす)
             anchor_qpc_ -= slack_qpc;
+            // この窓でそれまでに測った余裕も、時間軸を遅らせた分だけ大きくなる。直さないと、遅らせる前の小さな余裕で
+            // 次の調整が「まだ足りない」と見て、前の揺れの備えの分だけさらに遅らせてしまう (そして 1 秒に 1 ms ずつ戻す。
+            // DVS の起動直後の重複・間引きの多くはこれだった)
+            if (min_audio_slack_ != LLONG_MAX) min_audio_slack_ -= slack_qpc;
+            if (min_video_slack_ != LLONG_MAX) min_video_slack_ -= slack_qpc;
+            if (-slack_qpc > qpc_from_ms(kFastJumpMs)) ++jumps_;
             grow_headroom_locked(audio_headroom_, -slack_qpc, kAudioHeadroomMaxMs, now, last_audio_late_qpc_);
             log_.push_back(fmt::format("playout: audio arrived {:.1f} ms late; delay increased, audio headroom {:.0f} ms",
                                        qpc_to_us(-slack_qpc) / 1000.0, qpc_to_us(audio_headroom_) / 1000.0));
-        } else {
+        } else if (now - last_audio_late_report_qpc_ > qpc_from_ms(kBurstMs)) {
             min_audio_slack_ = std::min(min_audio_slack_, slack_qpc);
         }
+        // 遅れて届いたかたまりと一緒に届いたもの (途切れのあとのまとめ届きの残り) も窓の最小に入れない。
+        // 入れると、そのぶん余裕が小さく見えて時間軸をさらに遅らせ、そのあと何十秒もかけて 1 ms ずつ戻すことになる
+        if (slack_qpc < 0) last_audio_late_report_qpc_ = now;
         adjust_if_due_locked();
         flush_log(lk);
+    }
+
+    // engine の出力遅延が変わった (デバイスを開いた、開き直した): しばらく大きなずれを一度に詰める
+    void allow_fast_adjust() {
+        std::lock_guard lk(mutex_);
+        fast_until_qpc_ = now_() + qpc_from_ms(kFastAdjustMs);
+    }
+
+    // 時間軸を一度に kFastJumpMs を超えて動かした回数 (音声の書き手が epoch を進める)
+    uint64_t jumps() {
+        std::lock_guard lk(mutex_);
+        return jumps_;
     }
 
     // 取り直しのたびに増える
@@ -109,7 +140,7 @@ public:
     // 音声がこの時間内に届いているか (映像が途切れても、音声が時間軸を使い続けているか)
     bool audio_reported_within(int64_t qpc) {
         std::lock_guard lk(mutex_);
-        return last_audio_report_qpc_ != 0 && qpc_now() - last_audio_report_qpc_ < qpc;
+        return last_audio_report_qpc_ != 0 && now_() - last_audio_report_qpc_ < qpc;
     }
 
     int64_t buffer_qpc() const { return buffer_; }
@@ -118,12 +149,16 @@ private:
     // 溜めたログをロックを外してから書く (ログはファイルに書くので、ロックを持ったまま書くと、出力スレッドと
     // 音声のスレッドがその間待たされる)
     void flush_log(std::unique_lock<std::mutex>& lk) {
-        if (log_.empty()) return;
-        std::vector<std::string> lines;
+        if (log_.empty() && debug_.empty()) return;
+        std::vector<std::string> lines, debug;
         lines.swap(log_);
+        debug.swap(debug_);
         lk.unlock();
         for (const auto& line : lines) spdlog::info("{}", line);
+        for (const auto& line : debug) spdlog::debug("{}", line);
     }
+
+    static std::string fmt_ms(int64_t v) { return v == LLONG_MAX ? std::string("-") : fmt::format("{:+.1f}", qpc_to_us(v) / 1000.0); }
 
     void anchor_locked(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
         anchored_ = true;
@@ -135,13 +170,13 @@ private:
         excess_windows_ = 0;
         // 接続直後はストリーム解析中に溜まったフレームがまとめて届く (到着が実際より遅く見える)。
         // その間の報告は使わず、落ち着いてから最初の窓を始める。
-        window_start_qpc_ = qpc_now() + qpc_from_ms(kSettleMs);
+        window_start_qpc_ = now_() + qpc_from_ms(kSettleMs);
         min_video_slack_ = LLONG_MAX;
         min_audio_slack_ = LLONG_MAX;
     }
 
     void adjust_if_due_locked() {
-        const int64_t now = qpc_now();
+        const int64_t now = now_();
         if (now - window_start_qpc_ < qpc_from_ms(1000)) return;
         decay_headroom_locked(video_headroom_, 0, now, last_video_late_qpc_);
         decay_headroom_locked(audio_headroom_, kAudioHeadroomMinMs, now, last_audio_late_qpc_);
@@ -154,24 +189,51 @@ private:
             const int64_t limit = qpc_from_ms(kMaxStepMs);
             int64_t step = std::clamp(error, -limit, limit);
             excess_windows_ = error > jump ? excess_windows_ + 1 : 0;
+            const char* reason = "";
             if (!settled_) {
                 // 時間軸を作った直後 (まだ鳴らしていない): 大きなずれは一度に合わせる
                 if (std::abs(error) > jump) step = error;
+                fast_until_qpc_ = now + qpc_from_ms(kFastAdjustMs);
+                reason = "first";
+            } else if (now < fast_until_qpc_ && !(video_error < -jump && video_error <= audio_error) &&  // 映像の遅れは下で備えを増やす
+                       (error < -qpc_from_ms(kFastJumpMs) ||
+                        (error > qpc_from_ms(kFastJumpMs) && ++fast_excess_windows_ >= kCatchUpWindows))) {
+                // 鳴らし始めてすぐ / 出力遅延が変わってすぐ: 一度に合わせる。遅延が足りないときはすぐに、余っているときは
+                // kCatchUpWindows 回続いてから (1 回だけの余りは、まとめ届きの残りで余裕が大きく見えただけのことがある)
+                step = error;
+                fast_excess_windows_ = 0;
+                reason = "fast";
+                log_.push_back(fmt::format("playout: moved the delay {:+.1f} ms at once (soon after starting or an output delay change)",
+                                           qpc_to_us(-error) / 1000.0));
             } else if (excess_windows_ >= kCatchUpWindows) {
                 // 遅延の余りが続いている (短い途切れのあとのまとめ届きなど): 一度に戻す
                 step = error;
                 excess_windows_ = 0;
+                reason = "catch up";
                 log_.push_back(fmt::format("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(error) / 1000.0));
             } else if (std::abs(error) <= qpc_from_ms(kDeadbandMs)) {
                 // 1 秒ごとの最小の揺れには反応しない (反応すると時間軸が 1 秒に 1 ms ずつ行き来し続け、
                 // engine がそれを追うサンプルの重複・間引きが絶えない)
                 step = 0;
+                reason = "deadband";
             } else if (video_error < -jump && video_error <= audio_error) {
                 // 映像が 3 フレームを超えて遅れた: 一度に遅らせ、備えを増やす (音声は合わせ直しになる)
                 step = video_error;
                 grow_headroom_locked(video_headroom_, -video_error, kVideoHeadroomMaxMs, now, last_video_late_qpc_);
+                reason = "video late";
                 log_.push_back(fmt::format("playout: video arrived {:.1f} ms late; delay increased, video headroom {:.0f} ms",
                                            qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
+            } else {
+                reason = "step";
+            }
+            if (error <= qpc_from_ms(kFastJumpMs)) fast_excess_windows_ = 0;
+            if (std::abs(step) > qpc_from_ms(kFastJumpMs) && settled_) ++jumps_;
+            // 1 秒ごとの要約 (debug): 時間軸を動かした量と理由。engine の重複・間引きと並べて見る
+            if (step != 0) {
+                debug_.push_back(
+                    fmt::format("playout: moved {:+.2f} ms ({}); error video {} / audio {} ms, headroom video {:.0f} / audio {:.0f} ms",
+                                qpc_to_us(-step) / 1000.0, reason, fmt_ms(video_error), fmt_ms(audio_error),
+                                qpc_to_us(video_headroom_) / 1000.0, qpc_to_us(audio_headroom_) / 1000.0));
             }
             anchor_qpc_ -= step;
             settled_ = true;
@@ -196,8 +258,11 @@ private:
     }
 
     static constexpr int64_t kSettleMs = 500;
-    static constexpr int64_t kMaxStepMs = 1;   // 鳴り始めてから 1 回 (1 秒) に動かす上限
-    static constexpr int64_t kDeadbandMs = 2;  // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
+    static constexpr int64_t kFastAdjustMs = 10'000;  // 鳴らし始めてから / 出力遅延が変わってから、一度に詰める間
+    static constexpr int64_t kFastJumpMs = 3;         // その間、ずれがこれを超えたら一度に詰める
+    static constexpr int64_t kBurstMs = 5;            // 遅れて届いたかたまりからこの間に届いたものは、まとめ届きの残り
+    static constexpr int64_t kMaxStepMs = 1;          // 鳴り始めてから 1 回 (1 秒) に動かす上限
+    static constexpr int64_t kDeadbandMs = 2;         // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない
     // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す
     static constexpr int kCatchUpWindows = 2;
     static constexpr int64_t kAudioHeadroomMinMs = 10;  // 音声の揺れの備え (最初の値と下限)
@@ -209,6 +274,7 @@ private:
     static constexpr int64_t kHeadroomDecayMs = 30'000;
 
     const int64_t buffer_;
+    const NowFn now_;
     std::mutex mutex_;
     bool anchored_ = false;
     bool settled_ = false;
@@ -221,8 +287,13 @@ private:
     int64_t min_video_slack_ = LLONG_MAX;
     int64_t min_audio_slack_ = LLONG_MAX;
     int64_t frame_us_ = 16'667;
-    int excess_windows_ = 0;        // 遅延の余りが 3 フレームを超えた窓が続いた数
-    std::vector<std::string> log_;  // ロックを外してから書くログ (flush_log)
+    int excess_windows_ = 0;                  // 遅延の余りが 3 フレームを超えた窓が続いた数
+    std::vector<std::string> log_;            // ロックを外してから書くログ (flush_log)
+    std::vector<std::string> debug_;          // 同じく debug のログ
+    int64_t fast_until_qpc_ = 0;              // この時刻までは、大きなずれを一度に詰める
+    int fast_excess_windows_ = 0;             // その間、遅延の余りが kFastJumpMs を超えた窓が続いた数
+    int64_t last_audio_late_report_qpc_ = 0;  // 最後に音声が遅れて届いた時刻 (まとめ届きの残りを窓に入れない)
+    uint64_t jumps_ = 0;                      // 一度に kFastJumpMs を超えて動かした回数
     int64_t last_audio_report_qpc_ = 0;
 
     // 揺れの備え (接続をまたいで覚えておく: 同じ送出元の揺れ方は変わらないことが多い)

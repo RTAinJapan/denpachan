@@ -159,7 +159,7 @@ json AudioRouter::channel_status(int ch) {
                 bool found = false;
                 bool playing = false;
                 double latency_ms = 0, error_ms = 0;
-                uint64_t slips = 0, underruns = 0, resyncs = 0;
+                uint64_t slips = 0, duplicated = 0, dropped = 0, underruns = 0, resyncs = 0;
                 std::string last_resync;
                 float peak_l = 0, peak_r = 0;
             } snap;
@@ -171,6 +171,8 @@ json AudioRouter::channel_status(int ch) {
                 snap.latency_ms = stats.latency_ms.load();
                 snap.error_ms = stats.error_ms.load();
                 snap.slips = stats.slips.load();
+                snap.duplicated = stats.duplicated.load();
+                snap.dropped = stats.dropped.load();
                 snap.underruns = stats.underruns.load();
                 snap.resyncs = stats.resyncs.load();
                 {
@@ -195,6 +197,8 @@ json AudioRouter::channel_status(int ch) {
                 j["latencyMs"] = snap.latency_ms;
                 j["errorMs"] = snap.error_ms;
                 j["slips"] = snap.slips;
+                j["slipsDuplicated"] = snap.duplicated;  // 重複と間引きの内訳 (調べもの用)
+                j["slipsDropped"] = snap.dropped;
                 j["underruns"] = snap.underruns;
                 j["resyncs"] = snap.resyncs;
                 j["lastResync"] = snap.last_resync;  // 直近の合わせ直しの理由 (調べもの用)

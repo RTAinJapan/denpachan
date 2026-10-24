@@ -12,7 +12,8 @@
 //   - 48kHz のデバイス: ずれが 2ms を超えたら 1 サンプルだけ重複 / 間引きする (送出元とデバイスの
 //     クロック差は数十 ppm なので、数秒に 1 回程度)。
 //   - それ以外: リサンプル比を微調整する (最大 ±0.5%)。
-//   ずれが 50ms を超えたら (接続し直しなど)、または平滑化したずれが 5ms を超えたら (遅延が一度に動いたとき)、
+//   ずれが 50ms を超えたら (接続し直しなど)、平滑化したずれが 5ms を超えたら (遅延が一度に動いたとき)、
+//   または同じ向きの重複・間引きが 1 秒に 24 回を超えるのが 2 秒続いたら (時間軸がゆっくり動き続けたとき)、
 //   フェードアウト → 読み位置を合わせ直す → フェードイン。
 //
 // ポップノイズを出さない: 開始・途絶・合わせ直しの瞬間だけ 10ms のフェードをかける (通常の音には触れない)。
@@ -42,10 +43,12 @@ struct RouteOptions {
 
 struct ChannelStats {
     std::atomic<bool> playing{false};
-    std::atomic<double> latency_ms{0};  // 鳴らすべき時刻から実際に鳴るまで
-    std::atomic<double> error_ms{0};    // 目標位置とのずれ (正: 早く鳴っている)
-    std::atomic<double> ratio_ppm{0};   // リサンプル補正 (48kHz 以外のデバイス)
-    std::atomic<uint64_t> slips{0};     // 重複 / 間引きしたサンプル数 (48kHz のデバイス)
+    std::atomic<double> latency_ms{0};    // 鳴らすべき時刻から実際に鳴るまで
+    std::atomic<double> error_ms{0};      // 目標位置とのずれ (正: 早く鳴っている)
+    std::atomic<double> ratio_ppm{0};     // リサンプル補正 (48kHz 以外のデバイス)
+    std::atomic<uint64_t> slips{0};       // 重複 / 間引きしたサンプル数 (48kHz のデバイス)
+    std::atomic<uint64_t> duplicated{0};  // そのうち重複
+    std::atomic<uint64_t> dropped{0};     // そのうち間引き
     std::atomic<bool> passthrough{false};
     std::mutex reason_mutex;
     std::string last_resync_reason;
@@ -83,6 +86,7 @@ private:
     // デバイスのレートで最大 frames 出す (足りなければ少なく返す)
     int pull_passthrough(float* dst, int frames, int slip);  // slip: +1 重複 / -1 間引き / 0
     int pull_resampled(float* dst, int frames);
+    void count_slip(int slip, int frames);
 
     const RouteOptions options_;
     const uint32_t device_rate_;
@@ -110,6 +114,11 @@ private:
     float fade_ = 0.0f;       // フェードの包絡 (0..1)
     double error_avg_ = 0.0;  // 目標位置とのずれ (平滑化、ソースのフレーム数)
     int frames_since_slip_ = 0;
+    // 直近 1 秒の重複・間引き (同じ向きが続いたら合わせ直す)
+    int slip_window_frames_ = 0;
+    int slip_window_dup_ = 0;
+    int slip_window_drop_ = 0;
+    int slip_rate_seconds_ = 0;  // 同じ向きが kSlipRateResync を超えた秒が続いた数
 
     ChannelStats stats_;
 };

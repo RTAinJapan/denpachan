@@ -132,6 +132,14 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'ffmpeg.missing' -SimpleMatch -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
           Write-Host 'OK: no FFmpeg DLLs in the output; worker and engine handle missing FFmpeg'
 
+      # 音声の時間軸: worker の書き手と engine の読み手を仮想の時計で動かし、重複・間引きと合わせ直しの回数を確かめる
+      # (音声デバイスは要らない。src/tools/audio_timing_test.cpp)
+      - name: Audio timing test
+        shell: pwsh
+        run: |
+          & out/build/bin/Release/audio_timing_test.exe
+          if ($LASTEXITCODE -ne 0) { throw "audio_timing_test failed ($LASTEXITCODE)" }
+
       # 画面の文言: コードが使うキー (画面・C++ のメッセージ ID) と言語ファイル (Lang/*.json) が食い違っていないか
       - name: UI text keys
         shell: pwsh

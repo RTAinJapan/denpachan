@@ -32,7 +32,7 @@ New-Item -ItemType Directory -Force $stage, (Join-Path $stage 'docs') | Out-Null
 
 # 実行ファイル・DLL・ライセンス (PDB やリンク用の中間ファイル、開発用のツールは入れない)。
 # denpachan-asio-driver.dll (GPL-3.0、別のリポジトリ) は開発中に横に置いて試すことがあるが、配布物には入れない (docs/dependencies.md §2.1)
-$exclude = '*.pdb', '*.ilk', '*.exp', '*.lib', 'audio_probe.exe', 'denpachan-asio-driver.dll'
+$exclude = '*.pdb', '*.ilk', '*.exp', '*.lib', 'audio_probe.exe', 'audio_timing_test.exe', 'denpachan-asio-driver.dll'
 Get-ChildItem $bin | Where-Object { $n = $_.Name; -not ($exclude | Where-Object { $n -like $_ }) } |
     Copy-Item -Destination $stage -Recurse
 Copy-Item (Join-Path $root 'README.md') $stage
