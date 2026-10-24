@@ -148,7 +148,7 @@ int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arr
 
     // 出力先が無い (engine の出力遅延が 0): 音声の余裕で時計を動かさない (「なし」にしただけで映像の遅延が変わらないように)
     if (output_delay == 0) {
-        video_clock_.note_audio_without_output();
+        video_clock_.note_audio_without_output(arrival_qpc);
         if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
             published_ = true;
             clock_jumps_ = video_clock_.jumps();
@@ -158,7 +158,7 @@ int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arr
     }
 
     // 余裕を報告する。足りなければ (音声が遅れて届いた) 時計が遅らされ、映像も待つ。
-    video_clock_.report_audio(handoff() - arrival_qpc);
+    video_clock_.report_audio(handoff() - arrival_qpc, arrival_qpc);
     // 時計の最初の調整が済んでから鳴らし始める (鳴り始めてから時間軸が大きく動かないように)
     if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
         published_ = true;

@@ -53,7 +53,8 @@ struct ChannelMetrics {
     std::atomic<uint64_t> frames_presented{0};
     std::atomic<uint64_t> frames_dropped_late{0};
     std::atomic<uint64_t> frames_dropped_queue{0};
-    std::atomic<int64_t> delay_us{0};  // 受信 (デコード完了) から vcam 出力までの遅延
+    std::atomic<int64_t> delay_us{0};           // 受信 (デコード完了) から vcam 出力までの遅延
+    std::atomic<uint64_t> playout_restarts{0};  // 映像が遅延に追いつけず時間軸を作り直した回数 (PlayoutCore::check_progress)
 
     std::atomic<uint32_t> video_state{0};  // worker_status::VideoState
 

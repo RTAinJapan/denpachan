@@ -51,6 +51,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     // 前回の状態 (イベントログ用)
     private long _lastRestarts = -1;
     private long _lastRejected = -1;  // 断った別の送出元の数 (前回の状態)
+    private long _lastPlayoutRestarts = -1;  // 映像が遅延に追いつけず時間軸を作り直した回数 (前回の状態)
     private long _rejectedPending;    // まだイベントログに出していない分
     private DateTime _rejectedLoggedAt = DateTime.MinValue;
     private string _lastVideoState = "";
@@ -532,6 +533,10 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             _rejectedPending = 0;
             _rejectedLoggedAt = DateTime.Now;
         }
+        // 映像が遅延に追いつけず、時間軸を作り直した (worker の保険。普段は起きない)
+        var playoutRestarts = (long)video.Num("playoutRestarts");
+        if (_lastPlayoutRestarts >= 0 && playoutRestarts > _lastPlayoutRestarts) events.Add(new(T("event.playoutRestarted"), true));
+        _lastPlayoutRestarts = playoutRestarts;
         _lastRestarts = restarts;
         _lastWorkerState = workerState;
         _lastConnected = connected;

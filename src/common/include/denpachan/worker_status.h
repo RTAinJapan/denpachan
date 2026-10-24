@@ -103,6 +103,8 @@ struct Header {
 
     // 同じ宛先に、今の送出元が送っている間に来て断った接続の数 (SRT の listener と RTMP の push。累計)
     std::atomic<uint64_t> rejected_senders;
+    // 映像が遅延に追いつけず、時間軸を作り直した回数 (worker の PlayoutCore::check_progress。累計)
+    std::atomic<uint64_t> playout_restarts;
 };
 
 static_assert(sizeof(Header) <= kMappingBytes);

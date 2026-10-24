@@ -42,9 +42,11 @@
 // - 一度に kEpochJumpMs を超えて動かしたら (遅れて届いて遅らせたときも) jumps() が増える。音声の書き手は
 //   それを見て音声の epoch を進め、engine に (重複・間引きで追わずに) 1 回で合わせ直させる。
 // - 遅延の余り: 短い途切れのあとにまとめて届くと、途切れた長さの分だけ遅らされ、揺れの備えを超えた分が余る。
-//   1 秒に 1 ms では何分も戻らず、その間は映像がキュー (24 フレーム) に収まらずコマ送りになる。
-//   余り (直近 kLongHistoryWindows 窓の包絡) が 3 フレームを超えたまま kCatchUpWindows 回続いたら一度に戻す
-//   (音声は 1 回合わせ直しになる)。途切れが繰り返している間は戻さない (備えを保つ。下)。
+//   1 秒に 1 ms では何分も戻らない。余り (直近 kLongHistoryWindows 窓の包絡) が 3 フレームを超えたまま kCatchUpWindows 回
+//   続いたら一度に戻す (音声は 1 回合わせ直しになる)。途切れのあった窓とその後 kOutageTailMs の間の窓は数えないので、
+//   途切れから約 5 秒で戻る。途切れが繰り返している間は戻さない (備えを保つ。下)。
+// - 映像の待ち行列は、ここで遅らせうる最大 (kMaxExtraDelayMs) と再生バッファを覆う幅にしてある (playout_core.h)。
+//   遅延が大きい間も、映像はコマ送りにならない。
 // - 音声が遅れて届いた (余裕が負) ときは、届く前に鳴らすことはできないので即座に遅らせる。
 //   映像はその分待たされる (A/V 同期を保つため)。映像が 3 フレームを超えて遅れたときも一度に遅らせる。
 // - 届く速さが足りない (帯域不足: 1 窓で何度も遅れて届いた) ときは、一度に kShortfallShiftMs 遅らせ、追いついたら戻す。
@@ -56,7 +58,8 @@
 //     1 回きりなら増やさない。時間軸は遅らせ、余りは caught up で一度に戻す。数百 ms の途切れで備えを増やすと、
 //     30 秒に 1 ms ずつしか減らず、約 1 時間、遅延が 100 ms 以上多いままになった (868 / 853 ms の遅れの後、10 → 145 ms)。
 //     前の途切れから kOutageMemoryMs 以内にまた途切れたら「繰り返している」とし、備えを途切れを覆う大きさに増やして保つ
-//     (遅延が多少増えても、毎回途切れるよりよい)。途切れのあった窓は、包絡にも決め直しにも入れない。
+//     (遅延が多少増えても、毎回途切れるよりよい)。途切れのあった窓とその後 kOutageTailMs の間の窓は、包絡にも決め直しにも
+//     入れず、1 ms ずつも動かさない。映像の途切れは、フレームが届いた (デコードした) 時刻の間隔で見る (note_video_arrival)。
 //   - 音声が kHeadroomReviewMs の間遅れて届かず、途切れも繰り返していなければ、その間の窓ごとの最小の余裕の
 //     散らばり (時間軸の動きを差し引いたもの) に上乗せした値で決め直す (音声・映像それぞれ)。今の備えがそれより
 //     kHeadroomCutMs を超えて多ければ、一度に下げて時間軸も一度に詰める (余分な遅延を長く引きずらない)。
@@ -95,6 +98,19 @@ public:
         anchor_locked(session, pts_us, arrival_qpc);
     }
 
+    // 時間軸を作り直す (映像が遅延に追いつけないとき。PlayoutCore::check_progress)。揺れの備えと途切れの記憶も捨てる
+    // (残すと、作り直した時間軸もまた同じだけ遅らされ、同じことになる)
+    void restart(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
+        std::lock_guard lk(mutex_);
+        audio_headroom_ = qpc_from_ms(kAudioHeadroomMinMs);
+        video_headroom_ = 0;
+        reviewed_headroom_ = 0;
+        last_outage_qpc_ = 0;
+        repeated_until_qpc_ = 0;
+        catch_up_pending_ = 0;
+        anchor_locked(session, pts_us, arrival_qpc);
+    }
+
     // 時間軸を捨てる (映像の途絶)。次に来たフレームで作り直す。
     void invalidate() {
         std::lock_guard lk(mutex_);
@@ -105,24 +121,35 @@ public:
     void report_video(int64_t slack_qpc, int64_t frame_us) {
         std::unique_lock lk(mutex_);
         frame_us_ = frame_us;
-        const int64_t now = now_();
-        const int64_t prev_report = last_video_report_qpc_;
-        last_video_report_qpc_ = now;
-        if (now < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
-        if (prev_report != 0 && now - prev_report > qpc_from_ms(kOutageGapMs)) note_outage_locked(now);  // 映像が途切れた
+        if (now_() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
         min_video_slack_ = std::min(min_video_slack_, slack_qpc);
         adjust_if_due_locked();
         flush_log(lk);
     }
 
-    // 音声チャンクの余裕 (鳴らすべき時刻から出力遅延を引いたもの - 到着時刻) を報告する
-    void report_audio(int64_t slack_qpc) {
+    // 映像のフレームが届いた (デコードした。キューに入れるたび。BasicFrameQueue::set_on_push)。届く間隔が kOutageGapMs を
+    // 超えて開いたら途切れ。出力スレッドが取り出す間隔では見ない: 遅延が大きい間は、出す時刻まで待つ分だけ取り出す間隔が
+    // 開き、待つ間にキューから溢れたフレームもあるので、自分で「途切れ」を作り続けてしまった (取り出しが約 500 ms おきになり、
+    // 毎回途切れと数えて「繰り返している」から抜けられなかった)
+    void note_video_arrival(int64_t arrival_qpc) {
+        std::unique_lock lk(mutex_);
+        const int64_t prev = last_video_arrival_qpc_;
+        last_video_arrival_qpc_ = arrival_qpc;
+        if (!anchored_ || now_() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
+        if (prev != 0 && arrival_qpc - prev > qpc_from_ms(kOutageGapMs)) note_outage_locked(now_());
+        flush_log(lk);
+    }
+
+    // 音声チャンクの余裕 (鳴らすべき時刻から出力遅延を引いたもの - 到着時刻) を報告する。途切れは、届いた時刻 (デコード
+    // 完了) の間隔で見る (映像と同じ。音声はデコーダのスレッドから届いたときに呼ばれるので、呼ばれた時刻とほぼ同じ)
+    void report_audio(int64_t slack_qpc, int64_t arrival_qpc) {
         std::unique_lock lk(mutex_);
         const int64_t now = now_();
-        const int64_t prev_report = last_audio_report_qpc_;
+        const int64_t prev_arrival = last_audio_arrival_qpc_;
         last_audio_report_qpc_ = now;
+        last_audio_arrival_qpc_ = arrival_qpc;
         if (now < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
-        if (prev_report != 0 && now - prev_report > qpc_from_ms(kOutageGapMs)) {
+        if (prev_arrival != 0 && arrival_qpc - prev_arrival > qpc_from_ms(kOutageGapMs)) {
             // 届く間隔が開いた: 途切れ。止まっていた間の分がまとめて届くので、続くかたまりも窓の最小に入れない
             // (揺れの備えが途切れを覆っていて遅れて届かなくても、途切れと分かるように)
             note_outage_locked(now);
@@ -207,9 +234,10 @@ public:
 
     // 音声は届いているが、出力先が無い (engine の出力遅延が 0)。時間軸は音声の余裕で動かさない
     // (「なし」にしただけで映像の遅延が変わらないように)。届いていることだけ覚える (audio_reported_within)
-    void note_audio_without_output() {
+    void note_audio_without_output(int64_t arrival_qpc) {
         std::lock_guard lk(mutex_);
         last_audio_report_qpc_ = now_();
+        last_audio_arrival_qpc_ = arrival_qpc;
     }
 
     // 時間軸を一度に kEpochJumpMs を超えて動かした回数 (音声の書き手が epoch を進める)
@@ -288,7 +316,10 @@ private:
 
     void adjust_if_due_locked() {
         const int64_t now = now_();
-        if (now - window_start_qpc_ < qpc_from_ms(1000)) return;
+        // 途切れの後 kOutageTailMs が明けたら、その窓はそこで閉じる (次の窓を明けた時刻から始め、余りを早く戻せるように)
+        const int64_t tail_end = last_outage_qpc_ != 0 ? last_outage_qpc_ + qpc_from_ms(kOutageTailMs) : 0;
+        const bool tail_ended = window_start_qpc_ < tail_end && now >= tail_end;
+        if (now - window_start_qpc_ < qpc_from_ms(1000) && !tail_ended) return;
         // 減らすのは、途切れが繰り返していない間だけ、決め直した備え (実際の揺れに見合う大きさ) まで
         if (!repeated_outages_locked(now)) {
             decay_headroom_locked(video_headroom_, 0, now, last_video_late_qpc_);
@@ -306,7 +337,23 @@ private:
             // 途切れのあった窓 (届く間隔が開いた、大きく遅れた) は包絡にも決め直しにも入れない。遅らせた後の時間軸で見ると
             // 目標ちょうどに見え、その窓が残っている間は余りを詰められない (900 ms の途切れの後、戻るまで包絡の長さだけ待った)
             // 帯域不足で遅らせてから追いつくまで (音声の余裕が目標に戻るまで) の窓も同じ
-            if (video_error < -qpc_from_ms(kOutageLateMs)) window_outage_ = true;
+            // 映像の遅れ: 出す時刻 (再生バッファ) に対して遅れた量 (正: 遅れた)。揺れの備えの内側で目標より小さいだけなら遅れではない
+            // (目標との差で見ると、備えを増やしても途切れのたびに同じだけ足りなく見え、繰り返す途切れで備えが途切れの分ずつ増え続けた)
+            const int64_t video_lateness = min_video_slack_ != LLONG_MAX ? buffer_ - min_video_slack_ : LLONG_MIN;
+            if (video_lateness > qpc_from_ms(kOutageLateMs)) window_outage_ = true;
+            // 途切れのあった窓と、途切れから kOutageTailMs の間に始まった窓 (まとめ届きの残りで、ずれが小さく見える) は、
+            // 判断に使わない: 包絡に入れず、余りの数えも進めも戻しもせず、動かさない。映像が 3 フレームを超えて遅れたときだけ
+            // 一度に遅らせる (音声が遅れて届いたときは report_audio で即座に遅らせる)。窓が明けたら、包絡は途切れより前の窓も
+            // 今の時間軸で計算し直すので、余りがそのまま見え、2 窓で caught up になる (途切れから約 5 秒)。
+            // 入れると、まとめ届きの窓が包絡を押し下げ、余りを一度に戻せなかった (70 ms の途切れの後 1 ms ずつ約 4 分、
+            // 790 ms の後は戻せないまま遅延が待ち行列を超えてコマ送りになった)
+            const bool after_outage = window_outage_ || window_start_qpc_ < tail_end;
+            // 明けたら、次の窓で余りを一度に戻す (3 フレームに届かない余りも。2 窓続くのを待たない: 途切れより前の窓も包絡に
+            // 入っているので、揺れの良い窓だけで余って見えることはない)。途切れが繰り返している間は戻さない (備えを保つ)
+            if (tail_ended && !repeated_outages_locked(now)) catch_up_pending_ = std::max(catch_up_pending_, 2);
+            // 帯域不足から追いついた窓も入れない (この窓の映像の余裕は、遅く届いていた間のもので小さい。入れると、
+            // 追いついた後に戻す余りがその分だけ残り、その窓が包絡から抜けるまで約 2 分戻らなかった)
+            const bool shortfall_window = shortfall_ || window_shortfall_;
             if (shortfall_ && audio_error >= 0) {
                 // 追いついた: 帯域不足のときに増やした備えを戻す (余りは caught up で一度に戻す)
                 shortfall_ = false;
@@ -316,7 +363,7 @@ private:
                     fmt::format("playout: audio caught up after arriving slower than real time; audio headroom back to {:.0f} ms",
                                 qpc_to_us(audio_headroom_) / 1000.0));
             }
-            push_history_locked(window_outage_ || shortfall_ || window_shortfall_);
+            push_history_locked(after_outage || shortfall_window);
             ++windows_since_move_;
             update_band_locked();
             // 遅延の余りは、その窓だけでなく直近の窓すべてで見る (揺れの良い窓が続いただけで一度に戻さない。揺れが ±30 ms の
@@ -324,14 +371,19 @@ private:
             // 遅らせた時間軸で計算し直すので、包絡も余っている
             const int64_t excess = std::min(error, history_envelope_locked(kLongHistoryWindows));
             // 途切れが繰り返している間は、余りを詰めない (備えは途切れを覆うためのもので、途切れの無い窓だけを見ると余って見える)
-            excess_windows_ = excess > jump && !repeated_outages_locked(now) ? excess_windows_ + 1 : 0;
+            if (!after_outage) excess_windows_ = excess > jump && !repeated_outages_locked(now) ? excess_windows_ + 1 : 0;
             const char* reason = "";
-            const int64_t fast_step = fast_step_locked(error, now, video_error < -jump && video_error <= audio_error);
+            const bool video_late = video_lateness > jump && video_error <= audio_error;
+            if (after_outage) fast_prev_error_ = LLONG_MAX;  // 途切れの前の窓と向きを比べない
+            const int64_t fast_step = after_outage ? 0 : fast_step_locked(error, now, video_late);
             if (!settled_) {
                 // 時間軸を作った直後 (まだ鳴らしていない): 大きなずれは一度に合わせる
                 if (std::abs(error) > jump) step = error;
                 start_fast_locked(now);
                 reason = "first";
+            } else if (after_outage && !video_late) {
+                step = 0;
+                reason = "after outage";
             } else if (fast_step != 0) {
                 // 鳴らし始めてすぐ / 出力遅延が変わってすぐ: はっきり大きいずれだけを一度に合わせる (fast_step_locked)
                 step = fast_step;
@@ -357,24 +409,25 @@ private:
                     "playout: headroom reduced to audio {:.0f} / video {:.0f} ms (no late audio for {} s); delay reduced {:.1f} ms at once",
                     qpc_to_us(audio_headroom_) / 1000.0, qpc_to_us(video_headroom_) / 1000.0, kHeadroomReviewMs / 1000,
                     qpc_to_us(step) / 1000.0));
-            } else if (video_error < -jump && video_error <= audio_error) {
-                // 映像が 3 フレームを超えて遅れた: 一度に遅らせ、備えを増やす (音声は合わせ直しになる)
-                step = video_error;
+            } else if (video_late) {
+                // 映像が 3 フレームを超えて遅れた: 遅れた分だけ一度に遅らせ、備えを増やす (音声は合わせ直しになる)
+                step = -video_lateness;
                 reason = "video late";
-                if (outage_locked(-video_error, now) && repeated_outages_locked(now)) {
-                    grow_headroom_locked(video_headroom_, -video_error, kOutageHeadroomMaxMs, now, last_video_late_qpc_,
+                if (outage_locked(video_lateness, now) && repeated_outages_locked(now)) {
+                    grow_headroom_locked(video_headroom_, video_lateness, kOutageHeadroomMaxMs, now, last_video_late_qpc_,
                                          kOutageHeadroomMaxMs);
                     log_.push_back(
                         fmt::format("playout: video arrived {:.1f} ms late (repeated outages); delay increased, video headroom {:.0f} ms",
-                                    qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
-                } else if (outage_locked(-video_error, now)) {
+                                    qpc_to_us(video_lateness) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
+                } else if (outage_locked(video_lateness, now)) {
                     log_.push_back(
                         fmt::format("playout: video arrived {:.1f} ms late (outage); delay increased, video headroom kept {:.0f} ms",
-                                    qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
+                                    qpc_to_us(video_lateness) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
                 } else {
-                    grow_headroom_locked(video_headroom_, -video_error, kVideoHeadroomMaxMs, now, last_video_late_qpc_, kHeadroomGrowMaxMs);
+                    grow_headroom_locked(video_headroom_, video_lateness, kVideoHeadroomMaxMs, now, last_video_late_qpc_,
+                                         kHeadroomGrowMaxMs);
                     log_.push_back(fmt::format("playout: video arrived {:.1f} ms late; delay increased, video headroom {:.0f} ms",
-                                               qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
+                                               qpc_to_us(video_lateness) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
                 }
             } else {
                 // 落ち着いた後: その窓のずれではなく、直近の窓のずれの最小 (揺れの悪い側の包絡) で決める。
@@ -445,8 +498,12 @@ private:
 
     // 途切れか (時間軸は遅らせるが、揺れの備えは増やさない)。kOutageLateMs を超える遅れは揺れではなく一時的な途切れで、
     // その直後 kOutageTailMs の間の遅れは、途切れのあとのまとめ届きの残り
+    // 測った揺れ (直近の窓のずれの散らばり) より桁違いに大きい遅れも途切れ (揺れの小さい回線で 70 ms 止まったときなど。
+    // 届く間隔は 90 ms 前後で kOutageGapMs に届かない)。揺れを測れるだけの窓が溜まるまでは見ない
     bool outage_locked(int64_t late, int64_t now) {
-        if (late > qpc_from_ms(kOutageLateMs)) {
+        const bool beyond_jitter = history_count_ >= kHistoryWindows && late > qpc_from_ms(kOutageMinLateMs) &&
+                                   late > history_spread_locked() * kOutageSpreadTimes;
+        if (late > qpc_from_ms(kOutageLateMs) || beyond_jitter) {
             note_outage_locked(now);
             return true;
         }
@@ -653,6 +710,9 @@ private:
     static constexpr int64_t kOutageLateMs = 100;
     // 途切れからこの間の遅れも途切れの一部 (途切れの直後のまとめ届きで、24 / 42 ms などの遅れが続いた)
     static constexpr int64_t kOutageTailMs = 3'000;
+    // 遅れがこれを超え、かつ測った揺れ (直近の窓のずれの散らばり) のこの倍を超えたら、kOutageLateMs に届かなくても途切れ
+    static constexpr int64_t kOutageMinLateMs = 30;
+    static constexpr int64_t kOutageSpreadTimes = 4;
     // 音声がこの間遅れて届かなければ、揺れの備えを実際の揺れに合わせて決め直す。約 1 分ごとに起きる小さな途切れ (RTMP) で、
     // 下げては遅れて届いて増やす、を毎回繰り返さない長さ
     static constexpr int64_t kHeadroomReviewMs = 60'000;
@@ -679,6 +739,17 @@ private:
     // そのとき一度に遅らせる量 (繰り返す途切れに合わせる備えの上限と同じ)
     static constexpr int64_t kShortfallShiftMs = 1'000;
 
+public:
+    // 時間軸が再生バッファより遅らされうる量の上限: 映像の揺れの備え + 音声側から遅らされる量 (音声の揺れの備え。繰り返す
+    // 途切れでは kOutageHeadroomMaxMs まで、帯域不足では一度に kShortfallShiftMs)。映像の待ち行列は、これを覆う幅にする
+    // (playout_core.h の video_queue_limits)。1 回きりの途切れでは、途切れた長さだけ一時的に遅らされ、約 5 秒で戻る
+    static constexpr int64_t kMaxExtraDelayMs =
+        kVideoHeadroomMaxMs + std::max({kAudioHeadroomMaxMs, kOutageHeadroomMaxMs, kShortfallShiftMs});
+    static_assert(kMaxExtraDelayMs >= kVideoHeadroomMaxMs + kOutageHeadroomMaxMs &&
+                      kMaxExtraDelayMs >= kVideoHeadroomMaxMs + kShortfallShiftMs,
+                  "the video queue must cover every delay the clock can add");
+
+private:
     const int64_t buffer_;
     const NowFn now_;
     std::mutex mutex_;
@@ -701,12 +772,12 @@ private:
     WindowSlack history_[kLongHistoryWindows];  // 直近の窓 (環状)
     int history_next_ = 0;
     int history_count_ = 0;
-    int64_t last_outage_qpc_ = 0;     // 最後に途切れた時刻 (note_outage_locked)
-    int64_t repeated_until_qpc_ = 0;  // この時刻まで、途切れが繰り返しているとみなす
-    int64_t reviewed_headroom_ = 0;   // 最後に決め直した音声の揺れの備え (少しずつ減らす下限)
-    int64_t last_video_report_qpc_ = 0;
-    int64_t review_start_qpc_ = 0;    // 揺れの備えを決め直す間の始まり (review_headroom_locked)
-    int64_t review_min_ = LLONG_MAX;  // その間の、窓の最小の音声の余裕 - anchor_qpc_ の最小と最大
+    int64_t last_outage_qpc_ = 0;         // 最後に途切れた時刻 (note_outage_locked)
+    int64_t repeated_until_qpc_ = 0;      // この時刻まで、途切れが繰り返しているとみなす
+    int64_t reviewed_headroom_ = 0;       // 最後に決め直した音声の揺れの備え (少しずつ減らす下限)
+    int64_t last_video_arrival_qpc_ = 0;  // 最後に映像のフレームが届いた時刻 (note_video_arrival)
+    int64_t review_start_qpc_ = 0;        // 揺れの備えを決め直す間の始まり (review_headroom_locked)
+    int64_t review_min_ = LLONG_MAX;      // その間の、窓の最小の音声の余裕 - anchor_qpc_ の最小と最大
     int64_t review_max_ = LLONG_MIN;
     int review_windows_ = 0;
     int64_t review_video_min_ = LLONG_MAX;  // 同じく映像
@@ -731,6 +802,7 @@ private:
     int64_t last_audio_late_report_qpc_ = 0;                            // 最後に音声が遅れて届いた時刻 (まとめ届きの残りを窓に入れない)
     uint64_t jumps_ = 0;                                                // 一度に kEpochJumpMs を超えて動かした回数
     int64_t last_audio_report_qpc_ = 0;
+    int64_t last_audio_arrival_qpc_ = 0;  // 最後に音声が届いた時刻 (report_audio、note_audio_without_output)
 
     // 揺れの備え (接続をまたいで覚えておく: 同じ送出元の揺れ方は変わらないことが多い)
     int64_t audio_headroom_ = qpc_from_ms(kAudioHeadroomMinMs);

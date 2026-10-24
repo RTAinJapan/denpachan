@@ -29,6 +29,7 @@
 #include "decoder.h"
 #include "filename.h"
 #include "playout_clock.h"
+#include "playout_core.h"
 #include "denpachan/win_util.h"
 #include "flv_ring_ingest.h"
 #include "recorder.h"
@@ -256,6 +257,7 @@ public:
             }
             worker_status::write_metrics(m_.status, s);
             m_.status->rejected_senders.store(m_.rejected_senders.load());  // Metrics の外 (末尾に足した欄)
+            m_.status->playout_restarts.store(m_.playout_restarts.load());
         }
         last_bytes_ = bytes;
         last_decoded_ = decoded;
@@ -348,7 +350,8 @@ int main(int argc, char** argv) {
         spdlog::warn("cannot open worker status shared memory");
     }
     ByteQueue bytes(16 * 1024 * 1024);
-    FrameQueue frames(24);
+    // 映像の待ち行列は、とりうる最大の遅延を覆う幅 (playout_core.h)。届いた時刻は時計に知らせる (映像の途切れを見る)
+    FrameQueue frames(video_queue_limits(opts->playout.buffer_ms));
 
     std::unique_ptr<VcamWriter> writer;
     if (opts->cam > 0) {
@@ -357,6 +360,7 @@ int main(int argc, char** argv) {
     }
 
     PlayoutClock clock(opts->playout.buffer_ms);
+    frames.set_on_push([&clock](int64_t arrival_qpc) { clock.note_video_arrival(arrival_qpc); });
     std::unique_ptr<AudioWriter> audio;
     if (opts->audio) {
         audio = std::make_unique<AudioWriter>(clock, metrics, opts->av_sync);

@@ -69,6 +69,8 @@ void Playout::run() {
         metrics_.heartbeat_playout();
         auto f = queue_.pop(50ms);
         const int64_t now = qpc_now();
+        core.check_progress(now, queue_.pushed(), queue_.dropped(), metrics_.frames_presented.load());
+        metrics_.playout_restarts = core.restarts();
 
         if (!f) {
             // 途絶中は最後のフレームを出し続ける (NO SIGNAL にはしない)

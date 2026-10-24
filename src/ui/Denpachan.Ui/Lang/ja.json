@@ -194,6 +194,7 @@
   "event.started": "開始しました",
   "event.connected": "接続されました ({peer})",
   "event.disconnected": "接続が切れました",
+  "event.playoutRestarted": "映像の出力が遅延に追いつけなかったため、時間軸を取り直しました",
   "event.rejectedSenders": "別の送出元からの接続を断りました ({count} 回)。今の送出元が送っている間は入れ替えません",
   "event.live": "映像を受信しています",
   "event.hold": "映像が途絶えました (最後の映像フレームを保持)",

@@ -194,6 +194,7 @@
   "event.started": "Started",
   "event.connected": "Connected ({peer})",
   "event.disconnected": "Disconnected",
+  "event.playoutRestarted": "Video output could not keep up with the delay; the timeline was re-anchored",
   "event.rejectedSenders": "Refused {count} connection(s) from another sender. The current sender is kept while it is sending",
   "event.live": "Receiving video",
   "event.hold": "Video stalled (holding the last frame)",
