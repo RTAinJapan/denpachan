@@ -4,8 +4,6 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <climits>
-#include <cstdlib>
 
 namespace denpachan::worker {
 
@@ -53,11 +51,7 @@ void Playout::run() {
     HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Playback", &task_index);
 
     const int64_t stall = qpc_from_ms(options_.stall_ms);
-
-    uint64_t last_session = 0;
-    int64_t last_pts_us = 0;
-    int64_t last_arrival_qpc = 0;
-    int64_t frame_us = 16'667;
+    PlayoutCore core(clock_, stall);  // フレームごとの判断 (試験と同じコード)
 
     bool live = false;
     int64_t last_output_qpc = 0;
@@ -93,47 +87,10 @@ void Playout::run() {
             continue;
         }
 
-        // 取り残されたフレーム: タイムスタンプは直前と連続しているのに、到着が途絶判定より遅れた。
-        // 送出停止時にデマクサ内に残っていた末尾が切断後に出てくるもので、出すと保持中の絵が
-        // 一瞬だけ切り替わって live 扱いになる。
-        const int64_t gap_us = f->pts_us - last_pts_us;
-        if (f->session == last_session && gap_us > 0 && gap_us < 1'000'000 && f->arrival_qpc - last_arrival_qpc > stall) {
-            last_arrival_qpc = f->arrival_qpc;
-            last_pts_us = f->pts_us;
-            ++metrics_.frames_dropped_late;
-            continue;
-        }
-        last_arrival_qpc = f->arrival_qpc;
-
-        // 時間軸の取り直し: タイムスタンプが 1 秒以上飛び、今の時間軸ではこのフレームを出す時刻が大きくずれるとき
-        // (送出側の時計が飛んだ、巻き戻ったなど)。映像だけが途切れて音声は届き続けていた、送出側が止まってその分だけ
-        // タイムスタンプが進んだ、などで、今の時間軸のままで出す時刻が合っている (余裕が再生バッファからずれていない) なら
-        // 取り直さない (取り直すと音声がフェードして合わせ直しになる)。新しい接続は due() が取り直す。
-        // 届いた間隔とは比べない (HW デコーダは次の入力まで前のフレームを返さないので、途切れの前のフレームの到着が遅く見える)
-        const bool ts_jumped = gap_us < -1'000'000 || gap_us > 1'000'000;
-        if (f->session == last_session && clock_.anchored_for(f->session) && ts_jumped) {
-            const int64_t off_us = qpc_to_us(clock_.due(f->session, f->pts_us, f->arrival_qpc) - f->arrival_qpc - clock_.buffer_qpc());
-            if (std::llabs(off_us) > kOffTimelineUs) {
-                spdlog::info("playout: re-anchor (gap {} ms, {} ms off the current timeline)", gap_us / 1000, off_us / 1000);
-                clock_.reanchor(f->session, f->pts_us, f->arrival_qpc);
-            } else {
-                spdlog::info("playout: timestamps jumped {} ms but still fit the current timeline ({:+} ms); keeping it", gap_us / 1000,
-                             off_us / 1000);
-            }
-        } else if (gap_us > 0 && gap_us < 100'000) {
-            frame_us = gap_us;
-        }
-        last_session = f->session;
-        last_pts_us = f->pts_us;
-
-        // 余裕を報告すると、時計が遅延を目標に保つよう時間軸を動かすことがある (設計書 §3.5)
-        const int64_t first_target = clock_.due(f->session, f->pts_us, f->arrival_qpc);
-        clock_.report_video(first_target - f->arrival_qpc, frame_us);
-        int64_t target = clock_.due(f->session, f->pts_us, f->arrival_qpc);
-
-        // 遅れたフレームは、後ろに新しいフレームが待っていれば捨てる
-        if (now - target > qpc_from_us(frame_us) && queue_.size() > 0) {
-            ++metrics_.frames_dropped_late;
+        const FrameMeta meta{f->session, f->pts_us, f->arrival_qpc};
+        int64_t target = 0;
+        if (core.on_frame(meta, now, queue_.size(), target) != PlayoutCore::Decision::Present) {
+            ++metrics_.frames_dropped_late;  // 取り残された、または遅れたフレーム (PlayoutCore)
             continue;
         }
         // 待っている間に音声側の都合で時間軸が遅らされることがあるので、待ち終わったら確かめ直す
@@ -143,7 +100,7 @@ void Playout::run() {
                 stopped = true;
                 break;
             }
-            target = clock_.due(f->session, f->pts_us, f->arrival_qpc);
+            target = core.target(meta);
         }
         if (stopped) break;
 
