@@ -74,6 +74,12 @@ public:
     const RouteOptions& options() const { return options_; }
     ChannelStats& stats() { return stats_; }
 
+    // 出力先が無くなった (デバイスの出力を止めた) ことを worker に知らせる (出力遅延を 0 にする)。
+    // 開き直すときは呼ばない (開き直した結果の値だけを知らせる。設計書 §6.3)
+    void clear_output_delay() {
+        if (header_) header_->output_delay_qpc.store(0);
+    }
+
     // ミュート (遅延には影響しない。切り替えの瞬間だけフェードする)
     void set_mute(bool mute) { mute_ = mute; }
     bool muted() const { return mute_; }

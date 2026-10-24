@@ -61,7 +61,8 @@ ChannelSource::ChannelSource(const RouteOptions& options, uint32_t device_rate, 
 }
 
 ChannelSource::~ChannelSource() {
-    if (header_) header_->output_delay_qpc.store(0);
+    // 出力遅延は 0 にしない: デバイスを開き直すときは作り直すので、0 を経由すると worker が「出力先なし」と
+    // 見てしまう。出力先が無くなるときは、出力 (DeviceOutput / AsioOutput) が止めるときに clear_output_delay を呼ぶ
     if (swr_) swr_free(&swr_);  // FFmpeg が無いときに呼ばない (遅延ロード)
 }
 

@@ -46,6 +46,9 @@ void AsioOutput::stop() {
     stopping_ = true;
     close_asio_output(output_);  // 戻るまでにコールバックは止まる
     output_ = nullptr;
+    // 出力先が無くなった (ルーティングが変わった、音声を「なし」にした) ことを worker に知らせる
+    std::lock_guard lk(sources_mutex_);
+    for (auto& s : sources_) s->clear_output_delay();
 }
 
 void AsioOutput::set_mute(int ch, bool mute) {

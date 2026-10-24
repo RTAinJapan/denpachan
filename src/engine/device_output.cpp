@@ -79,6 +79,9 @@ void DeviceOutput::stop() {
     stop_ = true;
     SetEvent(stop_event_.get());
     if (thread_.joinable()) thread_.join();
+    // 出力先が無くなった (ルーティングが変わった、音声を「なし」にした) ことを worker に知らせる
+    std::lock_guard lk(sources_mutex_);
+    for (auto& s : sources_) s->clear_output_delay();
 }
 
 void DeviceOutput::set_mute(int ch, bool mute) {

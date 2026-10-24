@@ -119,6 +119,24 @@ public:
         start_fast_locked(now_());
     }
 
+    // engine の出力遅延が delta だけ変わった (デバイスを開き直した): 時間軸を同じだけ動かす。音声の余裕は変わらず、
+    // 映像は A/V を合わせるためにその分待つ (または早く出る)。残ったずれを 1 秒に 1 ms ずつ詰めて重複・間引きを続けないように
+    void shift_for_output_delay(int64_t delta_qpc) {
+        std::lock_guard lk(mutex_);
+        if (!anchored_ || delta_qpc == 0) return;
+        anchor_qpc_ += delta_qpc;
+        if (min_video_slack_ != LLONG_MAX) min_video_slack_ += delta_qpc;
+        if (std::llabs(delta_qpc) > qpc_from_ms(kEpochJumpMs)) ++jumps_;
+        debug_.push_back(fmt::format("playout: moved {:+.2f} ms (output delay changed)", qpc_to_us(delta_qpc) / 1000.0));
+    }
+
+    // 音声は届いているが、出力先が無い (engine の出力遅延が 0)。時間軸は音声の余裕で動かさない
+    // (「なし」にしただけで映像の遅延が変わらないように)。届いていることだけ覚える (audio_reported_within)
+    void note_audio_without_output() {
+        std::lock_guard lk(mutex_);
+        last_audio_report_qpc_ = now_();
+    }
+
     // 時間軸を一度に kEpochJumpMs を超えて動かした回数 (音声の書き手が epoch を進める)
     uint64_t jumps() {
         std::lock_guard lk(mutex_);

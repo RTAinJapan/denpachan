@@ -57,14 +57,19 @@ struct Case {
     std::function<double(int k, double t)> late_ms = [](int, double) { return 0.0; };
     // 届く時刻の揺れ: 0.5〜1.5 秒ごとに変わる ±jitter_ms の一様乱数 (決まった種)。窓 (1 秒) ごとの最小の余裕が揺れる
     double jitter_ms = 0;
+    // engine の出力遅延の変わり方 {時刻 (秒), 出力遅延 (ms)}。0 = 出力先なし (音声を「なし」にした)、それ以外は
+    // その遅延でデバイスを開き直す (WDM ↔ ASIO の切り替えなど)
+    std::vector<std::pair<double, double>> delay_changes = {};
     uint64_t max_slips = 0;
-    uint64_t max_resyncs = 0;  // 鳴らし始めた 1 回は数えない
+    uint64_t max_resyncs = 0;  // 鳴らし始めた 1 回は数えない (開き直したあとの鳴らし始めは数える)
     uint64_t min_resyncs = 0;
+    double max_moved_ms = 1e9;  // 時間軸 (映像も同じ) を鳴らし始めてから動かした量の合計 (向きによらず)
 };
 
 struct Result {
     uint64_t slips = 0;
     uint64_t resyncs = 0;
+    double moved_ms = 0;
     std::string last_resync;
     bool ok = false;
 };
@@ -93,8 +98,18 @@ Result run(const Case& c, int ch) {
     std::unique_ptr<engine::ChannelSource> source;
     engine::RouteOptions route;
     route.ch = ch;
-    auto open_device = [&] { source = std::make_unique<engine::ChannelSource>(route, audio::kSampleRate, 2, qpc_from_ms(kBaseDelayMs)); };
+    int64_t base_delay = qpc_from_ms(kBaseDelayMs);
+    // 開き直す前のデバイスの回数 (ChannelSource ごとに数えるので足しておく)
+    uint64_t done_slips = 0, done_resyncs = 0;
+    auto close_device = [&] {
+        if (!source) return;
+        done_slips += source->stats().slips.load();
+        done_resyncs += source->stats().resyncs.load();
+        source.reset();
+    };
+    auto open_device = [&] { source = std::make_unique<engine::ChannelSource>(route, audio::kSampleRate, 2, base_delay); };
     if (c.device_open_sec <= 0) open_device();
+    size_t next_change = 0;
     uint32_t rng = 12345;  // 到着の揺れ (決まった種の線形合同法)
     auto jitter = [&] {
         rng = rng * 1664525u + 1013904223u;
@@ -102,6 +117,9 @@ Result run(const Case& c, int ch) {
     };
     double jitter_now = jitter();
     double jitter_until = 0;  // 揺れの値を次に変える時刻 (送出元の時計、秒)
+    // 時間軸の動き: pts 0 を出すべき時刻が、鳴らし始めてからどれだけ動いたか (合計)
+    int64_t last_due0 = 0;
+    double moved_ms = 0;
 
     std::vector<float> chunk(size_t(kChunkFrames) * 2);
     std::vector<float> mix(size_t(kDeviceFrames) * 2);
@@ -134,15 +152,31 @@ Result run(const Case& c, int ch) {
             writer.write(1, pts_us, arrival, chunk.data(), kChunkFrames);
             ++k;
         }
-        if (!source && c.device_open_sec > 0 && t >= c.device_open_sec) {
+        if (!source && c.device_open_sec > 0 && t >= c.device_open_sec && next_change == 0) {
             open_device();
             render_start = next_render = g_now;
             renders = 0;
         }
+        if (next_change < c.delay_changes.size() && t >= c.delay_changes[next_change].first) {
+            const double ms = c.delay_changes[next_change++].second;
+            if (source && ms == 0) source->clear_output_delay();  // 出力先なし (engine がデバイスの出力を止めたとき)
+            close_device();
+            if (ms > 0) {
+                base_delay = qpc_from_us(int64_t(ms * 1000));
+                open_device();
+                render_start = next_render = g_now;
+                renders = 0;
+            }
+        }
+        if (started) {
+            const int64_t due0 = clock.due(1, 0, g_now);
+            if (last_due0 != 0) moved_ms += std::fabs(double(qpc_to_us(due0 - last_due0)) / 1000.0);
+            last_due0 = due0;
+        }
         // デバイス: 10 ms (デバイスの時計) ごとに描画する。これから書くバッファは kLeadMs 後に鳴る
         if (source && g_now >= next_render) {
             std::fill(mix.begin(), mix.end(), 0.0f);
-            source->render(mix.data(), kDeviceFrames, g_now + qpc_from_ms(kLeadMs), qpc_from_ms(kBaseDelayMs));
+            source->render(mix.data(), kDeviceFrames, g_now + qpc_from_ms(kLeadMs), base_delay);
             ++renders;
             next_render = render_start + qpc_from_us(int64_t(renders * device_sec / (1 + c.device_ppm * 1e-6) * 1e6));
             auto& st = source->stats();
@@ -154,8 +188,8 @@ Result run(const Case& c, int ch) {
             }
             if (!started && st.playing.load()) {
                 started = true;  // 鳴らし始めた。ここから数える
-                base_slips = st.slips.load();
-                base_resyncs = st.resyncs.load();
+                base_slips = done_slips + st.slips.load();
+                base_resyncs = done_resyncs + st.resyncs.load();
             }
         }
     }
@@ -164,16 +198,17 @@ Result run(const Case& c, int ch) {
         return r;
     }
     auto& st = source->stats();
-    r.slips = st.slips.load() - base_slips;
-    r.resyncs = st.resyncs.load() - base_resyncs;
+    r.slips = done_slips + st.slips.load() - base_slips;
+    r.resyncs = done_resyncs + st.resyncs.load() - base_resyncs;
+    r.moved_ms = moved_ms;
     {
         std::lock_guard lk(st.reason_mutex);
         r.last_resync = st.last_resync_reason;
     }
-    r.ok = r.slips <= c.max_slips && r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs;
-    std::printf("%s %s: slips %llu (max %llu), resyncs %llu (max %llu)%s%s\n", r.ok ? "OK  " : "FAIL", c.name.c_str(),
-                (unsigned long long)r.slips, (unsigned long long)c.max_slips, (unsigned long long)r.resyncs,
-                (unsigned long long)c.max_resyncs, r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
+    r.ok = r.slips <= c.max_slips && r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs && r.moved_ms <= c.max_moved_ms;
+    std::printf("%s %s: slips %llu (max %llu), resyncs %llu (max %llu), time base moved %.1f ms%s%s\n", r.ok ? "OK  " : "FAIL",
+                c.name.c_str(), (unsigned long long)r.slips, (unsigned long long)c.max_slips, (unsigned long long)r.resyncs,
+                (unsigned long long)c.max_resyncs, r.moved_ms, r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
     return r;
 }
 
@@ -237,6 +272,21 @@ int main(int argc, char** argv) {
          .jitter_ms = 5,
          .max_slips = 100,
          .max_resyncs = 4},
+        // 出力遅延が変わる (WDM → ASIO の切り替えなど。開き直したあとの鳴らし始めも 1 回と数える)
+        {.name = "output delay 32 -> 29 ms at 20 s",
+         .seconds = 60,
+         .jitter_ms = 5,
+         .delay_changes = {{20, 29}},
+         .max_slips = 100,
+         .max_resyncs = 2},
+        // 音声を「なし」にして戻す: なしの間は時間軸 (映像) を動かさない
+        {.name = "output delay 32 -> none -> 32 ms (20 s / 30 s)",
+         .seconds = 60,
+         .jitter_ms = 5,
+         .delay_changes = {{20, 0}, {30, 32}},
+         .max_slips = 100,
+         .max_resyncs = 2,
+         .max_moved_ms = 40},
     };
     bool ok = true;
     int ch = 1;
