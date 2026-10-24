@@ -10,16 +10,22 @@
 //   1 秒ごとに、余裕の最も小さかった側が目標 (映像: 再生バッファ + 揺れの備え、音声: 揺れの備え) になるように動かす。
 // - 方針: 見ている側に違和感の無い合わせ方にする。時間軸を一度に動かすと、engine はフェードして合わせ直し
 //   (音が数十 ms 途切れる)、映像は動かした分だけ止まるか飛ぶ。1 ms ずつ動かすと、engine はサンプルの重複・間引き
-//   (10 ms に 1 サンプルまで) で追い、映像も音声もほぼ分からない。重複・間引きの回数そのものに実害はほぼ無いので、
-//   回数を減らすために一度に動かす場面を増やさない。
-//   一度に動かすのは、時間軸を作った直後の最初の調整と、鳴らし始めてから / 出力先を変えてから kFastAdjustMs の間 (下)、
-//   それに音が間に合わないとき (遅れて届いた、映像が遅れた) と、遅延の余りが続いたときだけ。
-// - それ以外 (落ち着いた後) は、揺れに反応せず、本当にずれているときだけ 1 ms ずつ追う (送出元とのクロック差、揺れの備えを
-//   減らした分)。窓ごとの最小の余裕は到着の揺れで ±2〜4 ms 動くので、目標とのずれが kDeadbandMs 以下なら動かさない。
-//   幅を超えても、遅延が余っている側は kStepWindows 窓続いてから、足りない側 (余裕が減る向き) はすぐに 1 ms 動かす。
-//   どちらも前に動かしてから kStepWindows 窓は空ける (engine の重複・間引きが同じ向きに続いて合わせ直しにならないように)。
-//   幅を 2 ms にしていたときは、揺れのたびに ±1 ms ずつ行き来し (DVS で約 1 分 45 秒に 30 回以上)、同じ向きが重なると
-//   engine が 1 秒に数十回重複・間引きした。
+//   (10 ms に 1 サンプルまで) で追い、映像も音声もほぼ分からない。
+//   - すぐに直さないとどうしようもない大きさのずれは、一度に直す (1 回の短い乱れを許して、長く引きずらない)。
+//     時間軸を作った直後の最初の調整、鳴らし始めてから / 出力先を変えてから kFastAdjustMs の間 (下)、音が間に合わない
+//     とき (遅れて届いた、映像が遅れた)、遅延の余りが続いたとき。
+//   - 落ち着いた後は、揺れに反応して動かさない。本当にずれているときだけ 1 ms ずつ追う (下)。
+//   - DVS の停止・開始や出力先の切り替えの直後は、多少乱れてもよい (頻繁にする操作ではない)。その後に落ち着けばよい。
+//   重複・間引きの回数そのものに実害はほぼ無いので、回数を減らすために一度に動かす場面を増やさない。
+// - 落ち着いた後の 1 ms ずつの調整 (送出元とのクロック差、揺れの備えを減らした分): その窓のずれではなく、直近
+//   kHistoryWindows 窓のずれの最小 (揺れの悪い側の包絡。前の窓も今の時間軸と揺れの備えで計算し直す) で決める。
+//   包絡が kDeadbandMs を超えて足りなければ遅らせ、超えて余っていれば (= 直近の窓がすべて余っていれば) 詰める。
+//   前に動かしてから kStepWindows 窓は空ける (engine の重複・間引きが同じ向きに続いて合わせ直しにならないように)。
+//   - 窓ごとの最小の余裕は到着の揺れで ±2〜4 ms (大きな遅れの後は ±5〜20 ms) 動く。幅を 2 ms にしていたときは揺れの
+//     たびに ±1 ms ずつ行き来した (DVS で約 1 分 45 秒に 30 回以上)。その窓のずれで、足りない側だけすぐに動かすと、
+//     揺れが下に振れるたびに +1 ms し、数秒後に良い窓に釣られて −1 ms で戻した。足りない側も同じ向きが続くのを待つと、
+//     揺れの良い窓まで幅を超えるまで動かず、悪い窓が揺れの備えを超えて遅れた (200 ppm 遅い送出元)。
+//     包絡なら、悪い窓が幅の内側に収まった所で止まり、良い窓に釣られて戻らない。
 // - 鳴らし始めてすぐは、揺れの備えが増えたり engine の出力遅延が決まったりして、目標とのずれが大きく残りやすい。
 //   1 秒に 1 ms ずつ詰めると数十秒かかり、その間 engine は 1 秒に 48 サンプルずつ重複・間引きし続ける
 //   (DVS で起動直後に 900〜2,400 回)。そこで、時間軸を作ってから、または engine の出力遅延が変わってから
@@ -135,6 +141,7 @@ public:
         if (!anchored_ || delta_qpc == 0) return;
         anchor_qpc_ += delta_qpc;
         if (min_video_slack_ != LLONG_MAX) min_video_slack_ += delta_qpc;
+        history_count_ = 0;  // 音声の余裕と時間軸の関係が変わったので、前の窓とは比べない
         if (std::llabs(delta_qpc) > qpc_from_ms(kEpochJumpMs)) ++jumps_;
         debug_.push_back(fmt::format("playout: moved {:+.2f} ms (output delay changed)", qpc_to_us(delta_qpc) / 1000.0));
     }
@@ -200,7 +207,8 @@ private:
         ++generation_;
         settled_ = false;
         excess_windows_ = 0;
-        over_band_windows_ = 0;
+        history_count_ = 0;
+        windows_since_move_ = kStepWindows;
         // 接続直後はストリーム解析中に溜まったフレームがまとめて届く (到着が実際より遅く見える)。
         // その間の報告は使わず、落ち着いてから最初の窓を始める。
         window_start_qpc_ = now_() + qpc_from_ms(kSettleMs);
@@ -222,8 +230,7 @@ private:
             const int64_t limit = qpc_from_ms(kMaxStepMs);
             int64_t step = std::clamp(error, -limit, limit);
             excess_windows_ = error > jump ? excess_windows_ + 1 : 0;
-            const int64_t band = qpc_from_ms(kDeadbandMs);
-            over_band_windows_ = error > band ? over_band_windows_ + 1 : 0;
+            push_history_locked();
             ++windows_since_move_;
             const char* reason = "";
             const int64_t fast_step = fast_step_locked(error, now, video_error < -jump && video_error <= audio_error);
@@ -245,11 +252,6 @@ private:
                 excess_windows_ = 0;
                 reason = "catch up";
                 log_.push_back(fmt::format("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(error) / 1000.0));
-            } else if (std::abs(error) <= band) {
-                // 1 秒ごとの最小の揺れには反応しない (反応すると時間軸が 1 秒に 1 ms ずつ行き来し続け、
-                // engine がそれを追うサンプルの重複・間引きが絶えない)
-                step = 0;
-                reason = "deadband";
             } else if (video_error < -jump && video_error <= audio_error) {
                 // 映像が 3 フレームを超えて遅れた: 一度に遅らせ、備えを増やす (音声は合わせ直しになる)
                 step = video_error;
@@ -257,15 +259,23 @@ private:
                 reason = "video late";
                 log_.push_back(fmt::format("playout: video arrived {:.1f} ms late; delay increased, video headroom {:.0f} ms",
                                            qpc_to_us(-video_error) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
-            } else if (error > 0 ? over_band_windows_ < kStepWindows : windows_since_move_ < kStepWindows) {
-                // 遅延が余っている: kStepWindows 窓続くまで待つ (揺れで一時的に余裕が大きく見えただけかもしれない。余っても
-                // 遅延が少し大きいだけ)。足りない: 窓の最小は揺れの悪い側なので待たないが、前に動かしてから kStepWindows 窓は空ける
-                step = 0;
-                reason = "wait";
             } else {
-                // クロック差、揺れの備えを減らした分: 1 ms 動かす
-                over_band_windows_ = 0;
-                reason = "step";
+                // 落ち着いた後: その窓のずれではなく、直近 kHistoryWindows 窓のずれの最小 (揺れの悪い側の包絡) で決める。
+                // 足りない側は、悪い窓が幅の内側に収まるまで 1 ms ずつ遅らせる。余っている側は、直近の窓がすべて幅を
+                // 超えて余っているときだけ詰める。揺れの良い窓に釣られて詰め、次の悪い窓でまた遅らせる、の行き来をしない
+                const int64_t envelope = history_envelope_locked();
+                const int64_t band = qpc_from_ms(kDeadbandMs);
+                step = std::clamp(envelope, -limit, limit);
+                if (envelope == LLONG_MAX || history_count_ < kStepWindows || std::llabs(envelope) <= band) {
+                    step = 0;
+                    reason = "deadband";
+                } else if (windows_since_move_ < kStepWindows) {
+                    step = 0;  // 前に動かしてから kStepWindows 窓は空ける
+                    reason = "wait";
+                } else {
+                    // クロック差、揺れの備えを減らした分、悪い窓が幅を超えた分: 1 ms 動かす
+                    reason = "step";
+                }
             }
             if (std::abs(step) > qpc_from_ms(kEpochJumpMs) && settled_) ++jumps_;
             // 1 秒ごとの要約 (debug): 時間軸を動かした量と理由。engine の重複・間引きと並べて見る
@@ -282,6 +292,27 @@ private:
         window_start_qpc_ = now;
         min_video_slack_ = LLONG_MAX;
         min_audio_slack_ = LLONG_MAX;
+    }
+
+    // この窓の最小の余裕を、時間軸によらない形 (余裕 - anchor_qpc_) で覚える。時間軸を動かしても、遅れて届いて遅らせても、
+    // 揺れの備えが変わっても、前の窓のずれを今の時間軸で計算し直せる (history_envelope_locked)
+    void push_history_locked() {
+        auto& w = history_[history_next_];
+        w.video = min_video_slack_ != LLONG_MAX ? min_video_slack_ - anchor_qpc_ : LLONG_MAX;
+        w.audio = min_audio_slack_ != LLONG_MAX ? min_audio_slack_ - anchor_qpc_ : LLONG_MAX;
+        history_next_ = (history_next_ + 1) % kHistoryWindows;
+        history_count_ = std::min(history_count_ + 1, kHistoryWindows);
+    }
+
+    // 直近の窓の、今の時間軸と揺れの備えでの目標とのずれの最小 (LLONG_MAX = 報告なし)
+    int64_t history_envelope_locked() const {
+        int64_t envelope = LLONG_MAX;
+        for (int i = 0; i < history_count_; ++i) {
+            const auto& w = history_[(history_next_ + kHistoryWindows - 1 - i) % kHistoryWindows];
+            if (w.video != LLONG_MAX) envelope = std::min(envelope, w.video + anchor_qpc_ - buffer_ - video_headroom_);
+            if (w.audio != LLONG_MAX) envelope = std::min(envelope, w.audio + anchor_qpc_ - audio_headroom_);
+        }
+        return envelope;
     }
 
     void start_fast_locked(int64_t now) {
@@ -330,11 +361,13 @@ private:
     // 鳴り始めてからは、目標とのずれがこれ以下なら動かさない。窓 (1 秒) ごとの最小の余裕は、到着の揺れで ±2〜4 ms 動く
     // (DVS + RTMP の実測)。2 ms では揺れのたびに 1 ms ずつ行き来し、同じ向きが重なると engine が 1 秒に数十回重複・間引きした
     static constexpr int64_t kDeadbandMs = 5;
-    // 幅を超えて 1 ms 動かすのは、遅延が余っているときはこの窓数続いてから (揺れが続けて余る側に幅を超えるのはまれ)、
-    // 足りないときはすぐに。どちらも前に動かしてからこの窓数は空ける。追える速さは 3 秒に 1 ms (333 ppm) で、設計で追う
-    // クロック差 200 ppm (1 秒に 0.2 ms) を超える。毎秒続けて動かすと、engine の重複・間引きが 1 秒に 48 回になり、
+    // 1 ms ずつ動かすのは、前に動かしてからこの窓数空けてから (直近の窓もこの数は要る)。追える速さは 3 秒に 1 ms (333 ppm) で、
+    // 設計で追うクロック差 200 ppm (1 秒に 0.2 ms) を超える。毎秒続けて動かすと、engine の重複・間引きが 1 秒に 48 回になり、
     // 2 秒続くと合わせ直しになる (ChannelSource の kSlipRateResync)
     static constexpr int kStepWindows = 3;
+    // 落ち着いた後の 1 ms ずつの調整は、直近のこの窓数のずれの最小で決める (揺れの悪い側の包絡)。短いと揺れの悪い窓が
+    // 抜けたときに余っていると見て詰めてしまい、長いとクロック差の後追いが遅れる (200 ppm で 10 秒に 2 ms)
+    static constexpr int kHistoryWindows = 10;
     // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す
     static constexpr int kCatchUpWindows = 2;
     static constexpr int64_t kAudioHeadroomMinMs = 10;  // 音声の揺れの備え (最初の値と下限)
@@ -359,9 +392,15 @@ private:
     int64_t min_video_slack_ = LLONG_MAX;
     int64_t min_audio_slack_ = LLONG_MAX;
     int64_t frame_us_ = 16'667;
-    int excess_windows_ = 0;                  // 遅延の余りが 3 フレームを超えた窓が続いた数
-    int over_band_windows_ = 0;               // 遅延の余りが幅を超えた窓が続いた数
-    int windows_since_move_ = kStepWindows;   // 前に時間軸を動かしてからの窓の数
+    int excess_windows_ = 0;  // 遅延の余りが 3 フレームを超えた窓が続いた数
+    struct WindowSlack {
+        int64_t video = LLONG_MAX;  // 窓の最小の余裕 - anchor_qpc_ (push_history_locked)
+        int64_t audio = LLONG_MAX;
+    };
+    WindowSlack history_[kHistoryWindows];  // 直近の窓 (環状)
+    int history_next_ = 0;
+    int history_count_ = 0;
+    int windows_since_move_ = kStepWindows;   // 前に時間軸を 1 ms ずつの調整などで動かしてからの窓の数
     std::vector<std::string> log_;            // ロックを外してから書くログ (flush_log)
     std::vector<std::string> debug_;          // 同じく debug のログ
     int64_t fast_until_qpc_ = 0;              // この時刻までは、大きなずれを一度に詰める

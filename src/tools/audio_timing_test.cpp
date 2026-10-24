@@ -67,6 +67,8 @@ struct Case {
     double max_moved_ms = 1e9;  // 時間軸 (映像も同じ) を鳴らし始めてから動かした量の合計 (向きによらず)
     // 落ち着いた後 (kSettledSec 以降) に時間軸を動かした回数の上限。揺れだけなら動かさない
     int max_moves = 1'000'000;
+    // 落ち着いた後に、前と逆向きに動かした回数の上限 (揺れでの +1/−1 の行き来)。クロック差や揺れの備えを減らした分は同じ向き
+    int max_reversals = 1'000'000;
 };
 
 constexpr double kSettledSec = 15;  // これより後を「落ち着いた後」として数える
@@ -76,6 +78,7 @@ struct Result {
     uint64_t resyncs = 0;
     double moved_ms = 0;
     int moves = 0;                   // 落ち着いた後に時間軸を動かした回数
+    int reversals = 0;               // そのうち、前に動かしたのと逆向きのもの
     double min_slack_ms = 1e9;       // 落ち着いた後の音声の余裕 (鳴らすべき時刻 - 出力遅延 - 到着) の最小
     double max_window_slack_ms = 0;  // 同じく、1 秒ごとの最小の余裕の最大 (遅延が余っている分)
     std::string last_resync;
@@ -127,6 +130,7 @@ Result run(const Case& c, int ch) {
     double jitter_until = 0;  // 揺れの値を次に変える時刻 (送出元の時計、秒)
     // 時間軸の動き: pts 0 を出すべき時刻が、鳴らし始めてからどれだけ動いたか (合計)
     int64_t last_due0 = 0;
+    int last_dir = 0;  // 前に動かした向き
     double moved_ms = 0;
     double window_slack_ms = 1e9;  // 今の 1 秒の最小の余裕
     double window_until = kSettledSec + 1;
@@ -186,7 +190,14 @@ Result run(const Case& c, int ch) {
         if (started) {
             const int64_t due0 = clock.due(1, 0, g_now);
             if (last_due0 != 0) moved_ms += std::fabs(double(qpc_to_us(due0 - last_due0)) / 1000.0);
-            if (last_due0 != 0 && due0 != last_due0 && t >= kSettledSec) ++r.moves;
+            if (last_due0 != 0 && due0 != last_due0) {
+                const int dir = due0 > last_due0 ? 1 : -1;
+                if (t >= kSettledSec) {
+                    ++r.moves;
+                    if (last_dir != 0 && dir != last_dir) ++r.reversals;
+                    last_dir = dir;  // 落ち着く前の動き (開始直後の遅れなど) とは比べない
+                }
+            }
             last_due0 = due0;
         }
         if (t >= window_until) {
@@ -227,12 +238,12 @@ Result run(const Case& c, int ch) {
         r.last_resync = st.last_resync_reason;
     }
     r.ok = r.slips <= c.max_slips && r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs && r.moved_ms <= c.max_moved_ms &&
-           r.moves <= c.max_moves;
+           r.moves <= c.max_moves && r.reversals <= c.max_reversals;
     std::printf(
-        "%s %s: slips %llu (max %llu), resyncs %llu (max %llu), time base moved %.1f ms, %d moves after %.0f s, "
+        "%s %s: slips %llu (max %llu), resyncs %llu (max %llu), time base moved %.1f ms, %d moves after %.0f s (%d reversed), "
         "audio slack after that %.1f ms min / %.1f ms max of 1 s minimums%s%s\n",
         r.ok ? "OK  " : "FAIL", c.name.c_str(), (unsigned long long)r.slips, (unsigned long long)c.max_slips, (unsigned long long)r.resyncs,
-        (unsigned long long)c.max_resyncs, r.moved_ms, r.moves, kSettledSec, r.min_slack_ms, r.max_window_slack_ms,
+        (unsigned long long)c.max_resyncs, r.moved_ms, r.moves, kSettledSec, r.reversals, r.min_slack_ms, r.max_window_slack_ms,
         r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
     return r;
 }
@@ -293,7 +304,13 @@ int main(int argc, char** argv) {
         // それで時間軸を一度に行き来させない
         // 落ち着いた後の揺れ (実機の DVS で窓ごとに ±2〜4 ms): 揺れに反応して時間軸を 1 ms ずつ行き来させない。
         // クロック差は、揺れがあっても合わせ直しなしで追う
-        {.name = "arrivals jitter +-4 ms for 5 min", .seconds = 300, .jitter_ms = 4, .max_slips = 1000, .max_resyncs = 0, .max_moves = 5},
+        {.name = "arrivals jitter +-4 ms for 5 min",
+         .seconds = 300,
+         .jitter_ms = 4,
+         .max_slips = 1000,
+         .max_resyncs = 0,
+         .max_moves = 5,
+         .max_reversals = 0},
         // 開始直後に増えた揺れの備えは 30 秒に 1 ms ずつ減る。減った分 (5 分で約 9 ms) は、幅を超えてから 1 ms ずつ詰める
         {.name = "arrivals jitter +-4 ms for 5 min, late arrivals right after start",
          .seconds = 300,
@@ -301,31 +318,43 @@ int main(int argc, char** argv) {
          .jitter_ms = 4,
          .max_slips = 1000,
          .max_resyncs = 4,
-         .max_moves = 10},
+         .max_moves = 10,
+         .max_reversals = 0},
+        {.name = "arrivals jitter +-8 ms for 5 min",
+         .seconds = 300,
+         .jitter_ms = 8,
+         .max_slips = 1000,
+         .max_resyncs = 1,
+         .max_moves = 5,
+         .max_reversals = 0},
         {.name = "arrivals jitter +-4 ms, sender clock 150 ppm fast",
          .seconds = 300,
          .sender_ppm = 150,
          .jitter_ms = 4,
          .max_slips = 3000,
-         .max_resyncs = 0},
+         .max_resyncs = 0,
+         .max_reversals = 0},
         {.name = "arrivals jitter +-4 ms, sender clock 200 ppm fast",
          .seconds = 300,
          .sender_ppm = 200,
          .jitter_ms = 4,
          .max_slips = 4000,
-         .max_resyncs = 0},
+         .max_resyncs = 0,
+         .max_reversals = 0},
         {.name = "arrivals jitter +-4 ms, sender clock 200 ppm slow",
          .seconds = 300,
          .sender_ppm = -200,
          .jitter_ms = 4,
          .max_slips = 4000,
-         .max_resyncs = 0},
+         .max_resyncs = 0,
+         .max_reversals = 0},
         {.name = "arrivals jitter +-4 ms, device clock 200 ppm fast",
          .seconds = 300,
          .device_ppm = 200,
          .jitter_ms = 4,
          .max_slips = 4000,
-         .max_resyncs = 0},
+         .max_resyncs = 0,
+         .max_reversals = 0},
         {.name = "arrivals jitter +-5 ms", .seconds = 60, .jitter_ms = 5, .max_slips = 100, .max_resyncs = 2},
         {.name = "arrivals jitter +-5 ms, late arrivals right after start",
          .seconds = 60,
