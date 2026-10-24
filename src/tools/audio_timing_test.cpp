@@ -69,6 +69,11 @@ struct Case {
     int max_moves = 1'000'000;
     // 落ち着いた後に、前と逆向きに動かした回数の上限 (揺れでの +1/−1 の行き来)。クロック差や揺れの備えを減らした分は同じ向き
     int max_reversals = 1'000'000;
+    // 遅延 (時間軸) の増え方: delay_check = {前の時刻, 後の時刻} (秒) の間に遅延が増えた量の上限
+    std::pair<double, double> delay_check = {0, 0};
+    double max_delay_growth_ms = 1e9;
+    // 落ち着いた後 (kSettledSec 以降) に、遅れて届いた (余裕が負の) かたまりの数の上限
+    int max_late_chunks = 1'000'000;
 };
 
 constexpr double kSettledSec = 15;  // これより後を「落ち着いた後」として数える
@@ -79,6 +84,8 @@ struct Result {
     double moved_ms = 0;
     int moves = 0;                   // 落ち着いた後に時間軸を動かした回数
     int reversals = 0;               // そのうち、前に動かしたのと逆向きのもの
+    int late_chunks = 0;             // 落ち着いた後に遅れて届いたかたまりの数
+    double delay_growth_ms = 0;      // delay_check の間に遅延が増えた量
     double min_slack_ms = 1e9;       // 落ち着いた後の音声の余裕 (鳴らすべき時刻 - 出力遅延 - 到着) の最小
     double max_window_slack_ms = 0;  // 同じく、1 秒ごとの最小の余裕の最大 (遅延が余っている分)
     std::string last_resync;
@@ -130,7 +137,8 @@ Result run(const Case& c, int ch) {
     double jitter_until = 0;  // 揺れの値を次に変える時刻 (送出元の時計、秒)
     // 時間軸の動き: pts 0 を出すべき時刻が、鳴らし始めてからどれだけ動いたか (合計)
     int64_t last_due0 = 0;
-    int last_dir = 0;  // 前に動かした向き
+    int last_dir = 0;                         // 前に動かした向き
+    int64_t due0_before = 0, due0_after = 0;  // delay_check の時刻の時間軸
     double moved_ms = 0;
     double window_slack_ms = 1e9;  // 今の 1 秒の最小の余裕
     double window_until = kSettledSec + 1;
@@ -163,10 +171,12 @@ Result run(const Case& c, int ch) {
                 chunk[2 * size_t(i) + 1] = v;
             }
             const int64_t pts_us = int64_t(double(k) * kChunkFrames * 1e6 / audio::kSampleRate);
+            // 余裕は書く前の時間軸で測る (遅れて届くと、書き手が時間軸をその分すぐ遅らせる)
+            const double slack = double(qpc_to_us(clock.due(1, pts_us, arrival) - base_delay - arrival)) / 1000.0;
             writer.write(1, pts_us, arrival, chunk.data(), kChunkFrames);
             if (started && t >= kSettledSec) {
-                const double slack = double(qpc_to_us(clock.due(1, pts_us, arrival) - base_delay - arrival)) / 1000.0;
                 r.min_slack_ms = std::min(r.min_slack_ms, slack);
+                if (slack < 0) ++r.late_chunks;
                 window_slack_ms = std::min(window_slack_ms, slack);
             }
             ++k;
@@ -199,6 +209,10 @@ Result run(const Case& c, int ch) {
                 }
             }
             last_due0 = due0;
+            if (c.delay_check.second > 0) {
+                if (due0_before == 0 && t >= c.delay_check.first) due0_before = due0;
+                if (due0_after == 0 && t >= c.delay_check.second) due0_after = due0;
+            }
         }
         if (t >= window_until) {
             if (window_slack_ms < 1e9) r.max_window_slack_ms = std::max(r.max_window_slack_ms, window_slack_ms);
@@ -233,18 +247,23 @@ Result run(const Case& c, int ch) {
     r.slips = done_slips + st.slips.load() - base_slips;
     r.resyncs = done_resyncs + st.resyncs.load() - base_resyncs;
     r.moved_ms = moved_ms;
+    if (due0_before != 0 && due0_after != 0) r.delay_growth_ms = double(qpc_to_us(due0_after - due0_before)) / 1000.0;
     {
         std::lock_guard lk(st.reason_mutex);
         r.last_resync = st.last_resync_reason;
     }
     r.ok = r.slips <= c.max_slips && r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs && r.moved_ms <= c.max_moved_ms &&
-           r.moves <= c.max_moves && r.reversals <= c.max_reversals;
+           r.moves <= c.max_moves && r.reversals <= c.max_reversals && r.late_chunks <= c.max_late_chunks &&
+           r.delay_growth_ms <= c.max_delay_growth_ms;
+    const std::string delay = c.delay_check.second > 0 ? fmt::format(", delay grew {:+.1f} ms from {:.0f} s to {:.0f} s", r.delay_growth_ms,
+                                                                     c.delay_check.first, c.delay_check.second)
+                                                       : "";
     std::printf(
         "%s %s: slips %llu (max %llu), resyncs %llu (max %llu), time base moved %.1f ms, %d moves after %.0f s (%d reversed), "
-        "audio slack after that %.1f ms min / %.1f ms max of 1 s minimums%s%s\n",
+        "audio slack after that %.1f ms min / %.1f ms max of 1 s minimums, %d late chunks%s%s%s\n",
         r.ok ? "OK  " : "FAIL", c.name.c_str(), (unsigned long long)r.slips, (unsigned long long)c.max_slips, (unsigned long long)r.resyncs,
         (unsigned long long)c.max_resyncs, r.moved_ms, r.moves, kSettledSec, r.reversals, r.min_slack_ms, r.max_window_slack_ms,
-        r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
+        r.late_chunks, delay.c_str(), r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
     return r;
 }
 
@@ -258,7 +277,8 @@ int main(int argc, char** argv) {
     spdlog::set_pattern("  %v");
 
     // 鳴らし始めた直後に、届くのが何度か止まり、止まっていた分がまとめて届く (RTMP pull の起動直後。
-    // 揺れの備えが 10 ms から 45 ms ほどまで増える)。stalls: {止まり始める時刻 (秒), 止まる長さ (ms)}
+    // 揺れの備えが 10 ms から 45 ms ほどまで増え、60 秒遅れて届かなければ一度に下げる: 合わせ直しが 1 回増える)。
+    // stalls: {止まり始める時刻 (秒), 止まる長さ (ms)}
     auto stalls = [](std::vector<std::pair<double, double>> list) {
         return [list](int, double sent) {
             const double at = sent + kNetDelayMs / 1000.0;  // いつもなら届く時刻
@@ -278,13 +298,13 @@ int main(int argc, char** argv) {
          .seconds = 90,
          .late_ms = startup_late,
          .max_slips = 100,
-         .max_resyncs = 3},
+         .max_resyncs = 4},
         {.name = "late arrivals right after start, with 24 ppm drift",
          .seconds = 90,
          .sender_ppm = 24,
          .late_ms = startup_late,
          .max_slips = 300,
-         .max_resyncs = 3},
+         .max_resyncs = 4},
         {.name = "device opens 5 s after the stream started", .seconds = 60, .device_open_sec = 5, .max_slips = 100, .max_resyncs = 3},
         // 設計で追うクロック差 (200 ppm) より大きい場合: 時間軸は 3 秒に 1 ms (333 ppm) までしか追わない
         // (毎秒動かすと engine の重複・間引きが 1 秒に 48 回になり、2 秒続くと合わせ直しになる)。追いきれない遅延の余りは
@@ -327,6 +347,23 @@ int main(int argc, char** argv) {
          .max_resyncs = 1,
          .max_moves = 5,
          .max_reversals = 0},
+        // ネットワークの大きな遅れ (途切れ 900 ms と、その後のまとめ届きの遅れ): 時間軸はすぐ遅らせ、余りは一度に戻す。
+        // 揺れの備えは途切れで増やさない (増やすと、30 秒に 1 ms ずつしか減らず、約 1 時間遅延が 100 ms 以上多いままだった)
+        {.name = "arrivals jitter +-4 ms, a 900 ms outage at 60 s",
+         .seconds = 240,
+         .late_ms = stalls({{60.0, 900}, {61.5, 25}, {62.5, 42}}),
+         .jitter_ms = 4,
+         .max_slips = 1000,
+         .max_resyncs = 3,
+         .delay_check = {55, 180},
+         .max_delay_growth_ms = 20},
+        // 揺れが本当に大きい回線 (±30 ms が続く): 揺れの備えはそれに合った大きさに保ち、遅れて届くのを続けない
+        {.name = "arrivals jitter +-30 ms for 5 min",
+         .seconds = 300,
+         .jitter_ms = 30,
+         .max_slips = 3000,
+         .max_resyncs = 10,
+         .max_late_chunks = 200},
         {.name = "arrivals jitter +-4 ms, sender clock 150 ppm fast",
          .seconds = 300,
          .sender_ppm = 150,
