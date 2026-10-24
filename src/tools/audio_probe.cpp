@@ -1,9 +1,9 @@
 // audio_probe: 入力デバイスから録音して、音声出力の試験結果を判定する開発用ツール。
 //
-// VB-Audio Virtual Cable などのループバック用デバイスと組み合わせて使う
-// (engine の出力先を "CABLE Input" にして、この probe で "CABLE Output" を録る)。
+// ループバック用のデバイスと組み合わせて使う (例: VB-Audio Virtual Cable なら、engine の出力先を "CABLE Input" にして、
+// この probe で "CABLE Output" を録る)。録るデバイスは --dev で必ず指定する (決まったデバイス名を前提にしない)。
 //
-//   audio_probe --dev "CABLE Output" --seconds 20 [--start 1] [--wav out.wav]
+//   audio_probe --dev <録るデバイス名> --seconds 20 [--start 1] [--wav out.wav]
 //
 // 判定するもの:
 // - 有音 / 無音の区間 (無音への切り替わりがフェードかどうか)
@@ -33,7 +33,7 @@ constexpr double kGlitchThreshold = 0.02;
 constexpr double kActiveDbfs = -50.0;
 
 struct Options {
-    std::wstring device = L"CABLE Output";
+    std::wstring device;  // --dev (必須)
     double seconds = 10;
     int start = 1;  // 調べるチャンネル (L)。R = start + 1
     std::wstring wav;
@@ -73,6 +73,10 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--seconds") o.seconds = std::stod(v);
         else if (a == L"--start") o.start = std::stoi(v);
         else if (a == L"--wav") o.wav = v;
+    }
+    if (o.device.empty()) {
+        std::fprintf(stderr, "usage: audio_probe --dev <capture device> [--seconds 20] [--start 1] [--wav out.wav]\n");
+        return 2;
     }
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
