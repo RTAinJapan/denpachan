@@ -1,11 +1,15 @@
 using System.Globalization;
+using System.Text;
 
 namespace Denpachan.Ui.Infrastructure;
 
 /// <summary>
-/// 名前の自然順 (数字の部分は数として比べる。大文字小文字は区別しない)。
+/// 名前の自然順 (数字の部分は数として比べる。大文字小文字と、空白の数は区別しない)。
 /// 音声デバイスの一覧で、DVS 4.5 の「DVS Transmit 1-2」「3-4」…「15-16」を番号の順に並べるため
-/// (文字の順では 1-2、11-12、13-14、15-16、3-4… になる)。
+/// (文字の順では 1-2、11-12、13-14、15-16、3-4… になる)。DVS は桁をそろえるため 1〜9 番台を
+/// 「DVS Transmit␠␠1-2」(空白 2 つ)、10 番台を「DVS Transmit␠11-12」(空白 1 つ) にしているので、
+/// 比べる前に空白の連続を 1 つにまとめ、前後の空白を捨てる。それでも同じなら元の文字列で順を決める。
+/// 表示する名前と設定に書く名前は変えない (デバイスは名前の完全一致で探す)。
 /// </summary>
 public sealed class NaturalOrder : IComparer<string>
 {
@@ -16,6 +20,31 @@ public sealed class NaturalOrder : IComparer<string>
         if (ReferenceEquals(x, y)) return 0;
         if (x == null) return -1;
         if (y == null) return 1;
+        var c = CompareNormalized(Normalize(x), Normalize(y));
+        return c != 0 ? c : string.CompareOrdinal(x, y);
+    }
+
+    /// <summary>空白の連続を空白 1 つにまとめ、前後の空白を捨てる</summary>
+    private static string Normalize(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        var space = false;
+        foreach (var ch in s.Trim())
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                space = true;
+                continue;
+            }
+            if (space) sb.Append(' ');
+            space = false;
+            sb.Append(ch);
+        }
+        return sb.ToString();
+    }
+
+    private static int CompareNormalized(string x, string y)
+    {
         int i = 0, j = 0;
         while (i < x.Length && j < y.Length)
         {
