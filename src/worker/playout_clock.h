@@ -244,9 +244,13 @@ private:
             const int64_t jump = qpc_from_us(frame_us_ * 3);
             const int64_t limit = qpc_from_ms(kMaxStepMs);
             int64_t step = std::clamp(error, -limit, limit);
-            excess_windows_ = error > jump ? excess_windows_ + 1 : 0;
             push_history_locked();
             ++windows_since_move_;
+            // 遅延の余りは、その窓だけでなく直近の窓すべてで見る (揺れの良い窓が続いただけで一度に戻さない。揺れが ±30 ms の
+            // 回線では、良い窓のずれが 3 フレームを超え、戻した直後に遅れて届くのを繰り返した)。途切れのあとは、前の窓も
+            // 遅らせた時間軸で計算し直すので、包絡も余っている
+            const int64_t excess = std::min(error, history_envelope_locked());
+            excess_windows_ = excess > jump ? excess_windows_ + 1 : 0;
             const char* reason = "";
             const int64_t fast_step = fast_step_locked(error, now, video_error < -jump && video_error <= audio_error);
             if (!settled_) {
@@ -263,10 +267,10 @@ private:
                                            qpc_to_us(-step) / 1000.0));
             } else if (excess_windows_ >= kCatchUpWindows) {
                 // 遅延の余りが続いている (短い途切れのあとのまとめ届きなど): 一度に戻す
-                step = error;
+                step = excess;
                 excess_windows_ = 0;
                 reason = "catch up";
-                log_.push_back(fmt::format("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(error) / 1000.0));
+                log_.push_back(fmt::format("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(excess) / 1000.0));
             } else if (const int64_t cut = review_headroom_locked(now); cut > 0) {
                 // 揺れの備えを、実際の揺れに合わせて一度に下げた (review_headroom_locked): 余った遅延も一度に詰める
                 // (engine は 1 回合わせ直す)。映像側の余裕が足りなければ、その分は詰めない
@@ -436,9 +440,11 @@ private:
     // 設計で追うクロック差 200 ppm (1 秒に 0.2 ms) を超える。毎秒続けて動かすと、engine の重複・間引きが 1 秒に 48 回になり、
     // 2 秒続くと合わせ直しになる (ChannelSource の kSlipRateResync)
     static constexpr int kStepWindows = 3;
-    // 落ち着いた後の 1 ms ずつの調整は、直近のこの窓数のずれの最小で決める (揺れの悪い側の包絡)。短いと揺れの悪い窓が
-    // 抜けたときに余っていると見て詰めてしまい、長いとクロック差の後追いが遅れる (200 ppm で 10 秒に 2 ms)
-    static constexpr int kHistoryWindows = 10;
+    // 落ち着いた後の 1 ms ずつの調整と遅延の余り (caught up) は、直近のこの窓数のずれの最小で決める (揺れの悪い側の包絡)。
+    // 短いと、揺れの悪い窓が抜けたときに余っていると見て詰め、次の悪い窓でまた遅らせる (10 窓では、揺れ ±30 ms の回線で
+    // 5 分に 9 回行き来した)。長いと、余っている側の後追いが遅れる (200 ppm 速い送出元で 30 秒に 6 ms。遅延が少し大きいだけ)。
+    // 足りない側は、悪い窓が入った時点で包絡が下がるので、長くしても遅れない
+    static constexpr int kHistoryWindows = 30;
     // 遅延の余り (3 フレーム超) がこの回数続いたら一度に戻す
     static constexpr int kCatchUpWindows = 2;
     static constexpr int64_t kAudioHeadroomMinMs = 10;  // 音声の揺れの備え (最初の値と下限)
