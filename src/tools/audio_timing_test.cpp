@@ -1,23 +1,29 @@
 // 音声の時間軸の試験 (音声デバイスなし)。設計書 §6.3。
 //
 // worker の書き手 (AudioWriter + PlayoutClock、A/V 同期) と engine の読み手 (ChannelSource) を、仮想の時計で動かす。
-// 送出元から音声のかたまり (AAC の 1024 サンプル) が届き、デバイスが 10 ms ごとに描画する。場合ごとに、
-// 鳴らし始めてからの重複・間引きと合わせ直しの回数、落ち着いた後 (kSettledSec 以降) に時間軸を動かした回数を数え、
-// 上限を超えたら終了コード 1。重複・間引きの上限は、桁が変わっていないかを見るためのもの (回数そのものに実害はほぼ無い)。
+// 送出元から音声のかたまり (AAC の 1024 サンプル) と、場合によっては映像のフレーム (60 fps) が届き、デバイスが 10 ms ごとに
+// 描画する。届き方は回線のモデル (揺れ、裾の重い揺れ、途切れ、欠落、帯域不足、映像だけの遅れ) を組み合わせて決める。
+// 場合ごとに、合わせ直し・音切れの回数、落ち着いた後に時間軸を動かした回数と行き来の回数、音声の遅延と揺れの備え、
+// 乱れが止んでから遅延が戻るまでの時間を数え、条件を外れたら終了コード 1。重複・間引きの上限は、桁が変わっていないかを
+// 見るためのもの (回数そのものに実害はほぼ無い)。乱数を使う場合は、種を変えて何度か回し、すべてで条件を満たすことを求める。
 //
-//   audio_timing_test            すべての場合
-//   audio_timing_test -v         時間軸の動き (worker の debug ログ) も出す
-//   audio_timing_test -v N       N 番目 (1 始まり) の場合だけ
+//   audio_timing_test                 すべての場合
+//   audio_timing_test -v              時間軸の動き (worker の debug ログ) も出す
+//   audio_timing_test -v N            N 番目 (1 始まり) の場合だけ
+//   audio_timing_test --csv DIR       場合・種ごとに 1 秒ごとの CSV を DIR に書く (列は write_csv)
 //
 // 音声リングは engine と同じ名前の共有メモリ (Local\denpachan_audio_N) を使うので、denpachan が動いているときは回さない
 // (動いていれば、その共有メモリがすでにあるので止める)。
 
+#include <spdlog/sinks/callback_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -40,13 +46,27 @@ using namespace denpachan;
 int64_t g_now = 0;  // 仮想の時計 (QPC)
 bool g_verbose = false;
 int64_t fake_now() { return g_now; }
+std::vector<std::string> g_log;  // worker のログ (この 1 秒の分。時間軸を動かした理由を CSV に書く)
 
 constexpr int kChunkFrames = 1024;     // AAC の 1 かたまり
-constexpr int kDeviceFrames = 480;     // デバイスの 1 回の描画 (10 ms)
 constexpr int64_t kNetDelayMs = 30;    // 送出元から届くまで
-constexpr int64_t kLeadMs = 10;        // デバイスで、これから書くバッファが鳴るまで (共有モードの padding)
-constexpr int64_t kBaseDelayMs = 32;   // engine の基本遅延 (バッファ 22 ms + 余裕 10 ms。DVS の実測)
 constexpr int kPlayoutBufferMs = 100;  // チャンネルの再生バッファ (既定)
+constexpr int64_t kFrameUs = 16'667;   // 映像 60 fps
+// 映像は、同じ pts の音声より早く届く。実機 (DVS + RTMP) で、時間軸を決めていたのは音声で、映像側の目標との余りは
+// +60〜76 ms だった (再生バッファ 100 ms、音声の出力遅延 32 ms + 揺れの備え 10 ms から、約 120 ms 早い)
+constexpr int64_t kVideoLeadMs = 120;
+constexpr double kQuietSec = 60;  // 乱れが止んでから、これだけ経てば「落ち着いた後」
+
+// 到着の遅れ (ms)。k: かたまりの番号 (映像は -1)、sent: 送った時刻 (送出元の時計、秒)、seed: 乱数の種
+using LateFn = std::function<double(int k, double sent, uint32_t seed)>;
+
+// デバイスがデータを取る仕方
+enum class Consume {
+    Steady,     // 1 ms ごとに少しずつ (排他モード・ASIO の短い周期)
+    Blocks,     // 10 ms ごとにまとめて (共有モードの既定の周期。DVS もこれ)
+    Irregular,  // 10 ms ごとだが、取る時刻が ±3 ms 不規則に揺れる (仮想デバイス、USB など)
+};
+const char* consume_name(Consume c) { return c == Consume::Steady ? "1ms" : c == Consume::Blocks ? "10ms" : "irregular"; }
 
 struct Case {
     std::string name;
@@ -54,45 +74,153 @@ struct Case {
     double sender_ppm = 0;       // 送出元の時計の速さ (正: 速い)
     double device_ppm = 0;       // デバイスの時計の速さ (正: 速い)
     double device_open_sec = 0;  // engine がデバイスを開く時刻 (0 = worker より先)
-    // かたまり k が、いつもより何 ms 遅れて届くか
-    std::function<double(int k, double t)> late_ms = [](int, double) { return 0.0; };
-    // 届く時刻の揺れ: 0.5〜1.5 秒ごとに変わる ±jitter_ms の一様乱数 (決まった種)。窓 (1 秒) ごとの最小の余裕が揺れる
+    // engine の基本遅延 (デバイスのバッファ + 余裕)。10 ms: 低遅延の仮想ケーブル、32 ms: DVS の共有モード (実測)、
+    // 100 ms: USB や Bluetooth のデバイス
+    double base_delay_ms = 32;
+    Consume consume = Consume::Blocks;
+    int seeds = 1;       // 種を変えて回す回数
+    bool video = false;  // 映像のフレームも届けて時計に報告する
+    // --- 回線のモデル ---
+    // J1: 届く時刻の揺れ。0.5〜1.5 秒ごとに変わる ±jitter_ms の一様乱数。窓 (1 秒) ごとの最小の余裕が揺れる
     double jitter_ms = 0;
+    // J2: 裾の重い揺れ。かたまりごとに ±chunk_jitter_ms、そのうち tail_prob の割合は +tail_min_ms〜tail_max_ms 遅れる
+    double chunk_jitter_ms = 0;
+    double tail_prob = 0;
+    double tail_min_ms = 50;
+    double tail_max_ms = 200;
+    // S1 / S2 / R1 など: かたまりごとの遅れ (stalls、repeated_stalls、throttle)。映像にも同じだけ効く
+    LateFn late_ms = [](int, double, uint32_t) { return 0.0; };
+    // V1: 映像だけの遅れ (音声は late_ms のまま)
+    LateFn video_late_ms = [](int, double, uint32_t) { return 0.0; };
+    // L1: 欠落 (SRT で再送が間に合わなかった)。かたまりが届かない。単独 (loss_prob) と、まとめて (loss_burst_every_sec ごとに
+    // loss_burst_chunks 個)
+    double loss_prob = 0;
+    double loss_burst_every_sec = 0;
+    int loss_burst_chunks = 0;
+    // 送った順にしか届かない (TCP。RTMP): 前のかたまりより先には届かない
+    bool in_order = false;
     // engine の出力遅延の変わり方 {時刻 (秒), 出力遅延 (ms)}。0 = 出力先なし (音声を「なし」にした)、それ以外は
     // その遅延でデバイスを開き直す (WDM ↔ ASIO の切り替えなど)
     std::vector<std::pair<double, double>> delay_changes = {};
+    // --- 落ち着いた後 ---
+    // settle_sec より後で、disturbances の各 {始まり, 終わり} (秒) から kQuietSec 経った後
+    double settle_sec = 15;
+    std::vector<std::pair<double, double>> disturbances = {};
+    // --- 条件 ---
     uint64_t max_slips = 0;
     uint64_t max_resyncs = 0;  // 鳴らし始めた 1 回は数えない (開き直したあとの鳴らし始めは数える)
     uint64_t min_resyncs = 0;
+    uint64_t max_settled_resyncs = 1'000'000;    // 落ち着いた後の合わせ直し
+    uint64_t max_disturbed_resyncs = 1'000'000;  // 乱れの間 (と、その後 kQuietSec) の合わせ直し
+    uint64_t max_underruns = 1'000'000;          // 鳴らし始めてからの音切れ
+    uint64_t max_settled_underruns = 1'000'000;  // 落ち着いた後の音切れ
+    // underruns_from_sec 以降の、乱れの間の音切れの上限 (繰り返す途切れで、備えが増えた後は音切れが出ない)
+    double underruns_from_sec = 0;
+    uint64_t max_underruns_from = 1'000'000;
     double max_moved_ms = 1e9;  // 時間軸 (映像も同じ) を鳴らし始めてから動かした量の合計 (向きによらず)
-    // 落ち着いた後 (kSettledSec 以降) に時間軸を動かした回数の上限。揺れだけなら動かさない
+    // 落ち着いた後に時間軸を動かした回数の上限。揺れだけなら動かさない
     int max_moves = 1'000'000;
     // 落ち着いた後に、前と逆向きに動かした回数の上限 (揺れでの +1/−1 の行き来)。クロック差や揺れの備えを減らした分は同じ向き
     int max_reversals = 1'000'000;
+    int max_settled_jumps = 1'000'000;  // 落ち着いた後に、時間軸を一度に (5 ms を超えて) 動かした回数
     // 遅延 (時間軸) の増え方: delay_check = {前の時刻, 後の時刻} (秒) の間に遅延が増えた量の上限
     std::pair<double, double> delay_check = {0, 0};
     double max_delay_growth_ms = 1e9;
-    // 落ち着いた後 (kSettledSec 以降) に、遅れて届いた (余裕が負の) かたまりの数の上限
+    // 落ち着いた後 (settle_sec 以降) に、遅れて届いた (余裕が負の) かたまりの数の上限
     int max_late_chunks = 1'000'000;
+    double max_settled_delay_ms = 1e9;  // 落ち着いた後の音声の遅延 (1 秒ごとの平均) の最大
+    // 増え続けないか: 最後の 60 秒の遅延の平均が、半ばの 60 秒の平均からこれを超えて増えない
+    double max_late_delay_growth_ms = 1e9;
+    // 最後の乱れが止んでから、遅延が乱れの前の +20 ms 以内に戻るまでの時間 (秒) の上限
+    double max_recovery_sec = 1e9;
 };
-
-constexpr double kSettledSec = 15;  // これより後を「落ち着いた後」として数える
 
 struct Result {
     uint64_t slips = 0;
     uint64_t resyncs = 0;
+    uint64_t settled_resyncs = 0;
+    uint64_t disturbed_resyncs = 0;
+    uint64_t underruns = 0;
+    uint64_t settled_underruns = 0;
+    uint64_t underruns_from = 0;
     double moved_ms = 0;
     int moves = 0;                   // 落ち着いた後に時間軸を動かした回数
     int reversals = 0;               // そのうち、前に動かしたのと逆向きのもの
+    int settled_jumps = 0;           // そのうち、一度に 5 ms を超えて動かしたもの
     int late_chunks = 0;             // 落ち着いた後に遅れて届いたかたまりの数
     double delay_growth_ms = 0;      // delay_check の間に遅延が増えた量
     double min_slack_ms = 1e9;       // 落ち着いた後の音声の余裕 (鳴らすべき時刻 - 出力遅延 - 到着) の最小
     double max_window_slack_ms = 0;  // 同じく、1 秒ごとの最小の余裕の最大 (遅延が余っている分)
+    // 音声の遅延 (いつもの到着から engine に渡すまで、1 秒ごとの平均) と揺れの備え: 落ち着いた後の最小・最大と、最後の値
+    double delay_min = 1e9, delay_max = -1e9, delay_last = 0;
+    double headroom_min = 1e9, headroom_max = -1e9, headroom_last = 0;
+    double late_delay_growth_ms = 0;
+    double recovery_sec = -1;  // 戻るまでの時間 (-1: 乱れなし、1e9: 戻らなかった)
     std::string last_resync;
     bool ok = false;
 };
 
-Result run(const Case& c, int ch) {
+// 1 秒ごとの記録 (CSV)
+struct Second {
+    double t = 0;
+    double delay_ms = 0;     // 音声の遅延の平均 (いつもの到着から engine に渡すまで。デバイスの基本遅延は含めない)
+    double headroom_ms = 0;  // 音声の揺れの備え (取れないときは負)
+    double moved_ms = 0;     // 時間軸を動かした量 (正: 遅らせた)
+    std::string reasons;
+    uint64_t duplicated = 0, dropped = 0, resyncs = 0, underruns = 0;
+    double min_slack_ms = 0;
+};
+
+// 音声の揺れの備え (ms)。この版の PlayoutClock に無ければ -1 (修正前のコードとも組んで回せるように)
+template <typename Clock>
+double audio_headroom_ms(Clock& clock) {
+    if constexpr (requires { clock.audio_headroom_qpc(); }) {
+        return double(qpc_to_us(clock.audio_headroom_qpc())) / 1000.0;
+    } else {
+        return -1;
+    }
+}
+
+// worker のログ 1 行から、時間軸を動かした理由を取り出す (無ければ空)
+std::string move_reason(const std::string& line) {
+    if (line.rfind("playout: moved ", 0) == 0 && line.rfind("playout: moved the delay", 0) != 0) {
+        const auto open = line.find('(');
+        const auto close = line.find(')', open);
+        if (open != std::string::npos && close != std::string::npos) return line.substr(open + 1, close - open - 1);
+    }
+    if (line.find("arrived") != std::string::npos && line.find("late") != std::string::npos) {
+        return line.find("(outage)") != std::string::npos ? "late (outage)" : "late";
+    }
+    return "";
+}
+
+void write_csv(const std::string& path, const Case& c, const std::vector<Second>& rows) {
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) {
+        std::printf("  cannot write %s\n", path.c_str());
+        return;
+    }
+    std::fprintf(f,
+                 "t_s,base_delay_ms,consume,audio_delay_ms,audio_headroom_ms,moved_ms,reasons,duplicated,dropped,resyncs,underruns,"
+                 "min_slack_ms\n");
+    for (const auto& s : rows) {
+        std::fprintf(f, "%.0f,%.0f,%s,%.2f,%.1f,%.2f,%s,%llu,%llu,%llu,%llu,%.2f\n", s.t, c.base_delay_ms, consume_name(c.consume),
+                     s.delay_ms, s.headroom_ms, s.moved_ms, s.reasons.c_str(), (unsigned long long)s.duplicated,
+                     (unsigned long long)s.dropped, (unsigned long long)s.resyncs, (unsigned long long)s.underruns, s.min_slack_ms);
+    }
+    std::fclose(f);
+}
+
+// 決まった種の乱数 (線形合同法)。[0, 1)
+struct Rng {
+    uint32_t state;
+    double next() {
+        state = state * 1664525u + 1013904223u;
+        return double(state >> 8) / double(1u << 24);
+    }
+};
+
+Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     Result r;
     {
         // 試験の前に、同じ名前の共有メモリが無いこと (denpachan が動いていないこと) を確かめる
@@ -104,6 +232,7 @@ Result run(const Case& c, int ch) {
         }
     }
     g_now = qpc_from_ms(1000);
+    g_log.clear();
     const int64_t start = g_now;
     worker::PlayoutClock clock(kPlayoutBufferMs, &fake_now);
     worker::ChannelMetrics metrics;
@@ -116,70 +245,150 @@ Result run(const Case& c, int ch) {
     std::unique_ptr<engine::ChannelSource> source;
     engine::RouteOptions route;
     route.ch = ch;
-    int64_t base_delay = qpc_from_ms(kBaseDelayMs);
+    int64_t base_delay = qpc_from_us(int64_t(c.base_delay_ms * 1000));
+    // デバイスの 1 回の描画: 取る量と間隔。これから書くバッファが鳴るまでの時間 (padding) は、基本遅延のうちデバイスの
+    // バッファの分 (余裕を除いた残り。少なくとも 1 回分の間隔)
+    const int device_frames = c.consume == Consume::Steady ? 48 : 480;
+    const double device_sec = double(device_frames) / audio::kSampleRate;
+    const int64_t lead = std::max(qpc_from_us(int64_t(device_sec * 1e6)), qpc_from_us(int64_t((c.base_delay_ms - 10) * 1000)) / 2);
+    int64_t render_start = start;  // デバイスを開いた時刻
+    Rng device_rng{seed ^ 0x9e3779b9u};
+    auto render_at = [&](int n) {
+        // n 回目の描画の時刻。Irregular では、デバイスの時計どおりの時刻から ±3 ms ずれる (ずれは積み重ならない)
+        int64_t at = render_start + qpc_from_us(int64_t(n * device_sec / (1 + c.device_ppm * 1e-6) * 1e6));
+        if (c.consume == Consume::Irregular && n > 0) at += qpc_from_us(int64_t((device_rng.next() * 2 - 1) * 3000));
+        return at;
+    };
     // 開き直す前のデバイスの回数 (ChannelSource ごとに数えるので足しておく)
-    uint64_t done_slips = 0, done_resyncs = 0;
+    uint64_t done_slips = 0, done_resyncs = 0, done_underruns = 0, done_dup = 0, done_drop = 0;
     auto close_device = [&] {
         if (!source) return;
-        done_slips += source->stats().slips.load();
-        done_resyncs += source->stats().resyncs.load();
+        auto& st = source->stats();
+        done_slips += st.slips.load();
+        done_resyncs += st.resyncs.load();
+        done_underruns += st.underruns.load();
+        done_dup += st.duplicated.load();
+        done_drop += st.dropped.load();
         source.reset();
     };
     auto open_device = [&] { source = std::make_unique<engine::ChannelSource>(route, audio::kSampleRate, 2, base_delay); };
+    // 今までの合計 (開き直した分も足す)
+    auto totals = [&](uint64_t& resyncs, uint64_t& underruns, uint64_t& dup, uint64_t& drop) {
+        resyncs = done_resyncs, underruns = done_underruns, dup = done_dup, drop = done_drop;
+        if (!source) return;
+        auto& st = source->stats();
+        resyncs += st.resyncs.load(), underruns += st.underruns.load(), dup += st.duplicated.load(), drop += st.dropped.load();
+    };
     if (c.device_open_sec <= 0) open_device();
     size_t next_change = 0;
-    uint32_t rng = 12345;  // 到着の揺れ (決まった種の線形合同法)
-    auto jitter = [&] {
-        rng = rng * 1664525u + 1013904223u;
-        return (double(rng >> 8) / double(1u << 24) * 2 - 1) * c.jitter_ms;
-    };
+    Rng rng{seed};                      // J1 の揺れ
+    Rng chunk_rng{~seed};               // J2 (音声)
+    Rng video_rng{seed ^ 0x5bd1e995u};  // J2 (映像)
+    Rng loss_rng{seed * 2654435761u};   // L1
+    auto jitter = [&] { return (rng.next() * 2 - 1) * c.jitter_ms; };
     double jitter_now = jitter();
     double jitter_until = 0;  // 揺れの値を次に変える時刻 (送出元の時計、秒)
+    auto chunk_jitter = [&](Rng& g) {
+        if (c.tail_prob > 0 && g.next() < c.tail_prob) return c.tail_min_ms + g.next() * (c.tail_max_ms - c.tail_min_ms);
+        return c.chunk_jitter_ms > 0 ? (g.next() * 2 - 1) * c.chunk_jitter_ms : 0.0;
+    };
+    auto settled_at = [&](double t) {
+        if (t < c.settle_sec) return false;
+        for (const auto& [from, until] : c.disturbances) {
+            if (t >= from && t < until + kQuietSec) return false;
+        }
+        return true;
+    };
     // 時間軸の動き: pts 0 を出すべき時刻が、鳴らし始めてからどれだけ動いたか (合計)
     int64_t last_due0 = 0;
     int last_dir = 0;                         // 前に動かした向き
     int64_t due0_before = 0, due0_after = 0;  // delay_check の時刻の時間軸
     double moved_ms = 0;
-    double window_slack_ms = 1e9;  // 今の 1 秒の最小の余裕
-    double window_until = kSettledSec + 1;
+    double window_slack_ms = 1e9;  // 今の 1 秒の最小の余裕 (落ち着いた後)
 
     std::vector<float> chunk(size_t(kChunkFrames) * 2);
-    std::vector<float> mix(size_t(kDeviceFrames) * 2);
+    std::vector<float> mix(size_t(device_frames) * 2);
     const double chunk_sec = double(kChunkFrames) / audio::kSampleRate;
-    const double device_sec = double(kDeviceFrames) / audio::kSampleRate;
-    int k = 0;
-    int64_t render_start = start;  // デバイスを開いた時刻
+    int k = 0;   // 次に送る音声のかたまり
+    int vf = 0;  // 次に送る映像のフレーム
+    double next_chunk_jitter = chunk_jitter(chunk_rng);
+    double next_video_jitter = chunk_jitter(video_rng);
+    int64_t last_audio_arrival = 0, last_video_arrival = 0;  // 送った順にしか届かないとき
     int64_t next_render = start;
     int renders = 0;
-    uint64_t base_slips = 0, base_resyncs = 0;
+    uint64_t base_resyncs = 0, base_underruns = 0, base_slips = 0;
     bool started = false;
+    // 1 秒ごとの記録
+    std::vector<Second> seconds;
+    Second sec;
+    double sec_delay_sum = 0;
+    int sec_delay_n = 0;
+    double sec_moved = 0;
+    double sec_min_slack = 1e9;
+    uint64_t prev_resyncs = 0, prev_underruns = 0, prev_dup = 0, prev_drop = 0;
+    double next_sec = 1;
     const int64_t end = start + qpc_from_us(int64_t(c.seconds * 1e6));
     for (; g_now < end; g_now += qpc_from_us(250)) {
         const double t = double(qpc_to_us(g_now - start)) / 1e6;
+        const bool settled = started && settled_at(t);
         // 送出元: かたまり k の時刻 (送出元の時計) と、届く時刻
         for (;;) {
             const double sent = k * chunk_sec / (1 + c.sender_ppm * 1e-6);
-            const int64_t arrival = start + qpc_from_us(int64_t((sent + (kNetDelayMs + c.late_ms(k, sent) + jitter_now) / 1000.0) * 1e6));
+            int64_t arrival =
+                start +
+                qpc_from_us(int64_t((sent + (kNetDelayMs + c.late_ms(k, sent, seed) + jitter_now + next_chunk_jitter) / 1000.0) * 1e6));
+            if (c.in_order) arrival = std::max(arrival, last_audio_arrival);
             if (arrival > g_now) break;
+            last_audio_arrival = arrival;
+            next_chunk_jitter = chunk_jitter(chunk_rng);
             if (sent >= jitter_until) {
                 jitter_now = jitter();
                 jitter_until = sent + 1.0 + jitter() / std::max(1.0, c.jitter_ms) * 0.5;
             }
+            bool lost = c.loss_prob > 0 && loss_rng.next() < c.loss_prob;
+            if (c.loss_burst_every_sec > 0) {
+                const double phase = std::fmod(sent, c.loss_burst_every_sec);
+                if (sent >= c.loss_burst_every_sec && phase < c.loss_burst_chunks * chunk_sec) lost = true;
+            }
+            const int64_t pts_us = int64_t(double(k) * kChunkFrames * 1e6 / audio::kSampleRate);
+            ++k;
+            if (lost) continue;
             for (int i = 0; i < kChunkFrames; ++i) {
-                const float v = 0.25f * float(std::sin(2 * 3.14159265 * 440.0 * (double(k) * kChunkFrames + i) / audio::kSampleRate));
+                const float v = 0.25f * float(std::sin(2 * 3.14159265 * 440.0 * (double(k - 1) * kChunkFrames + i) / audio::kSampleRate));
                 chunk[2 * size_t(i)] = v;
                 chunk[2 * size_t(i) + 1] = v;
             }
-            const int64_t pts_us = int64_t(double(k) * kChunkFrames * 1e6 / audio::kSampleRate);
             // 余裕は書く前の時間軸で測る (遅れて届くと、書き手が時間軸をその分すぐ遅らせる)
-            const double slack = double(qpc_to_us(clock.due(1, pts_us, arrival) - base_delay - arrival)) / 1000.0;
+            const int64_t due = clock.due(1, pts_us, arrival);
+            const double slack = double(qpc_to_us(due - base_delay - arrival)) / 1000.0;
             writer.write(1, pts_us, arrival, chunk.data(), kChunkFrames);
-            if (started && t >= kSettledSec) {
+            if (started) {
+                // 音声の遅延: いつもの到着 (揺れも乱れも無いとき) から engine に渡すまで (書いた後の時間軸で)。
+                // デバイスの基本遅延は含めない (デバイスによらず同じ基準で見る)
+                const int64_t nominal = start + qpc_from_us(int64_t((sent + kNetDelayMs / 1000.0) * 1e6));
+                sec_delay_sum += double(qpc_to_us(clock.due(1, pts_us, arrival) - base_delay - nominal)) / 1000.0;
+                ++sec_delay_n;
+                sec_min_slack = std::min(sec_min_slack, slack);
+            }
+            if (settled) {
                 r.min_slack_ms = std::min(r.min_slack_ms, slack);
                 if (slack < 0) ++r.late_chunks;
                 window_slack_ms = std::min(window_slack_ms, slack);
             }
-            ++k;
+        }
+        // 映像: 同じ回線で届く (V1 では映像だけさらに遅れる)。時計に余裕を報告する (worker の playout と同じ)
+        while (c.video) {
+            const double sent = double(vf) * kFrameUs / 1e6 / (1 + c.sender_ppm * 1e-6);
+            const double late = c.late_ms(-1, sent, seed) + c.video_late_ms(-1, sent, seed);
+            int64_t arrival =
+                start + qpc_from_us(int64_t((sent + (kNetDelayMs - kVideoLeadMs + late + jitter_now + next_video_jitter) / 1000.0) * 1e6));
+            if (c.in_order) arrival = std::max(arrival, last_video_arrival);
+            if (arrival > g_now) break;
+            last_video_arrival = arrival;
+            next_video_jitter = chunk_jitter(video_rng);
+            const int64_t pts_us = int64_t(vf) * kFrameUs;
+            ++vf;
+            clock.report_video(clock.due(1, pts_us, arrival) - arrival, kFrameUs);
         }
         if (!source && c.device_open_sec > 0 && t >= c.device_open_sec && next_change == 0) {
             open_device();
@@ -199,13 +408,18 @@ Result run(const Case& c, int ch) {
         }
         if (started) {
             const int64_t due0 = clock.due(1, 0, g_now);
-            if (last_due0 != 0) moved_ms += std::fabs(double(qpc_to_us(due0 - last_due0)) / 1000.0);
-            if (last_due0 != 0 && due0 != last_due0) {
-                const int dir = due0 > last_due0 ? 1 : -1;
-                if (t >= kSettledSec) {
-                    ++r.moves;
-                    if (last_dir != 0 && dir != last_dir) ++r.reversals;
-                    last_dir = dir;  // 落ち着く前の動き (開始直後の遅れなど) とは比べない
+            if (last_due0 != 0) {
+                const double d = double(qpc_to_us(due0 - last_due0)) / 1000.0;
+                moved_ms += std::fabs(d);
+                sec_moved += d;
+                if (due0 != last_due0) {
+                    const int dir = due0 > last_due0 ? 1 : -1;
+                    if (settled) {
+                        ++r.moves;
+                        if (last_dir != 0 && dir != last_dir) ++r.reversals;
+                        if (std::fabs(d) > 5) ++r.settled_jumps;
+                        last_dir = dir;  // 落ち着く前の動き (開始直後の遅れなど) とは比べない
+                    }
                 }
             }
             last_due0 = due0;
@@ -214,29 +428,71 @@ Result run(const Case& c, int ch) {
                 if (due0_after == 0 && t >= c.delay_check.second) due0_after = due0;
             }
         }
-        if (t >= window_until) {
-            if (window_slack_ms < 1e9) r.max_window_slack_ms = std::max(r.max_window_slack_ms, window_slack_ms);
-            window_slack_ms = 1e9;
-            window_until += 1;
-        }
-        // デバイス: 10 ms (デバイスの時計) ごとに描画する。これから書くバッファは kLeadMs 後に鳴る
+        // デバイス: デバイスの時計で決まった間隔 (Consume) ごとに描画する。これから書くバッファは lead 後に鳴る
         if (source && g_now >= next_render) {
             std::fill(mix.begin(), mix.end(), 0.0f);
-            source->render(mix.data(), kDeviceFrames, g_now + qpc_from_ms(kLeadMs), base_delay);
+            // これから書くバッファが鳴る時刻 (engine は再生位置から求める。取る時刻が揺れるデバイスでは、これも揺れる)
+            source->render(mix.data(), device_frames, g_now + lead, base_delay);
             ++renders;
-            next_render = render_start + qpc_from_us(int64_t(renders * device_sec / (1 + c.device_ppm * 1e-6) * 1e6));
+            next_render = render_at(renders);
             auto& st = source->stats();
             if (g_verbose && renders % 100 == 0) {
                 std::lock_guard lk(st.reason_mutex);
-                std::printf("  t %6.2f s: playing %d, error %+6.2f ms, slips %llu, resyncs %llu (%s)\n", t, int(st.playing.load()),
-                            st.error_ms.load(), (unsigned long long)st.slips.load(), (unsigned long long)st.resyncs.load(),
-                            st.last_resync_reason.c_str());
+                std::printf("  t %6.2f s: playing %d, error %+6.2f ms, slips %llu, resyncs %llu, underruns %llu (%s)\n", t,
+                            int(st.playing.load()), st.error_ms.load(), (unsigned long long)st.slips.load(),
+                            (unsigned long long)st.resyncs.load(), (unsigned long long)st.underruns.load(), st.last_resync_reason.c_str());
             }
             if (!started && st.playing.load()) {
                 started = true;  // 鳴らし始めた。ここから数える
                 base_slips = done_slips + st.slips.load();
-                base_resyncs = done_resyncs + st.resyncs.load();
+                uint64_t dup, drop;
+                totals(base_resyncs, base_underruns, dup, drop);
+                prev_resyncs = base_resyncs, prev_underruns = base_underruns, prev_dup = dup, prev_drop = drop;
             }
+        }
+        // 1 秒ごと: 記録と、落ち着いた後の数え
+        if (t >= next_sec) {
+            uint64_t resyncs, underruns, dup, drop;
+            totals(resyncs, underruns, dup, drop);
+            if (started) {
+                sec.t = next_sec;
+                sec.delay_ms = sec_delay_n > 0 ? sec_delay_sum / sec_delay_n : (seconds.empty() ? 0 : seconds.back().delay_ms);
+                sec.headroom_ms = audio_headroom_ms(clock);
+                sec.moved_ms = sec_moved;
+                sec.reasons.clear();
+                for (const auto& line : g_log) {
+                    const std::string reason = move_reason(line);
+                    if (reason.empty() || sec.reasons.find(reason) != std::string::npos) continue;
+                    if (!sec.reasons.empty()) sec.reasons += '|';
+                    sec.reasons += reason;
+                }
+                sec.duplicated = dup - prev_dup, sec.dropped = drop - prev_drop;
+                sec.resyncs = resyncs - prev_resyncs, sec.underruns = underruns - prev_underruns;
+                sec.min_slack_ms = sec_min_slack < 1e9 ? sec_min_slack : 0;
+                seconds.push_back(sec);
+                const bool sec_settled = settled_at(next_sec - 1);
+                if (sec_settled) {
+                    r.settled_resyncs += sec.resyncs;
+                    r.settled_underruns += sec.underruns;
+                    r.delay_min = std::min(r.delay_min, sec.delay_ms);
+                    r.delay_max = std::max(r.delay_max, sec.delay_ms);
+                    if (sec.headroom_ms >= 0) {
+                        r.headroom_min = std::min(r.headroom_min, sec.headroom_ms);
+                        r.headroom_max = std::max(r.headroom_max, sec.headroom_ms);
+                    }
+                    if (window_slack_ms < 1e9) r.max_window_slack_ms = std::max(r.max_window_slack_ms, window_slack_ms);
+                } else if (next_sec - 1 >= c.settle_sec) {
+                    r.disturbed_resyncs += sec.resyncs;
+                    if (next_sec - 1 >= c.underruns_from_sec && c.underruns_from_sec > 0) r.underruns_from += sec.underruns;
+                }
+                r.delay_last = sec.delay_ms;
+                r.headroom_last = sec.headroom_ms;
+            }
+            prev_resyncs = resyncs, prev_underruns = underruns, prev_dup = dup, prev_drop = drop;
+            sec_delay_sum = 0, sec_delay_n = 0, sec_moved = 0, sec_min_slack = 1e9;
+            window_slack_ms = 1e9;
+            g_log.clear();
+            next_sec += 1;
         }
     }
     if (!source || !started) {
@@ -244,53 +500,158 @@ Result run(const Case& c, int ch) {
         return r;
     }
     auto& st = source->stats();
+    uint64_t resyncs, underruns, dup, drop;
+    totals(resyncs, underruns, dup, drop);
     r.slips = done_slips + st.slips.load() - base_slips;
-    r.resyncs = done_resyncs + st.resyncs.load() - base_resyncs;
+    r.resyncs = resyncs - base_resyncs;
+    r.underruns = underruns - base_underruns;
     r.moved_ms = moved_ms;
     if (due0_before != 0 && due0_after != 0) r.delay_growth_ms = double(qpc_to_us(due0_after - due0_before)) / 1000.0;
+    // 増え続けないか: 最後の 60 秒と、半ばの 60 秒の平均
+    auto average = [&](double from, double until) {
+        double sum = 0;
+        int n = 0;
+        for (const auto& s : seconds) {
+            if (s.t > from && s.t <= until) sum += s.delay_ms, ++n;
+        }
+        return n > 0 ? sum / n : 0.0;
+    };
+    r.late_delay_growth_ms = average(c.seconds - 60, c.seconds) - average(c.seconds / 2 - 60, c.seconds / 2);
+    // 戻るまでの時間: 最後の乱れが止んでから、遅延が乱れの前 (始まる前 10 秒の平均) の +20 ms を最後に超えていた時刻まで
+    if (!c.disturbances.empty()) {
+        const double first = c.disturbances.front().first;
+        double last_end = 0;
+        for (const auto& d : c.disturbances) last_end = std::max(last_end, d.second);
+        const double before = average(first - 10, first);
+        double last_over = last_end;
+        for (const auto& s : seconds) {
+            if (s.t > last_end && s.delay_ms > before + 20) last_over = s.t;
+        }
+        r.recovery_sec = last_over >= c.seconds - 1 ? 1e9 : last_over - last_end;
+    }
     {
         std::lock_guard lk(st.reason_mutex);
         r.last_resync = st.last_resync_reason;
     }
-    r.ok = r.slips <= c.max_slips && r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs && r.moved_ms <= c.max_moved_ms &&
-           r.moves <= c.max_moves && r.reversals <= c.max_reversals && r.late_chunks <= c.max_late_chunks &&
-           r.delay_growth_ms <= c.max_delay_growth_ms;
-    const std::string delay = c.delay_check.second > 0 ? fmt::format(", delay grew {:+.1f} ms from {:.0f} s to {:.0f} s", r.delay_growth_ms,
-                                                                     c.delay_check.first, c.delay_check.second)
-                                                       : "";
+    if (r.delay_min > r.delay_max) r.delay_min = r.delay_max = 0;
+    if (r.headroom_min > r.headroom_max) r.headroom_min = r.headroom_max = -1;
+    struct Check {
+        const char* what;
+        bool ok;
+    };
+    const Check checks[] = {
+        {"slips", r.slips <= c.max_slips},
+        {"resyncs", r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs},
+        {"settled resyncs", r.settled_resyncs <= c.max_settled_resyncs},
+        {"disturbed resyncs", r.disturbed_resyncs <= c.max_disturbed_resyncs},
+        {"underruns", r.underruns <= c.max_underruns},
+        {"settled underruns", r.settled_underruns <= c.max_settled_underruns},
+        {"underruns later in the disturbance", r.underruns_from <= c.max_underruns_from},
+        {"moved", r.moved_ms <= c.max_moved_ms},
+        {"moves", r.moves <= c.max_moves},
+        {"reversals", r.reversals <= c.max_reversals},
+        {"settled jumps", r.settled_jumps <= c.max_settled_jumps},
+        {"late chunks", r.late_chunks <= c.max_late_chunks},
+        {"delay growth", r.delay_growth_ms <= c.max_delay_growth_ms},
+        {"settled delay", r.delay_max <= c.max_settled_delay_ms},
+        {"delay keeps growing", r.late_delay_growth_ms <= c.max_late_delay_growth_ms},
+        {"recovery", r.recovery_sec <= c.max_recovery_sec},
+    };
+    std::string failed;
+    for (const auto& check : checks) {
+        if (check.ok) continue;
+        if (!failed.empty()) failed += ", ";
+        failed += check.what;
+    }
+    r.ok = failed.empty();
+    std::string extra;
+    if (c.delay_check.second > 0) {
+        extra +=
+            fmt::format(", delay grew {:+.1f} ms from {:.0f} s to {:.0f} s", r.delay_growth_ms, c.delay_check.first, c.delay_check.second);
+    }
+    if (r.recovery_sec >= 0) extra += r.recovery_sec >= 1e9 ? ", never recovered" : fmt::format(", recovered in {:.0f} s", r.recovery_sec);
+    if (!r.last_resync.empty()) extra += ", last resync: " + r.last_resync;
+    if (!failed.empty()) extra += " [failed: " + failed + "]";
     std::printf(
-        "%s %s: slips %llu (max %llu), resyncs %llu (max %llu), time base moved %.1f ms, %d moves after %.0f s (%d reversed), "
-        "audio slack after that %.1f ms min / %.1f ms max of 1 s minimums, %d late chunks%s%s%s\n",
-        r.ok ? "OK  " : "FAIL", c.name.c_str(), (unsigned long long)r.slips, (unsigned long long)c.max_slips, (unsigned long long)r.resyncs,
-        (unsigned long long)c.max_resyncs, r.moved_ms, r.moves, kSettledSec, r.reversals, r.min_slack_ms, r.max_window_slack_ms,
-        r.late_chunks, delay.c_str(), r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
+        "%s %s%s: slips %llu, resyncs %llu (settled %llu, disturbed %llu), underruns %llu (settled %llu), time base moved %.1f ms, "
+        "%d settled moves (%d reversed, %d jumps), audio slack %.1f ms min / %.1f ms max of 1 s minimums, %d late chunks, "
+        "audio delay %.0f-%.0f ms (last %.0f), headroom %.0f-%.0f ms (last %.0f)%s\n",
+        r.ok ? "OK  " : "FAIL", c.name.c_str(), c.seeds > 1 ? fmt::format(" [seed {}]", seed).c_str() : "", (unsigned long long)r.slips,
+        (unsigned long long)r.resyncs, (unsigned long long)r.settled_resyncs, (unsigned long long)r.disturbed_resyncs,
+        (unsigned long long)r.underruns, (unsigned long long)r.settled_underruns, r.moved_ms, r.moves, r.reversals, r.settled_jumps,
+        r.min_slack_ms < 1e9 ? r.min_slack_ms : 0.0, r.max_window_slack_ms, r.late_chunks, r.delay_min, r.delay_max, r.delay_last,
+        r.headroom_min, r.headroom_max, r.headroom_last, extra.c_str());
+    if (!csv_path.empty()) write_csv(csv_path, c, seconds);
     return r;
+}
+
+// 途切れ (S1、TCP 型): {止まり始める時刻 (秒), 止まる長さ (ms)}。止まっていた間の分は、止まり終わりにまとめて届く
+LateFn stalls(std::vector<std::pair<double, double>> list) {
+    return [list](int, double sent, uint32_t) {
+        const double at = sent + kNetDelayMs / 1000.0;  // いつもなら届く時刻
+        for (const auto& [from, ms] : list) {
+            const double until = from + ms / 1000.0;
+            if (at >= from && at < until) return (until - at) * 1000.0;
+        }
+        return 0.0;
+    };
+}
+
+// 繰り返す途切れ (S2): from から until まで every 秒ごとに、min_ms〜max_ms (種で決まる) 止まる
+LateFn repeated_stalls(double from, double every, double until, double min_ms, double max_ms) {
+    return [=](int, double sent, uint32_t seed) {
+        const double at = sent + kNetDelayMs / 1000.0;
+        if (at < from || at >= until + max_ms / 1000.0) return 0.0;
+        const int i = int((at - from) / every);
+        const double begin = from + i * every;
+        if (begin >= until) return 0.0;
+        Rng g{seed * 2246822519u + uint32_t(i) * 3266489917u};
+        g.next();
+        const double ms = min_ms + g.next() * (max_ms - min_ms);
+        const double stop = begin + ms / 1000.0;
+        return at >= begin && at < stop ? (stop - at) * 1000.0 : 0.0;
+    };
+}
+
+// 帯域不足 (R1): from から seconds 秒の間、届く速さが rate 倍になり、その後に溜まった分がまとめて届く
+LateFn throttle(double from, double seconds, double rate) {
+    return [=](int, double sent, uint32_t) {
+        const double at = sent + kNetDelayMs / 1000.0;
+        const double caught = from + seconds * rate;  // 詰まりが終わるまでに届けられる、いつもの到着時刻
+        if (at < from || at >= from + seconds) return 0.0;
+        if (at < caught) return (from + (at - from) / rate - at) * 1000.0;
+        return (from + seconds - at) * 1000.0;
+    };
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    const bool verbose = argc > 1 && std::strcmp(argv[1], "-v") == 0;
-    g_verbose = verbose;
-    const int only = argc > 2 ? std::atoi(argv[2]) : 0;
-    spdlog::set_level(verbose ? spdlog::level::debug : spdlog::level::warn);
-    spdlog::set_pattern("  %v");
+    int only = 0;
+    std::string csv_dir;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "-v") == 0) {
+            g_verbose = true;
+            if (i + 1 < argc && std::isdigit((unsigned char)argv[i + 1][0])) only = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--csv") == 0 && i + 1 < argc) {
+            csv_dir = argv[++i];
+        }
+    }
+    // worker のログは、時間軸を動かした理由を CSV に書くために debug まで集める (表示は -v のときだけ)
+    auto logger =
+        std::make_shared<spdlog::logger>("test", std::make_shared<spdlog::sinks::callback_sink_mt>([](const spdlog::details::log_msg& msg) {
+                                             const std::string line(msg.payload.data(), msg.payload.size());
+                                             g_log.push_back(line);
+                                             if (g_verbose || msg.level >= spdlog::level::warn) std::printf("  %s\n", line.c_str());
+                                         }));
+    logger->set_level(spdlog::level::debug);
+    spdlog::set_default_logger(logger);
+    if (!csv_dir.empty()) std::filesystem::create_directories(csv_dir);
 
     // 鳴らし始めた直後に、届くのが何度か止まり、止まっていた分がまとめて届く (RTMP pull の起動直後。
     // 揺れの備えが 10 ms から 45 ms ほどまで増え、60 秒遅れて届かなければ一度に下げる: 合わせ直しが 1 回増える)。
-    // stalls: {止まり始める時刻 (秒), 止まる長さ (ms)}
-    auto stalls = [](std::vector<std::pair<double, double>> list) {
-        return [list](int, double sent) {
-            const double at = sent + kNetDelayMs / 1000.0;  // いつもなら届く時刻
-            for (const auto& [from, ms] : list) {
-                const double until = from + ms / 1000.0;
-                if (at >= from && at < until) return (until - at) * 1000.0;  // 止まっていた間の分は、止まり終わりにまとめて届く
-            }
-            return 0.0;
-        };
-    };
     const auto startup_late = stalls({{2.0, 34}, {3.0, 58}, {4.5, 79}});
-    const std::vector<Case> cases = {
+    std::vector<Case> cases = {
         {.name = "steady, no clock difference", .seconds = 60, .max_slips = 0, .max_resyncs = 0},
         {.name = "sender clock 150 ppm fast", .seconds = 120, .sender_ppm = 150, .max_slips = 1000, .max_resyncs = 0},
         {.name = "device clock 150 ppm fast", .seconds = 120, .device_ppm = 150, .max_slips = 1000, .max_resyncs = 0},
@@ -320,8 +681,6 @@ int main(int argc, char** argv) {
          .max_slips = 3000,
          .max_resyncs = 4,
          .min_resyncs = 1},
-        // 届く時刻が揺れる (RTMP の到着、DVS が 10 ms 前後の単位で音を取る): 窓ごとの最小の余裕も揺れるが、
-        // それで時間軸を一度に行き来させない
         // 落ち着いた後の揺れ (実機の DVS で窓ごとに ±2〜4 ms): 揺れに反応して時間軸を 1 ms ずつ行き来させない。
         // クロック差は、揺れがあっても合わせ直しなしで追う
         {.name = "arrivals jitter +-4 ms for 5 min",
@@ -334,8 +693,8 @@ int main(int argc, char** argv) {
         // 開始直後に増えた揺れの備えは 30 秒に 1 ms ずつ減る。減った分 (5 分で約 9 ms) は、幅を超えてから 1 ms ずつ詰める
         {.name = "arrivals jitter +-4 ms for 5 min, late arrivals right after start",
          .seconds = 300,
-         .late_ms = startup_late,
          .jitter_ms = 4,
+         .late_ms = startup_late,
          .max_slips = 1000,
          .max_resyncs = 4,
          .max_moves = 10,
@@ -351,8 +710,8 @@ int main(int argc, char** argv) {
         // 揺れの備えは途切れで増やさない (増やすと、30 秒に 1 ms ずつしか減らず、約 1 時間遅延が 100 ms 以上多いままだった)
         {.name = "arrivals jitter +-4 ms, a 900 ms outage at 60 s",
          .seconds = 240,
-         .late_ms = stalls({{60.0, 900}, {61.5, 25}, {62.5, 42}}),
          .jitter_ms = 4,
+         .late_ms = stalls({{60.0, 900}, {61.5, 25}, {62.5, 42}}),
          .max_slips = 1000,
          .max_resyncs = 3,
          .delay_check = {55, 180},
@@ -395,8 +754,8 @@ int main(int argc, char** argv) {
         {.name = "arrivals jitter +-5 ms", .seconds = 60, .jitter_ms = 5, .max_slips = 100, .max_resyncs = 2},
         {.name = "arrivals jitter +-5 ms, late arrivals right after start",
          .seconds = 60,
-         .late_ms = startup_late,
          .jitter_ms = 5,
+         .late_ms = startup_late,
          .max_slips = 100,
          .max_resyncs = 4},
         // 出力遅延が変わる (WDM → ASIO の切り替えなど。開き直したあとの鳴らし始めも 1 回と数える)
@@ -414,12 +773,229 @@ int main(int argc, char** argv) {
          .max_slips = 100,
          .max_resyncs = 2,
          .max_moved_ms = 40},
+
+        // ---- 不安定な回線 (「不安定な回線での時間軸の検証手順」の場合 1〜11)。映像も届け、種を 5 つ回す。
+        // 落ち着いた後 = 開始と各乱れが止んでから 60 秒以降。落ち着いた後は一度に動かさない (settled jumps 0)
+        {.name = "1. J1 jitter +-10 ms, 10 min",
+         .seconds = 600,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 10,
+         .in_order = true,
+         .settle_sec = 60,
+         .max_slips = 3000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_settled_underruns = 0,
+         .max_moves = 3,
+         .max_reversals = 0,
+         .max_settled_jumps = 0},
+        {.name = "2. J1 jitter +-30 ms, 10 min",
+         .seconds = 600,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 30,
+         .in_order = true,
+         .settle_sec = 60,
+         .max_slips = 6000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_settled_underruns = 0,
+         .max_moves = 3,
+         .max_reversals = 0,
+         .max_settled_jumps = 0,
+         .max_settled_delay_ms = 100},
+        {.name = "3. J1 jitter +-100 ms, 10 min",
+         .seconds = 600,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 100,
+         .in_order = true,
+         .settle_sec = 60,
+         .max_slips = 20000,
+         .max_resyncs = 1'000,
+         .max_settled_underruns = 0,
+         .max_reversals = 2,
+         .max_settled_jumps = 0,
+         .max_settled_delay_ms = 250,
+         .max_late_delay_growth_ms = 20},
+        // J2: 95% は ±10 ms、5% は +50〜200 ms (送った順にしか届かないので、遅れたかたまりの後ろも待たされる)
+        {.name = "4. J2 heavy-tailed jitter, 10 min",
+         .seconds = 600,
+         .seeds = 5,
+         .video = true,
+         .chunk_jitter_ms = 10,
+         .tail_prob = 0.05,
+         .in_order = true,
+         .settle_sec = 60,
+         .max_slips = 20000,
+         .max_resyncs = 1'000,
+         .max_settled_underruns = 2,  // 開始 60 秒以降の 9 分で、5 分あたり 1 回まで
+         .max_reversals = 2,
+         .max_settled_jumps = 0},
+        {.name = "5. J1 +-4 ms with an S1 900 ms outage at 60 s",
+         .seconds = 300,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 4,
+         .late_ms = stalls({{60.0, 900}}),
+         .in_order = true,
+         .settle_sec = 60,
+         .disturbances = {{60, 61}},
+         .max_slips = 3000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_disturbed_resyncs = 3,
+         .max_underruns = 1,
+         .max_settled_jumps = 0,
+         .delay_check = {55, 181},
+         .max_delay_growth_ms = 20},
+        // V1: 映像だけが 850 ms 遅れ、音声は 40 ms 遅れる (実機の「映像 853 ms・音声 42 ms」)
+        {.name = "6. J1 +-4 ms with a V1 video-only 850 ms outage at 60 s",
+         .seconds = 300,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 4,
+         .late_ms = stalls({{60.0, 40}}),
+         .video_late_ms = stalls({{60.0, 850}}),
+         .in_order = true,
+         .settle_sec = 60,
+         .disturbances = {{60, 61}},
+         .max_slips = 3000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_disturbed_resyncs = 3,
+         .max_underruns = 1,
+         .max_settled_jumps = 0,
+         .delay_check = {55, 181},
+         .max_delay_growth_ms = 20},
+        // S2: 300〜800 ms の途切れが 30 秒ごとに 5 分続き、その後 5 分は落ち着いている
+        {.name = "7. J1 +-4 ms with S2 300-800 ms outages every 30 s for 5 min",
+         .seconds = 660,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 4,
+         .late_ms = repeated_stalls(60, 30, 360, 300, 800),
+         .in_order = true,
+         .settle_sec = 60,
+         .disturbances = {{60, 361}},
+         .max_slips = 20000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 1,  // 戻すときの 1 回
+         .max_settled_underruns = 0,
+         .underruns_from_sec = 120,  // 3 回目の途切れから
+         .max_underruns_from = 2,
+         .max_settled_jumps = 1,
+         .max_recovery_sec = 180},
+        {.name = "8a. J1 +-30 ms, sender clock 200 ppm fast, 10 min",
+         .seconds = 600,
+         .sender_ppm = 200,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 30,
+         .in_order = true,
+         .settle_sec = 60,
+         .max_slips = 10000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_settled_underruns = 0,
+         .max_reversals = 0,
+         .max_settled_jumps = 0},
+        {.name = "8b. J1 +-30 ms, sender clock 200 ppm slow, 10 min",
+         .seconds = 600,
+         .sender_ppm = -200,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 30,
+         .in_order = true,
+         .settle_sec = 60,
+         .max_slips = 10000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_settled_underruns = 0,
+         .max_reversals = 0,
+         .max_settled_jumps = 0},
+        // L1: 単独の欠落 1% と、10 個まとめての欠落を 1 分に 1 回 (SRT。欠落は無音で埋まる)
+        {.name = "9. J1 +-4 ms with L1 losses, 10 min",
+         .seconds = 600,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 4,
+         .loss_prob = 0.01,
+         .loss_burst_every_sec = 60,
+         .loss_burst_chunks = 10,
+         .settle_sec = 60,
+         .max_slips = 3000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_moves = 3,
+         .max_settled_jumps = 0},
+        // R1: 60 秒のところで 10 秒間、届く速さが 0.9 倍になり、その後に追いつく
+        {.name = "10. J1 +-4 ms with R1 10 s at 0.9x from 60 s",
+         .seconds = 300,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 4,
+         .late_ms = throttle(60, 10, 0.9),
+         .in_order = true,
+         .settle_sec = 60,
+         .disturbances = {{60, 70}},
+         .max_slips = 10000,
+         .max_resyncs = 1'000,
+         .max_settled_resyncs = 0,
+         .max_underruns = 1,
+         .max_settled_jumps = 0,
+         .max_recovery_sec = 120},
+        // 出力先の切り替え (出力遅延 32 → 29 ms): 切り替え直後の乱れは問わない
+        {.name = "11. J1 +-30 ms, output delay 32 -> 29 ms at 60 s",
+         .seconds = 300,
+         .seeds = 5,
+         .video = true,
+         .jitter_ms = 30,
+         .in_order = true,
+         .delay_changes = {{60, 29}},
+         .settle_sec = 60,
+         .disturbances = {{60, 61}},
+         .max_slips = 6000,
+         .max_resyncs = 1'000,
+         .max_settled_underruns = 0,
+         .max_reversals = 0,
+         .max_settled_jumps = 0},
     };
+    // デバイスの違い: 安定した回線 (1)、裾の重い揺れ (4)、繰り返す途切れ (7)、帯域不足 (10) を、基本遅延 10 / 32 / 100 ms と
+    // 取る仕方 3 つの組み合わせでも回す。条件はどのデバイスでも同じ (デバイスに合わせて緩めない)
+    const size_t base_cases = cases.size();
+    for (size_t i = 0; i < base_cases; ++i) {
+        const std::string& name = cases[i].name;
+        if (name.rfind("1. ", 0) != 0 && name.rfind("4. ", 0) != 0 && name.rfind("7. ", 0) != 0 && name.rfind("10. ", 0) != 0) continue;
+        for (double base : {10.0, 32.0, 100.0}) {
+            for (Consume consume : {Consume::Steady, Consume::Blocks, Consume::Irregular}) {
+                if (base == 32 && consume == Consume::Blocks) continue;  // 元の場合と同じ
+                Case d = cases[i];
+                d.base_delay_ms = base;
+                d.consume = consume;
+                d.name += fmt::format(" [device {:.0f} ms, {}]", base, consume_name(consume));
+                cases.push_back(d);
+            }
+        }
+    }
     bool ok = true;
     int ch = 1;
     for (size_t i = 0; i < cases.size(); ++i) {
-        if (only == 0 || only == int(i) + 1) ok &= run(cases[i], ch % 8 + 1).ok;
-        ++ch;
+        const auto& c = cases[i];
+        if (only == 0 || only == int(i) + 1) {
+            for (int s = 0; s < c.seeds; ++s) {
+                const uint32_t seed = 12345u + 7919u * uint32_t(s);  // 種 1 つ目は前と同じ (今までの場合の結果を変えない)
+                std::string csv;
+                if (!csv_dir.empty()) {
+                    std::string slug;
+                    for (char ch2 : c.name) slug += std::isalnum((unsigned char)ch2) ? ch2 : '_';
+                    csv = fmt::format("{}/{:02}-{}-seed{}.csv", csv_dir, i + 1, slug.substr(0, 60), s + 1);
+                }
+                ok &= run(c, ch % 8 + 1, seed, csv).ok;
+                ++ch;
+            }
+        }
     }
     std::printf("%s\n", ok ? "all OK" : "FAILED");
     return ok ? 0 : 1;

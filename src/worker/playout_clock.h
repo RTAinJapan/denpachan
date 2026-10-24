@@ -198,6 +198,12 @@ public:
 
     int64_t buffer_qpc() const { return buffer_; }
 
+    // 音声の揺れの備え (試験で推移を見る。audio_timing_test)
+    int64_t audio_headroom_qpc() {
+        std::lock_guard lk(mutex_);
+        return audio_headroom_;
+    }
+
 private:
     // 溜めたログをロックを外してから書く (ログはファイルに書くので、ロックを持ったまま書くと、出力スレッドと
     // 音声のスレッドがその間待たされる)
