@@ -22,8 +22,22 @@ namespace {
 constexpr REFERENCE_TIME kMinExclusivePeriod = 30'000;     // 3ms (100ns 単位)
 constexpr REFERENCE_TIME kRetryExclusivePeriod = 100'000;  // 周期に追いつけなかったら 10ms から試し直す
 constexpr REFERENCE_TIME kMaxExclusivePeriod = 200'000;    // 20ms を超えるなら共有モードにする
-constexpr int64_t kCalibrateMs = 1000;                     // 開いた直後、GetPosition と padding の差をこの間測る (中央値を使う)
-constexpr int64_t kPositionMaxOffMs = 30;                  // 差がいつもよりこれ以上ずれたら (位置のリセットなど) 測り直す
+// 再生位置 (GetPosition) と padding による時刻の差 (設計書 §6.3)。開いた直後は落ち着くまで (kCalibrateSkipMs) 使わず、
+// 続く kCalibrateMs の中央値を差とする。DVS では、開いた直後の差が落ち着いた後と 10 ms 違うことがあった
+constexpr int64_t kCalibrateSkipMs = 1000;
+constexpr int64_t kCalibrateMs = 2000;
+constexpr int64_t kPositionMaxOffMs = 30;  // 差がいつもよりこれ以上ずれたら (位置のリセットなど) 測り直す
+// 測り終えた後も差の中央値を kOffsetCheckMs ごとに見て、kOffsetMovedMs 以上ずれたままなのが kOffsetMovedChecks 回続いたら、
+// その値に替える (開いた直後に測った値が偏っていたとき)
+constexpr int64_t kOffsetCheckMs = 1000;
+constexpr int64_t kOffsetMovedMs = 3;
+constexpr int kOffsetMovedChecks = 3;
+constexpr int64_t kNoPositionLogMs = 5000;  // 再生位置が取れないのがこれだけ続いたらログに出す
+
+int64_t median(std::vector<int64_t>& v) {
+    std::nth_element(v.begin(), v.begin() + ptrdiff_t(v.size() / 2), v.end());
+    return v[v.size() / 2];
+}
 
 struct CoTaskMemDeleter {
     void operator()(void* p) const { CoTaskMemFree(p); }
@@ -243,8 +257,14 @@ bool DeviceOutput::open() {
         spdlog::info("audio [{}]: no audio clock; using the buffer padding for timing", name);
     }
     position_ready_ = false;
-    calibrate_until_qpc_ = 0;
+    calibrate_start_qpc_ = 0;
     calibrate_samples_.clear();
+    offset_check_samples_.clear();
+    offset_check_end_qpc_ = 0;
+    offset_moved_checks_ = 0;
+    no_position_since_qpc_ = 0;
+    no_position_calls_ = 0;
+    no_position_logged_ = false;
 
     // 音声の基本遅延 = 書いてから鳴り終わるまでの最大 + 余裕。
     // 共有モード: 書く量 + 先行して鳴る量 = バッファ 1 つ分
@@ -260,7 +280,7 @@ bool DeviceOutput::open() {
                 spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch, r.start_channel,
                              channels_);
             }
-            sources_.push_back(std::make_unique<ChannelSource>(r, rate_, channels_));
+            sources_.push_back(std::make_unique<ChannelSource>(r, rate_, channels_, base_delay_qpc_));
         }
     }
 
@@ -337,22 +357,45 @@ int64_t DeviceOutput::heard_time_locked(int64_t now, uint32_t lead_frames) {
     // 再生位置による時刻: 位置 pos のフレームが qpc_pos に鳴っていたので、書いた量との差の分だけ後に鳴る。
     // 揺れが 1 ms 未満で、デバイスのクロックにも追従する
     UINT64 pos = 0, qpc_pos = 0;
-    if (FAILED(clock_->GetPosition(&pos, &qpc_pos)) || qpc_pos == 0) return by_padding;
+    const HRESULT hr = clock_->GetPosition(&pos, &qpc_pos);
+    if (FAILED(hr) || qpc_pos == 0) {
+        // 取れない (開いた直後など): padding のまま。続くときはログに出す (DVS で、測り終えるまで 4 分かかったことがある)
+        if (no_position_since_qpc_ == 0) no_position_since_qpc_ = now;
+        ++no_position_calls_;
+        if (!no_position_logged_ && now - no_position_since_qpc_ > qpc_from_ms(kNoPositionLogMs)) {
+            no_position_logged_ = true;
+            render_log().info(
+                "audio [{}]: no position from the audio clock for {} s (GetPosition 0x{:08x}, time {}); using the buffer "
+                "padding",
+                to_utf8(options_.name), kNoPositionLogMs / 1000, uint32_t(hr), qpc_pos);
+        }
+        return by_padding;
+    }
+    if (no_position_since_qpc_ != 0) {
+        if (no_position_logged_) {
+            render_log().info("audio [{}]: the audio clock gives a position again after {:.1f} s ({} calls)", to_utf8(options_.name),
+                              double(qpc_to_us(now - no_position_since_qpc_)) / 1e6, no_position_calls_);
+        }
+        no_position_since_qpc_ = 0;
+        no_position_calls_ = 0;
+        no_position_logged_ = false;
+    }
     const double pos_frames = double(pos) * rate_ / double(clock_freq_);
     const int64_t at = qpc_from_us(int64_t(qpc_pos / 10));  // qpc_pos は 100ns 単位に直した QPC
     const int64_t by_position = at + qpc_from_us(int64_t((double(written_frames_) - pos_frames) * 1'000'000 / rate_));
 
-    // 平均の時刻 (= 遅延) は今までと同じにする: 開いた直後の 1 秒で padding との差 (中央値) を測って差し引く
+    // 平均の時刻 (= 遅延) は今までと同じにする: padding との差 (中央値) を測って差し引く
     const int64_t diff = by_position - by_padding;
     if (!position_ready_) {
-        if (calibrate_until_qpc_ == 0) calibrate_until_qpc_ = now + qpc_from_ms(kCalibrateMs);
+        if (calibrate_start_qpc_ == 0) calibrate_start_qpc_ = now;
+        if (now < calibrate_start_qpc_ + qpc_from_ms(kCalibrateSkipMs)) return by_padding;  // 開いた直後は使わない
         calibrate_samples_.push_back(diff);
-        if (now < calibrate_until_qpc_) return by_padding;
-        std::nth_element(calibrate_samples_.begin(), calibrate_samples_.begin() + ptrdiff_t(calibrate_samples_.size() / 2),
-                         calibrate_samples_.end());
-        position_offset_qpc_ = calibrate_samples_[calibrate_samples_.size() / 2];
+        if (now < calibrate_start_qpc_ + qpc_from_ms(kCalibrateSkipMs + kCalibrateMs)) return by_padding;
+        position_offset_qpc_ = median(calibrate_samples_);
         calibrate_samples_.clear();
         position_ready_ = true;
+        offset_check_end_qpc_ = now + qpc_from_ms(kOffsetCheckMs);
+        offset_moved_checks_ = 0;
         render_log().info("audio [{}]: timing from the audio clock (offset {:+.2f} ms from the buffer padding)", to_utf8(options_.name),
                           double(qpc_to_us(position_offset_qpc_)) / 1000.0);
     }
@@ -361,8 +404,24 @@ int64_t DeviceOutput::heard_time_locked(int64_t now, uint32_t lead_frames) {
         render_log().info("audio [{}]: audio clock moved {:+.1f} ms; measuring again", to_utf8(options_.name),
                           double(qpc_to_us(diff - position_offset_qpc_)) / 1000.0);
         position_ready_ = false;
-        calibrate_until_qpc_ = 0;
+        calibrate_start_qpc_ = 0;
+        calibrate_samples_.clear();
+        offset_check_samples_.clear();
         return by_padding;
+    }
+    // 測った差が偏っていないか: 中央値が kOffsetMovedMs 以上ずれたままなら、その値に替える
+    offset_check_samples_.push_back(diff);
+    if (now >= offset_check_end_qpc_) {
+        const int64_t m = median(offset_check_samples_);
+        offset_check_samples_.clear();
+        offset_check_end_qpc_ = now + qpc_from_ms(kOffsetCheckMs);
+        offset_moved_checks_ = std::llabs(m - position_offset_qpc_) >= qpc_from_ms(kOffsetMovedMs) ? offset_moved_checks_ + 1 : 0;
+        if (offset_moved_checks_ >= kOffsetMovedChecks) {
+            render_log().info("audio [{}]: offset from the buffer padding moved {:+.2f} -> {:+.2f} ms; using the new offset",
+                              to_utf8(options_.name), double(qpc_to_us(position_offset_qpc_)) / 1000.0, double(qpc_to_us(m)) / 1000.0);
+            position_offset_qpc_ = m;
+            offset_moved_checks_ = 0;
+        }
     }
     return by_position - position_offset_qpc_;
 }

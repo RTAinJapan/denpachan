@@ -74,7 +74,7 @@ void AsioOutput::on_opened(const denpachan_asio_format& format) {
                 spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch, r.start_channel,
                              format.channels);
             }
-            sources_.push_back(std::make_unique<ChannelSource>(r, uint32_t(format.sample_rate), format.channels));
+            sources_.push_back(std::make_unique<ChannelSource>(r, uint32_t(format.sample_rate), format.channels, base_delay_qpc_));
         }
     }
     std::lock_guard lk(status_mutex_);

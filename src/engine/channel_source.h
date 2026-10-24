@@ -12,7 +12,8 @@
 //   - 48kHz のデバイス: ずれが 2ms を超えたら 1 サンプルだけ重複 / 間引きする (送出元とデバイスの
 //     クロック差は数十 ppm なので、数秒に 1 回程度)。
 //   - それ以外: リサンプル比を微調整する (最大 ±0.5%)。
-//   ずれが 50ms を超えたら (接続し直しなど) フェードアウト → 読み位置を合わせ直す → フェードイン。
+//   ずれが 50ms を超えたら (接続し直しなど)、または平滑化したずれが 5ms を超えたら (遅延が一度に動いたとき)、
+//   フェードアウト → 読み位置を合わせ直す → フェードイン。
 //
 // ポップノイズを出さない: 開始・途絶・合わせ直しの瞬間だけ 10ms のフェードをかける (通常の音には触れない)。
 
@@ -56,7 +57,8 @@ struct ChannelStats {
 
 class ChannelSource {
 public:
-    ChannelSource(const RouteOptions& options, uint32_t device_rate, int device_channels);
+    // base_delay_qpc: render に渡す基本遅延 (作った時点で worker に知らせる)
+    ChannelSource(const RouteOptions& options, uint32_t device_rate, int device_channels, int64_t base_delay_qpc);
     ~ChannelSource();
     ChannelSource(const ChannelSource&) = delete;
     ChannelSource& operator=(const ChannelSource&) = delete;

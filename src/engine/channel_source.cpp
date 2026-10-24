@@ -13,8 +13,12 @@ using namespace denpachan::audio;
 
 namespace {
 
-constexpr double kResyncThresholdSec = 0.050;  // これ以上ずれたら合わせ直す
-constexpr double kSlipThresholdSec = 0.002;    // 48kHz デバイス: これ以上ずれたら 1 サンプル重複 / 間引き
+constexpr double kResyncThresholdSec = 0.050;  // これ以上ずれたら (平滑化の前の値で) すぐ合わせ直す
+// 平滑化したずれがこれ以上なら合わせ直す。開いた直後に出力遅延が決まって worker の時間軸が動いたときなど、一度に動いた
+// ずれを 1 サンプルずつ詰めると (2 ms/秒まで) 数十秒かかり、その間ずっと重複・間引きが続くため (DVS で 30 ms を詰めるのに
+// 1,300〜2,500 回)。クロック差によるゆっくりしたずれは、重複・間引きで kSlipThresholdSec 付近に保たれるので届かない
+constexpr double kOffsetResyncThresholdSec = 0.005;
+constexpr double kSlipThresholdSec = 0.002;  // 48kHz デバイス: これ以上ずれたら 1 サンプル重複 / 間引き
 // 48kHz デバイス: 重複 / 間引きは 10ms に 1 回まで (最大約 2000ppm のクロック差まで追従できる)。
 // 実際に起きる回数はクロック差の分だけ (例: 50ppm なら 2〜3 回/秒)。
 constexpr int kMinSlipIntervalFrames = 480;
@@ -33,7 +37,7 @@ std::string fmt_reason(const char* reason, double error_ms) {
 
 }  // namespace
 
-ChannelSource::ChannelSource(const RouteOptions& options, uint32_t device_rate, int device_channels)
+ChannelSource::ChannelSource(const RouteOptions& options, uint32_t device_rate, int device_channels, int64_t base_delay_qpc)
     : options_(options),
       device_rate_(device_rate),
       device_channels_(device_channels),
@@ -44,6 +48,8 @@ ChannelSource::ChannelSource(const RouteOptions& options, uint32_t device_rate, 
     // 描画を始める前に済ませておく (描画コールバックでの最初の 1 回をなくす)
     ensure_swr();
     ensure_open();
+    // 出力遅延は鳴らし始める前に worker に知らせる (鳴り始めてから worker の時間軸が動いて合わせ直すことを減らす)
+    if (header_) header_->output_delay_qpc.store(base_delay_qpc + qpc_from_ms(options_.offset_ms), std::memory_order_relaxed);
 }
 
 ChannelSource::~ChannelSource() {
@@ -177,11 +183,12 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
 
         if (!resync_pending_) {
             // 合わせ直しの理由 (統計に残す)
-            const char* reason = !has_map                                              ? "no time map"
-                                 : epoch != epoch_                                     ? "new epoch"
-                                 : std::abs(error) > kResyncThresholdSec * kSampleRate ? "position error"
-                                 : double(read_pos_) < oldest                          ? "overrun"
-                                                                                       : nullptr;
+            const char* reason = !has_map                                                         ? "no time map"
+                                 : epoch != epoch_                                                ? "new epoch"
+                                 : std::abs(error) > kResyncThresholdSec * kSampleRate            ? "position error"
+                                 : std::abs(error_avg_) > kOffsetResyncThresholdSec * kSampleRate ? "position offset"
+                                 : double(read_pos_) < oldest                                     ? "overrun"
+                                                                                                  : nullptr;
             if (reason) {
                 resync_pending_ = true;  // このバッファでフェードアウトしてから合わせ直す
                 std::lock_guard lk(stats_.reason_mutex);

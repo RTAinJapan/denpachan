@@ -80,15 +80,21 @@ private:
 
     // 鳴る時刻の測り方 (render)。GetCurrentPadding (「今 + 溜まっている量」) は仮想デバイスなどで数 ms 揺れるので、
     // IAudioClock::GetPosition (再生位置とその時刻) から求める。平均の時刻 (遅延) は今までと変えないよう、
-    // 開いた直後に padding との差を測っておいて差し引く。
+    // 開いて落ち着いてから padding との差を測っておいて差し引く (測った値が偏っていたら、あとで替える)。
     int64_t heard_time_locked(int64_t now, uint32_t lead_frames);
     Microsoft::WRL::ComPtr<IAudioClock> clock_;
     uint64_t clock_freq_ = 0;
     uint64_t written_frames_ = 0;      // デバイスのバッファに書いたフレーム数 (開いてから)
-    int64_t position_offset_qpc_ = 0;  // GetPosition による時刻 - padding による時刻 (測り終えたら固定)
+    int64_t position_offset_qpc_ = 0;  // GetPosition による時刻 - padding による時刻
     bool position_ready_ = false;      // 差を測り終えた
-    int64_t calibrate_until_qpc_ = 0;
+    int64_t calibrate_start_qpc_ = 0;  // 再生位置が取れるようになった時刻 (0 = まだ)
     std::vector<int64_t> calibrate_samples_;
+    std::vector<int64_t> offset_check_samples_;  // 測り終えた後の差 (kOffsetCheckMs ごとに中央値を見る)
+    int64_t offset_check_end_qpc_ = 0;
+    int offset_moved_checks_ = 0;
+    int64_t no_position_since_qpc_ = 0;  // 再生位置が取れなくなった時刻 (0 = 取れている)
+    uint64_t no_position_calls_ = 0;
+    bool no_position_logged_ = false;
 
     // 診断: デバイスからの呼び出し回数と最大間隔
     int64_t last_render_qpc_ = 0;
