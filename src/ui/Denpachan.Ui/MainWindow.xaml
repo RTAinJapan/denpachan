@@ -162,8 +162,11 @@
                     </StackPanel>
 
                     <!-- ビットレートの推移 -->
-                    <c:LineChart Grid.Row="3" Height="22" Margin="0,4,0,0" Values="{Binding BitrateHistory}" ShowLabels="False"
-                                 Capacity="120" Stroke="{StaticResource AccentBrush}" />
+                    <DockPanel Grid.Row="3" Margin="0,4,0,0">
+                        <TextBlock DockPanel.Dock="Left" Text="{l:Tr main.tile.bitrateChart}" Style="{StaticResource DimText}" FontSize="11"
+                                   VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <c:LineChart Height="22" Values="{Binding BitrateHistory}" ShowLabels="False" Capacity="120" Stroke="{StaticResource AccentBrush}" />
+                    </DockPanel>
 
                     <!-- 操作 -->
                     <WrapPanel Grid.Row="4" Margin="0,8,0,0" Style="{StaticResource LockablePanel}">
@@ -186,8 +189,10 @@
                         <TextBlock Text="{l:Tr main.tile.audio}" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0" />
                         <ComboBox ItemsSource="{Binding AudioDeviceChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
                                   SelectedValue="{Binding AudioDevice}" Width="230" Margin="0,0,6,0" />
+                        <TextBlock Text="{l:Tr main.tile.audioChannel}" Style="{StaticResource DimText}" VerticalAlignment="Center" Margin="0,0,6,0"
+                                   ToolTip="{l:Tr main.tile.audioChannelTip}" />
                         <ComboBox ItemsSource="{Binding StartChannelOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
-                                  SelectedValue="{Binding AudioStartChannel}" MinWidth="70" />
+                                  SelectedValue="{Binding AudioStartChannel}" MinWidth="70" ToolTip="{l:Tr main.tile.audioChannelTip}" />
                     </WrapPanel>
                 </Grid>
             </Border>

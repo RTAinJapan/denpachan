@@ -610,7 +610,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (sharedFallback.Length > 0) audioNotes.Add(T("main.tile.audioSharedFallback"));
         if (Mute) audioNotes.Add(T("main.tile.audioMuted"));
         if (dropouts + gaps > 0) audioNotes.Add(F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")));
-        if (resyncs > 0) audioNotes.Add(F("main.tile.audioResyncs", ("count", $"{resyncs:0}")));
+        // 合わせ直しはタイルでは回数を出さず、黄にするだけ (回数は詳細)
         var audioLatency = $"{audioOut.Num("latencyMs"):0}";
         // デバイスを失った / ドライバが止まった (開き直している)。「失った」「戻った」をイベントに 1 行ずつ出す
         var audioErrorId = audioOut.At("error").Str("id");
@@ -622,8 +622,9 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         AudioLine = audioOut switch
         {
             null => T("main.tile.audioNone"),
-            _ when audioOut.At("error") != null => F("main.tile.audioError", ("error", Message(audioOut.At("error"))), ("device", audioOut.Str("device"))),
-            _ when !audioOut.Bool("open") => T("main.tile.audioCannotOpen"),
+            // タイルには短く出す (全文は詳細とイベント。デバイス名はすぐ下の選択と同じなので出さない)
+            _ when audioOut.At("error") != null => F("main.tile.audioError", ("error", AudioErrorShort(audioOut.At("error")))),
+            _ when !audioOut.Bool("open") => F("main.tile.audioError", ("error", T("main.tile.audioCannotOpen"))),
             _ when audioOut.Bool("playing") => audioNotes.Count == 0
                 ? F("main.tile.audioPlaying", ("latency", audioLatency))
                 : F("main.tile.audioPlayingWithNotes", ("latency", audioLatency), ("notes", string.Join(T("common.listSeparator"), audioNotes))),
@@ -698,6 +699,17 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         return note.Length > 0 ? F("srtAdvice.withNote", ("value", text), ("note", note)) : text;
     }
 
+    /// <summary>タイルに出す、音声のエラーの短い言い方 (全文は詳細の「音声のエラー」とイベントに出す)</summary>
+    private static string AudioErrorShort(JsonNode? error) => error.Str("id") switch
+    {
+        "audio.deviceLost" => T("main.tile.audioReopening"),
+        "audio.driverStalled" => T("main.tile.audioStalled"),
+        "audio.deviceNotFound" => T("main.tile.audioNotFound"),
+        "audio.startChannelOutOfRange" => T("main.tile.audioOutOfRange"),
+        "audio.asioOneDriver" => T("main.tile.audioAsioBusy"),
+        _ => Message(error),
+    };
+
     private static double PeakOf(JsonNode? v) => v is JsonValue j && j.TryGetValue<double>(out var d) && double.IsFinite(d) ? d : -100;
 
     /// <summary>経過時間を h:mm:ss で (TimeSpan の "hh" は 24 時間で 0 に戻るので使わない)</summary>
@@ -763,6 +775,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
                          : ao.Str("exclusiveFallback").Length > 0 ? "detail.audioOutValueSharedFallback"
                          : "detail.audioOutValue";
             Add("detail.audioOut", F(outKey, ("device", ao.Str("device")), ("channels", $"{ao.Int("startChannel")}-{ao.Int("startChannel") + 1}")));
+            if (Message(ao.At("error")) is { Length: > 0 } audioError) Add("detail.audioError", audioError);
             if (ao.At("latencyMs") != null)
             {
                 // 鳴っていないとき (デバイスを失った、ドライバが止まった、出力チャンネルが範囲外など) は、engine が返す

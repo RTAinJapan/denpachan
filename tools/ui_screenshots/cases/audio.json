@@ -71,10 +71,10 @@
   "expect": {
     "connected": true,
     "channels": [
-      { "statusText": "受信中", "audioKind": "error", "audioDeviceChoices": "なし | ASIO: Dante Virtual Soundcard (x64) | CABLE Input (VB-Audio Virtual Cable) | DVS Transmit  1-2 (Dante Virtual Soundcard) | DVS Transmit  3-4 (Dante Virtual Soundcard) | DVS Transmit  5-6 (Dante Virtual Soundcard) | DVS Transmit  7-8 (Dante Virtual Soundcard) | DVS Transmit  9-10 (Dante Virtual Soundcard) | DVS Transmit 11-12 (Dante Virtual Soundcard) | DVS Transmit 13-14 (Dante Virtual Soundcard) | DVS Transmit 15-16 (Dante Virtual Soundcard) | スピーカー (Realtek(R) Audio)" },
+      { "statusText": "受信中", "audioKind": "error", "audioLine": "音声: 開き直しています", "audioDeviceChoices": "なし | ASIO: Dante Virtual Soundcard (x64) | CABLE Input (VB-Audio Virtual Cable) | DVS Transmit  1-2 (Dante Virtual Soundcard) | DVS Transmit  3-4 (Dante Virtual Soundcard) | DVS Transmit  5-6 (Dante Virtual Soundcard) | DVS Transmit  7-8 (Dante Virtual Soundcard) | DVS Transmit  9-10 (Dante Virtual Soundcard) | DVS Transmit 11-12 (Dante Virtual Soundcard) | DVS Transmit 13-14 (Dante Virtual Soundcard) | DVS Transmit 15-16 (Dante Virtual Soundcard) | スピーカー (Realtek(R) Audio)" },
       { "statusText": "受信中", "audioKind": "warn" },
-      { "statusText": "受信中", "audioKind": "error", "startChannelOptions": "1-2 | 3-4 (範囲外)" },
-      { "statusText": "受信中", "audioKind": "error" }
+      { "statusText": "受信中", "audioKind": "error", "audioLine": "音声: 出力チャンネルがありません", "startChannelOptions": "1-2 | 3-4 (範囲外)" },
+      { "statusText": "受信中", "audioKind": "error", "audioLine": "音声: ドライバが止まっています" }
     ]
   }
 }
