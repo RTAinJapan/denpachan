@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 namespace denpachan::worker {
@@ -122,17 +123,54 @@ int64_t AudioWriter::update_clock(int64_t pts_us, int64_t arrival_qpc) {
 int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
     // 映像と同じ時計 C(pts) に鳴るよう、engine の出力遅延を差し引いた時刻に engine へ渡す
     const int64_t output_delay = header_->output_delay_qpc.load(std::memory_order_relaxed);
+    if (std::llabs(output_delay - last_output_delay_) > qpc_from_ms(1)) {
+        // 出力遅延が変わった (engine がデバイスを開いた・開き直した): 渡す時刻がその分動き、時計の目標とのずれも
+        // 残るので、しばらく大きなずれを一度に詰めてもらう。読み手には 1 回で合わせ直させる
+        // 0 になった (出力先が無くなった) ときは、読み手がいないので何もしない
+        if (published_) {
+            spdlog::info("audio: output delay {:.1f} -> {:.1f} ms", double(qpc_to_us(last_output_delay_)) / 1000,
+                         double(qpc_to_us(output_delay)) / 1000);
+            if (output_delay != 0) header_->epoch.fetch_add(1, std::memory_order_release);
+        }
+        if (output_delay != 0) {
+            // 前に鳴らしていたときの出力遅延との差だけ、時計を一度に動かす (「なし」を挟んでも、その前の値と比べる)
+            if (published_ && last_nonzero_output_delay_ != 0)
+                video_clock_.shift_for_output_delay(output_delay - last_nonzero_output_delay_);
+            video_clock_.allow_fast_adjust();
+            last_nonzero_output_delay_ = output_delay;
+        }
+        last_output_delay_ = output_delay;
+    }
     auto handoff = [&] { return video_clock_.due(session, pts_us, arrival_qpc) - output_delay; };
 
     // 接続直後のまとめ届きの間は時計に報告しない (到着が実際より遅く見えるため)
     if (!published_ && arrival_qpc < settle_end_qpc_) return handoff();
+
+    // 出力先が無い (engine の出力遅延が 0): 音声の余裕で時計を動かさない (「なし」にしただけで映像の遅延が変わらないように)
+    if (output_delay == 0) {
+        video_clock_.note_audio_without_output();
+        if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
+            published_ = true;
+            clock_jumps_ = video_clock_.jumps();
+            spdlog::info("audio: synced to video (no output yet)");
+        }
+        return handoff();
+    }
 
     // 余裕を報告する。足りなければ (音声が遅れて届いた) 時計が遅らされ、映像も待つ。
     video_clock_.report_audio(handoff() - arrival_qpc);
     // 時計の最初の調整が済んでから鳴らし始める (鳴り始めてから時間軸が大きく動かないように)
     if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
         published_ = true;
+        clock_jumps_ = video_clock_.jumps();
         spdlog::info("audio: synced to video (output delay {:.1f} ms)", double(qpc_to_us(output_delay)) / 1000);
+    } else if (published_) {
+        // 時計が一度に大きく動いた: 読み手が重複・間引きで少しずつ追わずに、1 回で合わせ直すよう epoch を進める
+        const uint64_t jumps = video_clock_.jumps();
+        if (jumps != clock_jumps_) {
+            clock_jumps_ = jumps;
+            header_->epoch.fetch_add(1, std::memory_order_release);
+        }
     }
     return handoff();
 }

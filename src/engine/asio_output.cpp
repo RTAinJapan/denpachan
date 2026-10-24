@@ -11,6 +11,7 @@ namespace denpachan::engine {
 namespace {
 
 constexpr int kPreferredRate = 48000;  // 48 kHz ならリサンプルせずにそのまま出せる (ChannelSource)
+constexpr int64_t kStalledMs = 1000;   // ドライバからこれだけ呼ばれなければ、止まっているとして状態に出す
 
 }  // namespace
 
@@ -45,6 +46,9 @@ void AsioOutput::stop() {
     stopping_ = true;
     close_asio_output(output_);  // 戻るまでにコールバックは止まる
     output_ = nullptr;
+    // 出力先が無くなった (ルーティングが変わった、音声を「なし」にした) ことを worker に知らせる
+    std::lock_guard lk(sources_mutex_);
+    for (auto& s : sources_) s->clear_output_delay();
 }
 
 void AsioOutput::set_mute(int ch, bool mute) {
@@ -57,7 +61,9 @@ void AsioOutput::set_mute(int ch, bool mute) {
 
 DeviceStatus AsioOutput::status() {
     std::lock_guard lk(status_mutex_);
-    return status_;
+    DeviceStatus st = status_;
+    st.stalled = st.open && qpc_now() - last_render_qpc_.load() > qpc_from_ms(kStalledMs);
+    return st;
 }
 
 void AsioOutput::on_opened(const denpachan_asio_format& format) {
@@ -74,11 +80,13 @@ void AsioOutput::on_opened(const denpachan_asio_format& format) {
                 spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch, r.start_channel,
                              format.channels);
             }
-            sources_.push_back(std::make_unique<ChannelSource>(r, uint32_t(format.sample_rate), format.channels));
+            sources_.push_back(std::make_unique<ChannelSource>(r, uint32_t(format.sample_rate), format.channels, base_delay_qpc_));
         }
     }
+    last_render_qpc_ = qpc_now();
     std::lock_guard lk(status_mutex_);
     status_.open = true;
+    status_.ever_opened = true;
     status_.exclusive = false;
     status_.sample_rate = format.sample_rate;
     status_.channels = format.channels;
@@ -88,12 +96,17 @@ void AsioOutput::on_opened(const denpachan_asio_format& format) {
 }
 
 void AsioOutput::on_closed() {
+    {
+        std::lock_guard lk(sources_mutex_);
+        for (auto& s : sources_) s->stats().playing = false;  // 開き直すまで鳴っていない
+    }
     std::lock_guard lk(status_mutex_);
     status_.open = false;
     if (!stopping_) ++status_.reopens;
 }
 
 void AsioOutput::on_render(float* mix, int frames, int64_t first_hear_qpc) {
+    last_render_qpc_.store(qpc_now(), std::memory_order_relaxed);
     std::lock_guard lk(sources_mutex_);
     for (auto& s : sources_) s->render(mix, frames, first_hear_qpc, base_delay_qpc_);
 }

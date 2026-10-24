@@ -21,7 +21,10 @@ struct DeviceOptions {
 
 struct DeviceStatus {
     bool open = false;
+    bool ever_opened = false;  // 一度でも開けたか (開けないのと、失って開き直しているのを分ける)
+    bool stalled = false;      // 開いているが、ドライバから呼ばれていない (ASIO。1 秒以上)
     bool exclusive = false;
+    std::string exclusive_fallback;  // 排他モードを頼まれたが共有モードで開いている理由 ("initFailed" / "tooSlow")。無ければ空
     int sample_rate = 0;
     int channels = 0;
     std::string sample_format;

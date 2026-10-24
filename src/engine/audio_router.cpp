@@ -49,7 +49,7 @@ void AudioRouter::apply(const Config& config) {
         if (!ch.enabled || ch.audio.device.empty()) continue;
         const auto dev = find_output_device(from_utf8(ch.audio.device));
         if (!dev) {
-            missing_[ch.id] = ch.audio.device;
+            missing_[ch.id] = {ch.audio.device, ch.audio.start_channel};
             continue;
         }
         if (dev->asio) {
@@ -58,7 +58,7 @@ void AudioRouter::apply(const Config& config) {
                 asio_name = dev->name;
             }
             if (dev->id != asio_id) {
-                asio_busy_[ch.id] = ch.audio.device;
+                asio_busy_[ch.id] = {ch.audio.device, ch.audio.start_channel};
                 continue;
             }
         }
@@ -107,12 +107,12 @@ void AudioRouter::apply(const Config& config) {
         }
     }
     if (missing_ != logged_missing_) {  // 5 秒ごとの apply で毎回出さない
-        for (const auto& [ch, name] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, name);
+        for (const auto& [ch, u] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, u.device);
         logged_missing_ = missing_;
     }
     if (asio_busy_ != logged_asio_busy_) {  // 同じく、変わったときだけ出す
-        for (const auto& [ch, name] : asio_busy_) {
-            spdlog::warn("ch{}: {} is not used: only one ASIO driver at a time ({} is in use)", ch, name, to_utf8(asio_name));
+        for (const auto& [ch, u] : asio_busy_) {
+            spdlog::warn("ch{}: {} is not used: only one ASIO driver at a time ({} is in use)", ch, u.device, to_utf8(asio_name));
         }
         logged_asio_busy_ = asio_busy_;
     }
@@ -127,11 +127,18 @@ void AudioRouter::set_mute(int ch, bool mute) {
 }
 
 json AudioRouter::channel_status(int ch) {
+    // 出せないチャンネルも、出力チャンネルは設定の値を返す (画面の詳細に出す)
     if (auto it = missing_.find(ch); it != missing_.end()) {
-        return {{"device", it->second}, {"open", false}, {"error", {{"id", "audio.deviceNotFound"}}}};
+        return {{"device", it->second.device},
+                {"open", false},
+                {"startChannel", it->second.start_channel},
+                {"error", {{"id", "audio.deviceNotFound"}}}};
     }
     if (auto it = asio_busy_.find(ch); it != asio_busy_.end()) {
-        return {{"device", it->second}, {"open", false}, {"error", {{"id", "audio.asioOneDriver"}}}};
+        return {{"device", it->second.device},
+                {"open", false},
+                {"startChannel", it->second.start_channel},
+                {"error", {{"id", "audio.asioOneDriver"}}}};
     }
     for (auto& [id, d] : devices_) {
         for (const auto& r : d.routes) {
@@ -144,13 +151,15 @@ json AudioRouter::channel_status(int ch) {
                       {"exclusive", st.exclusive},
                       {"startChannel", r.start_channel},
                       {"mute", r.mute}};
+            // 排他モードを頼まれたが共有モードで開いている (開けない・周期に追いつけない)
+            if (st.open && !st.exclusive_fallback.empty()) j["exclusiveFallback"] = st.exclusive_fallback;
             // for_each_source は描画スレッドと同じロック (sources_mutex_) を持って呼ぶので、その中では値を写すだけにして、
             // JSON はロックの外で作る (8ch 分を 1 秒ごとに作る間、描画を待たせない)
             struct Snapshot {
                 bool found = false;
                 bool playing = false;
                 double latency_ms = 0, error_ms = 0;
-                uint64_t slips = 0, underruns = 0, resyncs = 0;
+                uint64_t slips = 0, duplicated = 0, dropped = 0, underruns = 0, resyncs = 0;
                 std::string last_resync;
                 float peak_l = 0, peak_r = 0;
             } snap;
@@ -162,6 +171,8 @@ json AudioRouter::channel_status(int ch) {
                 snap.latency_ms = stats.latency_ms.load();
                 snap.error_ms = stats.error_ms.load();
                 snap.slips = stats.slips.load();
+                snap.duplicated = stats.duplicated.load();
+                snap.dropped = stats.dropped.load();
                 snap.underruns = stats.underruns.load();
                 snap.resyncs = stats.resyncs.load();
                 {
@@ -171,11 +182,23 @@ json AudioRouter::channel_status(int ch) {
                 snap.peak_l = stats.peak_l.exchange(0);
                 snap.peak_r = stats.peak_r.exchange(0);
             });
+            if (!st.open && st.ever_opened) {
+                j["error"] = {{"id", "audio.deviceLost"}};  // 開けていたのに失った (DVS の停止、モードの切り替えなど)。開き直している
+            } else if (st.stalled) {
+                j["error"] = {{"id", "audio.driverStalled"}};  // ASIO のドライバから呼ばれていない
+            } else if (st.open && (r.start_channel < 1 || r.start_channel > st.channels)) {
+                // 出力チャンネルがデバイスに無い (2ch ずつのデバイスで 3-4 を選んだままなど)。何も出ていない
+                j["error"] = {{"id", "audio.startChannelOutOfRange"},
+                              {"channels", std::to_string(r.start_channel) + "-" + std::to_string(r.start_channel + 1)},
+                              {"deviceChannels", st.channels}};
+            }
             if (snap.found) {
-                j["playing"] = snap.playing;
+                j["playing"] = snap.playing && st.open && !st.stalled;
                 j["latencyMs"] = snap.latency_ms;
                 j["errorMs"] = snap.error_ms;
                 j["slips"] = snap.slips;
+                j["slipsDuplicated"] = snap.duplicated;  // 重複と間引きの内訳 (調べもの用)
+                j["slipsDropped"] = snap.dropped;
                 j["underruns"] = snap.underruns;
                 j["resyncs"] = snap.resyncs;
                 j["lastResync"] = snap.last_resync;  // 直近の合わせ直しの理由 (調べもの用)

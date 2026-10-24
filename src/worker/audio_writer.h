@@ -68,6 +68,10 @@ private:
     bool published_ = false;  // ウォームアップが終わって読み手に時刻を見せているか
     int64_t window_start_qpc_ = 0;
     int64_t window_min_slack_ = 0;  // 窓内で最も余裕のなかったチャンクの (due - arrival)
+    // A/V 同期: 最後に見た engine の出力遅延と、時計が一度に大きく動いた回数 (変わったら epoch を進める)
+    int64_t last_output_delay_ = 0;
+    int64_t last_nonzero_output_delay_ = 0;  // 最後に出力先があったときの出力遅延 (0 = まだ無い)
+    uint64_t clock_jumps_ = 0;
 };
 
 }  // namespace denpachan::worker

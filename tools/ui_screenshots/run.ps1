@@ -51,6 +51,7 @@ $shots = @(
     @{ Name = 'main-disconnected';    Case = 'disconnected';    Args = $main },
     @{ Name = 'main-unreachable';     Case = 'unreachable';     Args = $main },
     @{ Name = 'main-eight';           Case = 'eight';           Args = $main },
+    @{ Name = 'main-audio';           Case = 'audio';           Args = $main },
     @{ Name = 'settings-general-eight'; Case = 'eight';         Args = $dialog + @('--general') },
     @{ Name = 'settings-input';       Case = 'normal';          Args = $dialog + @('--settings', '1') },
     @{ Name = 'settings-record';      Case = 'normal';          Args = $dialog + @('--settings', '1', '--settings-tab', '1') },

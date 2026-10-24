@@ -31,6 +31,9 @@ SRT / RTMP で受けた映像と音声 (最大 8 チャンネル。使う数は�
 4. OBS では「ソース」→「映像キャプチャデバイス」→ `denpachan Cam 1`〜`4` を選ぶ。
 5. 音声の出力先は、チャンネルの「音声」で選ぶ。Windows の音声デバイスのほか、ASIO のドライバ (`ASIO: …`。Dante Virtual Soundcard の ASIO モードなど) も選べる。
    ASIO に出すには、[denpachan-asio-driver](https://github.com/RTAinJapan/denpachan-asio-driver) の Releases から zip を取り、中の `denpachan-asio-driver.dll` を `denpachan-engine.exe` と同じフォルダに置いてから起動する (別のリポジトリで配っている理由は下記「ライセンス」)。ASIO のドライバは同時に 1 つだけ使える。
+   - Dante Virtual Soundcard (DVS) の WDM モード (DVS 4.5) は、2ch ずつの別々のデバイス (`DVS Transmit 1-2`、`DVS Transmit 3-4`…) に見える。チャンネルごとにデバイスを選び、出力チャンネルは 1-2 にする。出力モードは「共有」にする (DVS 4.5 は排他モードで開けない。選んでも共有モードで出す)。
+   - DVS の ASIO モードは 1 つのドライバ (`ASIO: Dante Virtual Soundcard (x64)`) に見えるので、チャンネルごとに出力チャンネル (1-2、3-4…) を分ける。DVS の ASIO のチャンネル数の既定は 2x2 なので、DVS の設定で使う数 (16x16 など) にしておく。
+   - denpachan が ASIO のドライバを開いている間は、DVS の Audio Interface (WDM / ASIO) を切り替えられない。切り替えるときは、先にそのチャンネルの音声を「なし」にする。
 
 - 画面を閉じると受信も止まる (仮想カメラと音声の出力も止まる)。受信中のチャンネルがあるときは、閉じてよいかを確認する。本番中は画面を閉じないこと。
 - 画面が落ちたときは、受信は止まらずに続く。もう一度 `denpachan.exe` を起動すれば、動いている受信につながる。
