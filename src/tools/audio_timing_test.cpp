@@ -2,7 +2,8 @@
 //
 // worker の書き手 (AudioWriter + PlayoutClock、A/V 同期) と engine の読み手 (ChannelSource) を、仮想の時計で動かす。
 // 送出元から音声のかたまり (AAC の 1024 サンプル) が届き、デバイスが 10 ms ごとに描画する。場合ごとに、
-// 鳴らし始めてからの重複・間引きと合わせ直しの回数を数え、上限を超えたら終了コード 1。
+// 鳴らし始めてからの重複・間引きと合わせ直しの回数、落ち着いた後 (kSettledSec 以降) に時間軸を動かした回数を数え、
+// 上限を超えたら終了コード 1。重複・間引きの上限は、桁が変わっていないかを見るためのもの (回数そのものに実害はほぼ無い)。
 //
 //   audio_timing_test            すべての場合
 //   audio_timing_test -v         時間軸の動き (worker の debug ログ) も出す
@@ -64,12 +65,19 @@ struct Case {
     uint64_t max_resyncs = 0;  // 鳴らし始めた 1 回は数えない (開き直したあとの鳴らし始めは数える)
     uint64_t min_resyncs = 0;
     double max_moved_ms = 1e9;  // 時間軸 (映像も同じ) を鳴らし始めてから動かした量の合計 (向きによらず)
+    // 落ち着いた後 (kSettledSec 以降) に時間軸を動かした回数の上限。揺れだけなら動かさない
+    int max_moves = 1'000'000;
 };
+
+constexpr double kSettledSec = 15;  // これより後を「落ち着いた後」として数える
 
 struct Result {
     uint64_t slips = 0;
     uint64_t resyncs = 0;
     double moved_ms = 0;
+    int moves = 0;                   // 落ち着いた後に時間軸を動かした回数
+    double min_slack_ms = 1e9;       // 落ち着いた後の音声の余裕 (鳴らすべき時刻 - 出力遅延 - 到着) の最小
+    double max_window_slack_ms = 0;  // 同じく、1 秒ごとの最小の余裕の最大 (遅延が余っている分)
     std::string last_resync;
     bool ok = false;
 };
@@ -120,6 +128,8 @@ Result run(const Case& c, int ch) {
     // 時間軸の動き: pts 0 を出すべき時刻が、鳴らし始めてからどれだけ動いたか (合計)
     int64_t last_due0 = 0;
     double moved_ms = 0;
+    double window_slack_ms = 1e9;  // 今の 1 秒の最小の余裕
+    double window_until = kSettledSec + 1;
 
     std::vector<float> chunk(size_t(kChunkFrames) * 2);
     std::vector<float> mix(size_t(kDeviceFrames) * 2);
@@ -150,6 +160,11 @@ Result run(const Case& c, int ch) {
             }
             const int64_t pts_us = int64_t(double(k) * kChunkFrames * 1e6 / audio::kSampleRate);
             writer.write(1, pts_us, arrival, chunk.data(), kChunkFrames);
+            if (started && t >= kSettledSec) {
+                const double slack = double(qpc_to_us(clock.due(1, pts_us, arrival) - base_delay - arrival)) / 1000.0;
+                r.min_slack_ms = std::min(r.min_slack_ms, slack);
+                window_slack_ms = std::min(window_slack_ms, slack);
+            }
             ++k;
         }
         if (!source && c.device_open_sec > 0 && t >= c.device_open_sec && next_change == 0) {
@@ -171,7 +186,13 @@ Result run(const Case& c, int ch) {
         if (started) {
             const int64_t due0 = clock.due(1, 0, g_now);
             if (last_due0 != 0) moved_ms += std::fabs(double(qpc_to_us(due0 - last_due0)) / 1000.0);
+            if (last_due0 != 0 && due0 != last_due0 && t >= kSettledSec) ++r.moves;
             last_due0 = due0;
+        }
+        if (t >= window_until) {
+            if (window_slack_ms < 1e9) r.max_window_slack_ms = std::max(r.max_window_slack_ms, window_slack_ms);
+            window_slack_ms = 1e9;
+            window_until += 1;
         }
         // デバイス: 10 ms (デバイスの時計) ごとに描画する。これから書くバッファは kLeadMs 後に鳴る
         if (source && g_now >= next_render) {
@@ -205,10 +226,14 @@ Result run(const Case& c, int ch) {
         std::lock_guard lk(st.reason_mutex);
         r.last_resync = st.last_resync_reason;
     }
-    r.ok = r.slips <= c.max_slips && r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs && r.moved_ms <= c.max_moved_ms;
-    std::printf("%s %s: slips %llu (max %llu), resyncs %llu (max %llu), time base moved %.1f ms%s%s\n", r.ok ? "OK  " : "FAIL",
-                c.name.c_str(), (unsigned long long)r.slips, (unsigned long long)c.max_slips, (unsigned long long)r.resyncs,
-                (unsigned long long)c.max_resyncs, r.moved_ms, r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
+    r.ok = r.slips <= c.max_slips && r.resyncs <= c.max_resyncs && r.resyncs >= c.min_resyncs && r.moved_ms <= c.max_moved_ms &&
+           r.moves <= c.max_moves;
+    std::printf(
+        "%s %s: slips %llu (max %llu), resyncs %llu (max %llu), time base moved %.1f ms, %d moves after %.0f s, "
+        "audio slack after that %.1f ms min / %.1f ms max of 1 s minimums%s%s\n",
+        r.ok ? "OK  " : "FAIL", c.name.c_str(), (unsigned long long)r.slips, (unsigned long long)c.max_slips, (unsigned long long)r.resyncs,
+        (unsigned long long)c.max_resyncs, r.moved_ms, r.moves, kSettledSec, r.min_slack_ms, r.max_window_slack_ms,
+        r.last_resync.empty() ? "" : ", last resync: ", r.last_resync.c_str());
     return r;
 }
 
@@ -250,21 +275,57 @@ int main(int argc, char** argv) {
          .max_slips = 300,
          .max_resyncs = 3},
         {.name = "device opens 5 s after the stream started", .seconds = 60, .device_open_sec = 5, .max_slips = 100, .max_resyncs = 3},
-        // 時間軸がゆっくり動き続ける場合の engine の歯止め: 500 ppm (24 回/秒) までは重複・間引きで追い、それを超えて
-        // 動き続けたら合わせ直す (重複・間引きを何十秒も続けない)
-        {.name = "sender clock 400 ppm fast (below the slip-rate limit)",
+        // 設計で追うクロック差 (200 ppm) より大きい場合: 時間軸は 3 秒に 1 ms (333 ppm) までしか追わない
+        // (毎秒動かすと engine の重複・間引きが 1 秒に 48 回になり、2 秒続くと合わせ直しになる)。追いきれない遅延の余りは
+        // 3 フレームを超えたら一度に戻す (合わせ直し 1 回)
+        {.name = "sender clock 400 ppm fast (a little faster than the time base follows)",
          .seconds = 60,
          .sender_ppm = 400,
          .max_slips = 1500,
          .max_resyncs = 0},
-        {.name = "sender clock 1000 ppm fast (above the slip-rate limit)",
-         .seconds = 60,
+        {.name = "sender clock 1000 ppm fast (far faster than the time base follows)",
+         .seconds = 120,
          .sender_ppm = 1000,
-         .max_slips = 1500,
-         .max_resyncs = 40,
+         .max_slips = 3000,
+         .max_resyncs = 4,
          .min_resyncs = 1},
         // 届く時刻が揺れる (RTMP の到着、DVS が 10 ms 前後の単位で音を取る): 窓ごとの最小の余裕も揺れるが、
         // それで時間軸を一度に行き来させない
+        // 落ち着いた後の揺れ (実機の DVS で窓ごとに ±2〜4 ms): 揺れに反応して時間軸を 1 ms ずつ行き来させない。
+        // クロック差は、揺れがあっても合わせ直しなしで追う
+        {.name = "arrivals jitter +-4 ms for 5 min", .seconds = 300, .jitter_ms = 4, .max_slips = 1000, .max_resyncs = 0, .max_moves = 5},
+        // 開始直後に増えた揺れの備えは 30 秒に 1 ms ずつ減る。減った分 (5 分で約 9 ms) は、幅を超えてから 1 ms ずつ詰める
+        {.name = "arrivals jitter +-4 ms for 5 min, late arrivals right after start",
+         .seconds = 300,
+         .late_ms = startup_late,
+         .jitter_ms = 4,
+         .max_slips = 1000,
+         .max_resyncs = 4,
+         .max_moves = 10},
+        {.name = "arrivals jitter +-4 ms, sender clock 150 ppm fast",
+         .seconds = 300,
+         .sender_ppm = 150,
+         .jitter_ms = 4,
+         .max_slips = 3000,
+         .max_resyncs = 0},
+        {.name = "arrivals jitter +-4 ms, sender clock 200 ppm fast",
+         .seconds = 300,
+         .sender_ppm = 200,
+         .jitter_ms = 4,
+         .max_slips = 4000,
+         .max_resyncs = 0},
+        {.name = "arrivals jitter +-4 ms, sender clock 200 ppm slow",
+         .seconds = 300,
+         .sender_ppm = -200,
+         .jitter_ms = 4,
+         .max_slips = 4000,
+         .max_resyncs = 0},
+        {.name = "arrivals jitter +-4 ms, device clock 200 ppm fast",
+         .seconds = 300,
+         .device_ppm = 200,
+         .jitter_ms = 4,
+         .max_slips = 4000,
+         .max_resyncs = 0},
         {.name = "arrivals jitter +-5 ms", .seconds = 60, .jitter_ms = 5, .max_slips = 100, .max_resyncs = 2},
         {.name = "arrivals jitter +-5 ms, late arrivals right after start",
          .seconds = 60,
