@@ -57,7 +57,8 @@
 //   測った揺れの半分にする。遅れがしばらくなければ少しずつ減らす (30 秒に 1 ms。決め直した備えまで)。これがないと、
 //   余裕を 0 まで詰めては次の揺れで遅れて時間軸が飛ぶ (音が途切れる) のを繰り返す (RTMP では約 1 分に 1 回)。
 //   減らした分は遅延の余りになり、溜まって幅を超えたら、上の 1 ms ずつで詰める。
-//   - 途切れ (届く間隔が kOutageGapMs を超えて開いた、kOutageLateMs を超えて遅れた、測った揺れより桁違いに遅れた
+//   - 途切れ (届く間隔が kOutageGapMs とふだんの間隔の kOutageGapTimes 倍を超えて開いた、kOutageLateMs
+//   を超えて遅れた、測った揺れより桁違いに遅れた
 //     (kOutageSpreadTimes)。その直後 kOutageTailMs の間も):
 //     1 回きりなら増やさない。時間軸は遅らせ、余りは caught up で一度に戻す。数百 ms の途切れで備えを増やすと、
 //     30 秒に 1 ms ずつしか減らず、約 1 時間、遅延が 100 ms 以上多いままになった (868 / 853 ms の遅れの後、10 → 145 ms)。
@@ -131,16 +132,17 @@ public:
         flush_log(lk);
     }
 
-    // 映像のフレームが届いた (デコードした。キューに入れるたび。BasicFrameQueue::set_on_push)。届く間隔が kOutageGapMs を
-    // 超えて開いたら途切れ。出力スレッドが取り出す間隔では見ない: 遅延が大きい間は、出す時刻まで待つ分だけ取り出す間隔が
+    // 映像のフレームが届いた (デコードした。キューに入れるたび。BasicFrameQueue::set_on_push)。届く間隔が、ふだんの間隔
+    // より大きく開いたら途切れ (GapTracker)。出力スレッドが取り出す間隔では見ない: 遅延が大きい間は、出す時刻まで待つ分だけ取り出す間隔が
     // 開き、待つ間にキューから溢れたフレームもあるので、自分で「途切れ」を作り続けてしまった (取り出しが約 500 ms おきになり、
     // 毎回途切れと数えて「繰り返している」から抜けられなかった)
     void note_video_arrival(int64_t arrival_qpc) {
         std::unique_lock lk(mutex_);
         const int64_t prev = last_video_arrival_qpc_;
         last_video_arrival_qpc_ = arrival_qpc;
+        const bool gap = prev != 0 && video_gaps_.outage(arrival_qpc - prev);
         if (!anchored_ || now_() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
-        if (prev != 0 && arrival_qpc - prev > qpc_from_ms(kOutageGapMs)) note_outage_locked(now_());
+        if (gap) note_outage_locked(now_());
         flush_log(lk);
     }
 
@@ -152,8 +154,9 @@ public:
         const int64_t prev_arrival = last_audio_arrival_qpc_;
         last_audio_report_qpc_ = now;
         last_audio_arrival_qpc_ = arrival_qpc;
+        const bool gap = prev_arrival != 0 && audio_gaps_.outage(arrival_qpc - prev_arrival);
         if (now < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
-        if (prev_arrival != 0 && arrival_qpc - prev_arrival > qpc_from_ms(kOutageGapMs)) {
+        if (gap) {
             // 届く間隔が開いた: 途切れ。止まっていた間の分がまとめて届くので、続くかたまりも窓の最小に入れない
             // (揺れの備えが途切れを覆っていて遅れて届かなくても、途切れと分かるように)
             note_outage_locked(now);
@@ -500,6 +503,8 @@ private:
         window_audio_lates_ = 0;
         window_audio_late_sum_ = 0;
         window_outage_ = false;
+        audio_gaps_.end_window();
+        video_gaps_.end_window();
         window_shortfall_ = false;
         window_audio_headroom_ = audio_headroom_;
         if (catch_up_pending_ > 0) --catch_up_pending_;
@@ -750,8 +755,11 @@ private:
     // 決め直した備えが今よりこれを超えて少なければ、一度に下げて時間軸も一度に詰める (それ以下は decay で少しずつ)
     static constexpr int64_t kHeadroomCutMs = 20;
     // 届く間隔がこれを超えて開いたら途切れ。音声のかたまり (20 ms 前後) と映像のフレーム (17〜40 ms) の数個分で、
-    // 回線の揺れで開く間隔より十分長い
+    // 回線の揺れで開く間隔より十分長い。ふだんからこれより開いて届く送り側では、ふだんの間隔の kOutageGapTimes 倍 (GapTracker)
     static constexpr int64_t kOutageGapMs = 100;
+    static constexpr int64_t kOutageGapTimes = 3;
+    static constexpr int kGapWindows = 10;    // ふだんの間隔を見る窓の数 (GapTracker)
+    static constexpr int kGapMinWindows = 3;  // ふだんの間隔が分かるまでの窓の数。それまでは届く間隔では途切れと見ない
     // 途切れから、この間に次の途切れがあれば「繰り返している」(1 回きりなら備えを増やさず、繰り返すなら増やして保つ)。
     // 最後の途切れからこの間が過ぎたら、備えを決め直して一度に詰められる (途切れが止んでから 3 分以内に戻すため、
     // 決め直しの kHeadroomReviewMs と合わせて 3 分に収まる長さ)
@@ -806,8 +814,39 @@ private:
     int64_t repeated_until_qpc_ = 0;      // この時刻まで、途切れが繰り返しているとみなす
     int64_t reviewed_headroom_ = 0;       // 最後に決め直した音声の揺れの備え (少しずつ減らす下限)
     int64_t last_video_arrival_qpc_ = 0;  // 最後に映像のフレームが届いた時刻 (note_video_arrival)
-    int64_t review_start_qpc_ = 0;        // 揺れの備えを決め直す間の始まり (review_headroom_locked)
-    int64_t review_min_ = LLONG_MAX;      // その間の、窓の最小の音声の余裕 - anchor_qpc_ の最小と最大
+
+    // 届く間隔で途切れを見る (音声・映像それぞれ)。途切れとみなすのは、kOutageGapMs を超え、かつ、ふだんの間隔の
+    // kOutageGapTimes 倍を超えて開いたとき。ふだんの間隔は、直近 kGapWindows 窓それぞれの最大の間隔のうち最小
+    // (途切れのあった窓が少しあっても引きずられない)。送り側の mpegts が AAC を何フレームかずつ 1 つの PES にまとめると
+    // (ffmpeg の既定で約 149 ms、128 kbps ステレオで約 180 ms)、音声は毎回その間隔で届く。固定の 100 ms で見ていたときは、
+    // 届くたびに途切れと数え、「繰り返している」から抜けられず、本当の途切れの後に余りを戻せなかった (burst_test.sh)。
+    // 判断は届き方の実測だけで、送り側の種類にはよらない
+    struct GapTracker {
+        int64_t window_max = 0;
+        int64_t maxima[kGapWindows] = {};
+        int next = 0;
+        int count = 0;
+
+        // gap がふだんより大きく開いた (途切れ) か。ふだんの間隔が分かるまでは見ない
+        bool outage(int64_t gap) {
+            window_max = std::max(window_max, gap);
+            if (count < kGapMinWindows) return false;
+            int64_t usual = LLONG_MAX;
+            for (int i = 0; i < count; ++i) usual = std::min(usual, maxima[i]);
+            return gap > std::max(qpc_from_ms(kOutageGapMs), usual * kOutageGapTimes);
+        }
+        void end_window() {
+            if (window_max == 0) return;  // 届かなかった窓は数えない
+            maxima[next] = window_max;
+            next = (next + 1) % kGapWindows;
+            count = std::min(count + 1, kGapWindows);
+            window_max = 0;
+        }
+    };
+    GapTracker audio_gaps_;
+    GapTracker video_gaps_;
+    int64_t review_start_qpc_ = 0;    // 揺れの備えを決め直す間の始まり (review_headroom_locked)
+    int64_t review_min_ = LLONG_MAX;  // その間の、窓の最小の音声の余裕 - anchor_qpc_ の最小と最大
     int64_t review_max_ = LLONG_MIN;
     int review_windows_ = 0;
     int64_t review_video_min_ = LLONG_MAX;  // 同じく映像

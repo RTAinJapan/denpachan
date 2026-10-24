@@ -105,6 +105,9 @@ struct Case {
     int loss_burst_chunks = 0;
     // 送った順にしか届かない (TCP。RTMP): 前のかたまりより先には届かない
     bool in_order = false;
+    // 音声をこの長さずつまとめて届ける (送り側の mpegts が AAC を何フレームかずつ 1 つの PES にまとめる。ffmpeg の既定で
+    // 約 149 ms、128 kbps ステレオで約 180 ms)。まとまりの最後のかたまりを送った時刻に、まとめて届く
+    double audio_bunch_ms = 0;
     // engine の出力遅延の変わり方 {時刻 (秒), 出力遅延 (ms)}。0 = 出力先なし (音声を「なし」にした)、それ以外は
     // その遅延でデバイスを開き直す (WDM ↔ ASIO の切り替えなど)
     std::vector<std::pair<double, double>> delay_changes = {};
@@ -435,9 +438,12 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             const double at = sent + kNetDelayMs / 1000.0;
             const bool off = c.output_off.second > 0 && at >= c.output_off.first && at < c.output_off.first + c.output_off.second;
             const double off_ms = off ? -c.output_off_slack_ms : 0.0;  // 停止中は余裕が小さく報告される (K の再現)
+            const double bunch_wait =
+                c.audio_bunch_ms > 0 ? (std::floor(sent * 1000 / c.audio_bunch_ms) + 1) * c.audio_bunch_ms / 1000 - sent : 0.0;
             int64_t arrival =
-                start + qpc_from_us(int64_t(
-                            (sent + (kNetDelayMs + c.late_ms(k, sent, seed) + jitter_now + next_chunk_jitter + off_ms) / 1000.0) * 1e6));
+                start + qpc_from_us(int64_t((sent + bunch_wait +
+                                             (kNetDelayMs + c.late_ms(k, sent, seed) + jitter_now + next_chunk_jitter + off_ms) / 1000.0) *
+                                            1e6));
             if (c.in_order) arrival = std::max(arrival, last_audio_arrival);
             if (arrival > g_now) break;
             last_audio_arrival = arrival;
@@ -1245,6 +1251,33 @@ int main(int argc, char** argv) {
     cases.push_back(t2("T2. RTMP 70 ms outage", 4, true));
     cases.push_back(t2("T2s. SRT 70 ms outage", 0, false));
     cases.push_back(t3("T3. RTMP 500 ms outages every 30 s for 5 min, 60 fps", 60));
+    // 音声がまとめて届く送り側 (mpegts の PES に AAC を何フレームかずつ入れる): ふだんの届く間隔が 100 ms を超えても、
+    // それを途切れと数えない (数えると「繰り返している」から抜けず、本当の途切れの後に余りを戻せなかった。burst_test.sh)
+    for (const double bunch : {149.0, 180.0}) {
+        for (const bool rtmp : {false, true}) {
+            Case c{.name = fmt::format("T8{}. {} audio in {:.0f} ms PES, 600 ms outage", rtmp ? "" : "s", rtmp ? "RTMP" : "SRT", bunch),
+                   .seconds = 190,
+                   .seeds = 5,
+                   .video = true,
+                   .jitter_ms = 4,
+                   .late_ms = stalls({{60.0, 600}}, rtmp ? 4 : 0),
+                   .in_order = rtmp,
+                   .audio_bunch_ms = bunch,
+                   .settle_sec = 60,
+                   .disturbances = {{60, 61}},
+                   .max_slips = 1'000'000,
+                   .max_resyncs = 1'000,
+                   .delay_check = {59, 70},
+                   .max_delay_growth_ms = 10,
+                   .min_delay_growth_ms = -10,
+                   .min_fps = 55,
+                   .fps_grace = {{60, 66}},
+                   .max_repeats = 0,
+                   .max_reanchors = 0,
+                   .catch_up_within = {60, 5}};
+            cases.push_back(c);
+        }
+    }
     {
         // 帯域不足: 一度に 1 秒遅らせる瞬間は、映像もその分止まる (A/V を保つ)。その後は待ち行列から 60 fps で出す
         Case c{.name = "T4. R1 10 s at 0.9x from 60 s",
