@@ -120,6 +120,7 @@ private:
     float fade_ = 0.0f;       // フェードの包絡 (0..1)
     double error_avg_ = 0.0;  // 目標位置とのずれ (平滑化、ソースのフレーム数)
     int frames_since_slip_ = 0;
+    int bridged_frames_ = 0;  // 続けて無音で埋めた長さ (デバイスのフレーム数。kBridgeSec)
     // 直近 1 秒の重複・間引き (同じ向きが続いたら合わせ直す)
     int slip_window_frames_ = 0;
     int slip_window_dup_ = 0;

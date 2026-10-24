@@ -27,6 +27,11 @@ constexpr double kSlipThresholdSec = 0.002;  // 48kHz デバイス: これ以上
 constexpr int kSlipRateResync = 24;
 constexpr int kSlipRateSeconds = 2;
 constexpr int kSlipLogPerSec = 5;  // 1 秒の重複・間引きがこれ以上なら debug ログに出す
+// 読むデータが足りないとき、続けてこの長さまでは無音で埋めて鳴らし続ける (読む位置も進める)。送出元からの欠落 (SRT で
+// 再送が間に合わなかった、数個まとめて落ちた) は、worker が次のかたまりが届いたときに無音で埋めるので、それまでの抜けも
+// どのみち無音になる。止めて鳴らし直すと、合わせ直し (フェード) と音切れに数えることになる。これより長く足りなければ
+// 途切れとして止める (時間軸は worker が遅らせる)。どのデバイスでも、音声のかたまり (20 ms 前後) の 10 個分ほどの長さ
+constexpr double kBridgeSec = 0.250;
 // 48kHz デバイス: 重複 / 間引きは 10ms に 1 回まで (最大約 2000ppm のクロック差まで追従できる)。
 // 実際に起きる回数はクロック差の分だけ (例: 50ppm なら 2〜3 回/秒)。
 constexpr int kMinSlipIntervalFrames = 480;
@@ -115,6 +120,7 @@ void ChannelSource::count_slip(int slip, int frames) {
 void ChannelSource::start_at(uint64_t pos, uint64_t epoch) {
     read_pos_ = pos;
     epoch_ = epoch;
+    bridged_frames_ = 0;
     if (swr_) swr_init(swr_);  // 内部バッファと補正を捨てる
     fifo_frames_ = 0;
     error_avg_ = 0.0;
@@ -266,15 +272,30 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
     tmp_.resize(size_t(frames) * kChannels);
     const int got = passthrough_ ? pull_passthrough(tmp_.data(), frames, slip) : pull_resampled(tmp_.data(), frames);
     if (slip != 0) ++stats_.slips;
-    const bool underrun = got < frames;
-    if (underrun) std::fill(tmp_.begin() + ptrdiff_t(got) * kChannels, tmp_.end(), 0.0f);
+    const bool short_of_data = got < frames;
+    bool underrun = false;
+    bool bridged = false;
+    if (short_of_data) {
+        std::fill(tmp_.begin() + ptrdiff_t(got) * kChannels, tmp_.end(), 0.0f);
+        const int missing = frames - got;
+        if (bridged_frames_ + missing <= int(kBridgeSec * device_rate_)) {
+            // 短い抜け: 無音で埋めて読む位置も進め、鳴らし続ける (kBridgeSec)
+            bridged_frames_ += missing;
+            read_pos_ += uint64_t(std::llround(missing * src_per_out));
+            bridged = true;
+        } else {
+            underrun = true;
+        }
+    } else {
+        bridged_frames_ = 0;
+    }
 
     // フェードは開始・途絶・合わせ直し・ミュート切替の瞬間だけ。それ以外はデータをそのまま置く。
     const float fade_target = (resync_pending_ || mute_) ? 0.0f : 1.0f;
     if (!options_.fade) fade_ = fade_target;
-    const bool fading = options_.fade && (fade_ != fade_target || underrun);
+    const bool fading = options_.fade && (fade_ != fade_target || short_of_data);
     const bool silent = !fading && fade_ <= 0.0f;  // ミュート中
-    const int fade_out_start = underrun ? std::max(0, got - fade_frames_) : INT_MAX;
+    const int fade_out_start = short_of_data ? std::max(0, got - fade_frames_) : INT_MAX;
     const float fade_step = 1.0f / float(fade_frames_);
 
     const int sc = options_.start_channel - 1;
@@ -302,7 +323,9 @@ void ChannelSource::render(float* out, int frames, int64_t first_hear_qpc, int64
     stats_.peak_l = std::max(stats_.peak_l.load(), peak_l);
     stats_.peak_r = std::max(stats_.peak_r.load(), peak_r);
 
-    if (underrun) {
+    if (bridged) {
+        fade_ = 0.0f;  // データが戻ったらフェードインする
+    } else if (underrun) {
         ++stats_.underruns;
         playing_ = false;
         fade_ = 0.0f;
