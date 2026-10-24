@@ -42,6 +42,12 @@ const char* sample_type_name(int type) {
     return names[type];
 }
 
+std::string join(const std::vector<std::string>& items) {
+    std::string out;
+    for (const auto& s : items) out += (out.empty() ? "" : "; ") + s;
+    return out;
+}
+
 }  // namespace
 
 DeviceOutput::DeviceOutput(DeviceOptions options, std::vector<RouteOptions> routes)
@@ -74,6 +80,90 @@ DeviceStatus DeviceOutput::status() {
     return status_;
 }
 
+// 排他モードで開く。デバイスが受け付ける形式ごとに、周期 (最小 → 既定 → 10 ms → 20 ms) とチャンネルの配置を変えて試す。
+// DVS 4.5 は IsFormatSupported が通るのに Initialize が E_INVALIDARG を返したので、試したものをすべてログに出す。
+// どれでも開けなければ E_FAIL、試している間にデバイスが消えたら AUDCLNT_E_DEVICE_INVALIDATED
+HRESULT DeviceOutput::initialize_exclusive(const WAVEFORMATEX* mix, const std::function<bool()>& activate) {
+    const std::string name = to_utf8(options_.name);
+    struct Candidate {
+        SampleType type;
+        WORD bits;
+        WORD valid;
+        GUID subformat;
+    };
+    const Candidate candidates[] = {
+        {SampleType::Float32, 32, 32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT}, {SampleType::Int32, 32, 32, KSDATAFORMAT_SUBTYPE_PCM},
+        {SampleType::Int24In32, 32, 24, KSDATAFORMAT_SUBTYPE_PCM},      {SampleType::Int24, 24, 24, KSDATAFORMAT_SUBTYPE_PCM},
+        {SampleType::Int16, 16, 16, KSDATAFORMAT_SUBTYPE_PCM},
+    };
+    REFERENCE_TIME def_period = 0, min_period = 0;
+    client_->GetDevicePeriod(&def_period, &min_period);
+
+    // 周期の候補: 前に決めた周期 (追いつけなくて延ばしたもの) 以上のものだけ
+    const REFERENCE_TIME lowest = std::max({min_period, kMinExclusivePeriod, exclusive_period_});
+    std::vector<REFERENCE_TIME> periods;
+    for (const REFERENCE_TIME p : {lowest, def_period, kRetryExclusivePeriod, kMaxExclusivePeriod}) {
+        if (p >= lowest && p <= kMaxExclusivePeriod && std::find(periods.begin(), periods.end(), p) == periods.end()) periods.push_back(p);
+    }
+    // チャンネルの配置: ミックス形式のもの。先頭から順に埋めた配置と違えば (0 = 指定なし も含む)、そちらも試す
+    const DWORD mix_mask =
+        mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE ? reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mix)->dwChannelMask : 0;
+    const DWORD plain_mask = channels_ >= 1 && channels_ <= 18 ? DWORD((1u << channels_) - 1) : 0;
+    std::vector<DWORD> masks{mix_mask};
+    if (plain_mask != mix_mask) masks.push_back(plain_mask);
+
+    std::vector<std::string> tried;
+    bool any_supported = false;
+    for (const auto& c : candidates) {
+        for (const DWORD mask : masks) {
+            WAVEFORMATEXTENSIBLE fmt{};
+            fmt.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+            fmt.Format.nChannels = WORD(channels_);
+            fmt.Format.nSamplesPerSec = rate_;
+            fmt.Format.wBitsPerSample = c.bits;
+            fmt.Format.nBlockAlign = WORD(channels_ * c.bits / 8);
+            fmt.Format.nAvgBytesPerSec = rate_ * fmt.Format.nBlockAlign;
+            fmt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+            fmt.Samples.wValidBitsPerSample = c.valid;
+            fmt.dwChannelMask = mask;
+            fmt.SubFormat = c.subformat;
+            if (!activate()) return AUDCLNT_E_DEVICE_INVALIDATED;  // Initialize に失敗したクライアントは使い回せない
+            if (client_->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &fmt.Format, nullptr) != S_OK) continue;
+            any_supported = true;
+            for (REFERENCE_TIME period : periods) {
+                if (!activate()) return AUDCLNT_E_DEVICE_INVALIDATED;
+                HRESULT hr = test_fail_exclusive ? E_INVALIDARG
+                                                 : client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                                                       period, period, &fmt.Format, nullptr);
+                if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+                    UINT32 frames = 0;
+                    client_->GetBufferSize(&frames);
+                    period = REFERENCE_TIME(std::llround(10'000'000.0 * frames / rate_));
+                    if (!activate()) return AUDCLNT_E_DEVICE_INVALIDATED;
+                    hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format,
+                                             nullptr);
+                }
+                if (SUCCEEDED(hr)) {
+                    sample_type_ = c.type;
+                    if (!tried.empty()) {
+                        spdlog::info("audio [{}]: exclusive mode opened with {} {}/{} bit, mask 0x{:x}, period {:.1f} ms (after: {})", name,
+                                     sample_type_name(int(c.type)), c.bits, c.valid, mask, double(period) / 10'000, join(tried));
+                    }
+                    return hr;
+                }
+                tried.push_back(fmt::format("{} {}/{} bit mask 0x{:x} {:.1f} ms -> 0x{:08x}", sample_type_name(int(c.type)), c.bits,
+                                            c.valid, mask, double(period) / 10'000, uint32_t(hr)));
+            }
+        }
+    }
+    spdlog::warn(
+        "audio [{}]: cannot open in exclusive mode ({} Hz, {} ch, mix mask 0x{:x}, device period default {:.1f} ms / minimum "
+        "{:.1f} ms; {}); falling back to shared mode",
+        name, rate_, channels_, mix_mask, double(def_period) / 10'000, double(min_period) / 10'000,
+        any_supported ? fmt::format("tried {}", join(tried)) : std::string("no exclusive-mode format supported"));
+    return E_FAIL;
+}
+
 bool DeviceOutput::open() {
     const std::string name = to_utf8(options_.name);
     // 開けない理由は最初と 1 分ごとに出す (1 秒ごとに試すので、毎回出すとログの履歴が埋まる)
@@ -92,59 +182,20 @@ bool DeviceOutput::open() {
     channels_ = mix->nChannels;
     rate_ = mix->nSamplesPerSec;
 
-    // 排他モードの周期に追いつけないデバイスは共有モードに切り替える (run() で検出)
+    // 排他モードで開けない・周期に追いつけないデバイスは共有モードに切り替える (追いつけないのは run() で検出)
     exclusive_ = options_.exclusive && !exclusive_failed_;
     HRESULT hr = E_FAIL;
     if (exclusive_) {
-        // 排他モード: デバイスが受け付ける形式を順に試す
-        struct Candidate {
-            SampleType type;
-            WORD bits;
-            WORD valid;
-            GUID subformat;
-        };
-        const Candidate candidates[] = {
-            {SampleType::Float32, 32, 32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT}, {SampleType::Int32, 32, 32, KSDATAFORMAT_SUBTYPE_PCM},
-            {SampleType::Int24In32, 32, 24, KSDATAFORMAT_SUBTYPE_PCM},      {SampleType::Int24, 24, 24, KSDATAFORMAT_SUBTYPE_PCM},
-            {SampleType::Int16, 16, 16, KSDATAFORMAT_SUBTYPE_PCM},
-        };
-        WAVEFORMATEXTENSIBLE fmt{};
-        bool found = false;
-        for (const auto& c : candidates) {
-            fmt = WAVEFORMATEXTENSIBLE{};
-            fmt.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-            fmt.Format.nChannels = WORD(channels_);
-            fmt.Format.nSamplesPerSec = rate_;
-            fmt.Format.wBitsPerSample = c.bits;
-            fmt.Format.nBlockAlign = WORD(channels_ * c.bits / 8);
-            fmt.Format.nAvgBytesPerSec = rate_ * fmt.Format.nBlockAlign;
-            fmt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
-            fmt.Samples.wValidBitsPerSample = c.valid;
-            fmt.dwChannelMask =
-                mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE ? reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix.get())->dwChannelMask : 0;
-            fmt.SubFormat = c.subformat;
-            if (client_->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &fmt.Format, nullptr) == S_OK) {
-                sample_type_ = c.type;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            spdlog::log(fail_level, "audio [{}]: no exclusive-mode format supported ({} Hz, {} ch)", name, rate_, channels_);
-            return false;
-        }
-        REFERENCE_TIME def_period = 0, min_period = 0;
-        client_->GetDevicePeriod(&def_period, &min_period);
-        REFERENCE_TIME period = std::max({min_period, kMinExclusivePeriod, exclusive_period_});
-        hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format, nullptr);
-        if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
-            UINT32 frames = 0;
-            client_->GetBufferSize(&frames);
-            period = REFERENCE_TIME(std::llround(10'000'000.0 * frames / rate_));
+        hr = initialize_exclusive(mix.get(), activate);
+        if (hr == AUDCLNT_E_DEVICE_INVALIDATED) return false;  // 試している間にデバイスが消えた (戻ったら排他モードでまた試す)
+        if (FAILED(hr)) {
             if (!activate()) return false;
-            hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format, nullptr);
+            exclusive_failed_ = true;
+            exclusive_fallback_ = "initFailed";
+            exclusive_ = false;
         }
-    } else {
+    }
+    if (!exclusive_) {
         // 共有モード: ミックス形式のまま (通常 float32)
         if (is_float_format(mix.get()) && mix->wBitsPerSample == 32) {
             sample_type_ = SampleType::Float32;
@@ -218,7 +269,9 @@ bool DeviceOutput::open() {
     {
         std::lock_guard lk(status_mutex_);
         status_.open = true;
+        status_.ever_opened = true;
         status_.exclusive = exclusive_;
+        status_.exclusive_fallback = options_.exclusive && !exclusive_ ? exclusive_fallback_ : "";
         status_.sample_rate = int(rate_);
         status_.channels = channels_;
         status_.sample_format = sample_type_name(int(sample_type_));
@@ -387,6 +440,7 @@ void DeviceOutput::run() {
                     const REFERENCE_TIME current = REFERENCE_TIME(std::llround(10'000'000.0 * buffer_frames_ / rate_));
                     exclusive_period_ = std::max(kRetryExclusivePeriod, current * 2);
                     exclusive_failed_ = exclusive_period_ > kMaxExclusivePeriod;
+                    if (exclusive_failed_) exclusive_fallback_ = "tooSlow";
                     spdlog::warn(
                         "audio [{}]: device does not keep up with the exclusive-mode period ({:.0f}/{:.0f} "
                         "calls/s); {}",

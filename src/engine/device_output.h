@@ -3,8 +3,9 @@
 //
 // - 共有モード: IAudioClient3 で最小周期を使えれば使う (低遅延)。だめなら既定周期。
 // - 排他モード: Windows の音声エンジンを通らない (通知音が混ざらない、音量スライダーの影響なし)。
-//   その間は他のアプリがこのデバイスを使えない。デバイスからの呼び出しが周期に追いつかなければ
-//   周期を延ばし、それでもだめなら共有モードに切り替える。
+//   その間は他のアプリがこのデバイスを使えない。開けなければ (形式・周期を変えて試しても Initialize が通らない)
+//   その場で共有モードで開く。デバイスからの呼び出しが周期に追いつかなければ周期を延ばし、
+//   それでもだめなら共有モードに切り替える。
 // - デバイスが消えたら (DVS の再起動など) 1 秒ごとに開き直す。その間も他のデバイスは止まらない。
 // - バッファがいつ鳴るかは、再生位置 (IAudioClock::GetPosition) から求める (設計書 §6.3)。
 
@@ -13,6 +14,7 @@
 #include <wrl/client.h>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,6 +26,9 @@
 #include "denpachan/win_util.h"
 
 namespace denpachan::engine {
+
+// 試験用: 排他モードの Initialize を必ず失敗させる (engine の --test-fail-exclusive。共有モードへの切り替えを確かめる)
+inline std::atomic<bool> test_fail_exclusive{false};
 
 class DeviceOutput : public AudioOutput {
 public:
@@ -48,6 +53,7 @@ private:
 
     void run();
     bool open();
+    HRESULT initialize_exclusive(const WAVEFORMATEX* mix, const std::function<bool()>& activate);
     void close();
     bool render();
     void write_samples(BYTE* dst, int frames);
@@ -62,7 +68,8 @@ private:
     int quick_losses_ = 0;   // 開いてすぐ (kQuickLossMs 以内) 失ったのが続いた回数 (開き直しの間を延ばす)
     static constexpr int64_t kQuickLossMs = 5000;
     bool exclusive_ = false;               // いま排他モードで開いているか
-    bool exclusive_failed_ = false;        // 排他モードの周期に追いつけなかった (以後は共有モード)
+    bool exclusive_failed_ = false;        // 排他モードで開けない・周期に追いつけなかった (以後は共有モード)
+    std::string exclusive_fallback_;       // 共有モードにした理由 ("initFailed" / "tooSlow")
     REFERENCE_TIME exclusive_period_ = 0;  // 0 = デバイスの最小周期
     SampleType sample_type_ = SampleType::Float32;
     int channels_ = 0;

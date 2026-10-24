@@ -144,6 +144,8 @@ json AudioRouter::channel_status(int ch) {
                       {"exclusive", st.exclusive},
                       {"startChannel", r.start_channel},
                       {"mute", r.mute}};
+            // 排他モードを頼まれたが共有モードで開いている (開けない・周期に追いつけない)
+            if (st.open && !st.exclusive_fallback.empty()) j["exclusiveFallback"] = st.exclusive_fallback;
             // for_each_source は描画スレッドと同じロック (sources_mutex_) を持って呼ぶので、その中では値を写すだけにして、
             // JSON はロックの外で作る (8ch 分を 1 秒ごとに作る間、描画を待たせない)
             struct Snapshot {

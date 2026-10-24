@@ -57,6 +57,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private string _lastUnreachable = "";  // 繋がらない理由 (メッセージの JSON。言語を変えても同じ)
     private bool? _lastConnected;
     private string _lastWorkerState = "";
+    private string _lastSharedFallback = "";  // 共有モードに切り替えた理由 (変わったときだけイベントに出す)
 
     public ChannelViewModel(MainViewModel main, int id)
     {
@@ -559,7 +560,16 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             : 0;
         var gaps = audioIn != null ? _audioGaps.Add(audioIn.Num("gaps")) : 0;
         // 再生中の補足 (ミュート、音切れ)。あれば「、」でつないで後ろに出す
+        // 排他モードを頼まれたが共有モードで出している (開けない・周期に追いつけない)
+        var sharedFallback = audioOut.Str("exclusiveFallback");
+        if (sharedFallback.Length > 0 && sharedFallback != _lastSharedFallback)
+        {
+            events.Add(new(F(sharedFallback == "tooSlow" ? "event.audioSharedFallbackTooSlow" : "event.audioSharedFallback",
+                             ("device", audioOut.Str("device"))), true));
+        }
+        _lastSharedFallback = sharedFallback;
         var audioNotes = new List<string>();
+        if (sharedFallback.Length > 0) audioNotes.Add(T("main.tile.audioSharedFallback"));
         if (Mute) audioNotes.Add(T("main.tile.audioMuted"));
         if (dropouts + gaps > 0) audioNotes.Add(F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")));
         var audioLatency = $"{audioOut.Num("latencyMs"):0}";
@@ -574,7 +584,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         };
         AudioKind = audioOut == null ? "ok"
                     : audioOut.At("error") != null || (!audioOut.Bool("open") && !audioOut.Bool("playing")) ? "error"
-                    : dropouts + gaps > 0 ? "warn"
+                    : dropouts + gaps > 0 || sharedFallback.Length > 0 ? "warn"
                     : "ok";
 
         var record = st.At("record");
@@ -701,8 +711,10 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
         if (st.At("audioOut") is JsonNode ao)
         {
-            Add("detail.audioOut", F(ao.Bool("exclusive") ? "detail.audioOutValueExclusive" : "detail.audioOutValue",
-                                     ("device", ao.Str("device")), ("channels", $"{ao.Int("startChannel")}-{ao.Int("startChannel") + 1}")));
+            var outKey = ao.Bool("exclusive") ? "detail.audioOutValueExclusive"
+                         : ao.Str("exclusiveFallback").Length > 0 ? "detail.audioOutValueSharedFallback"
+                         : "detail.audioOutValue";
+            Add("detail.audioOut", F(outKey, ("device", ao.Str("device")), ("channels", $"{ao.Int("startChannel")}-{ao.Int("startChannel") + 1}")));
             if (ao.At("latencyMs") != null)
             {
                 Add("detail.audioLatency", F("detail.audioLatencyValue", ("latency", $"{ao.Num("latencyMs"):0.0}"),
