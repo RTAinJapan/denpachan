@@ -120,6 +120,23 @@ int64_t AudioWriter::update_clock(int64_t pts_us, int64_t arrival_qpc) {
     return due;
 }
 
+// 音声の余裕の、直近の 1 秒ごとの最小 (出力が止まった・戻った前後のログ用。K-c を追う)
+void AudioWriter::note_slack(int64_t slack, int64_t arrival_qpc) {
+    if (arrival_qpc - slack_bucket_start_qpc_ >= qpc_from_ms(1000)) {
+        slack_prev_min_ = slack_cur_min_;
+        slack_cur_min_ = LLONG_MAX;
+        slack_bucket_start_qpc_ = arrival_qpc;
+    }
+    slack_cur_min_ = std::min(slack_cur_min_, slack);
+    if (after_change_until_qpc_ == 0) return;
+    after_change_min_ = std::min(after_change_min_, slack);
+    if (arrival_qpc >= after_change_until_qpc_) {
+        spdlog::info("audio: lowest audio slack in the second after the output {}: {:.1f} ms",
+                     after_change_resumed_ ? "resumed" : "stopped", double(qpc_to_us(after_change_min_)) / 1000);
+        after_change_until_qpc_ = 0;
+    }
+}
+
 int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arrival_qpc) {
     // 映像と同じ時計 C(pts) に鳴るよう、engine の出力遅延を差し引いた時刻に engine へ渡す
     const int64_t output_delay = header_->output_delay_qpc.load(std::memory_order_relaxed);
@@ -142,12 +159,36 @@ int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arr
         last_output_delay_ = output_delay;
     }
     auto handoff = [&] { return video_clock_.due(session, pts_us, arrival_qpc) - output_delay; };
+    const int64_t slack = handoff() - arrival_qpc;
+    note_slack(slack, arrival_qpc);
+
+    // engine がいま鳴らしているか (デバイスを失って開き直している間、ASIO のドライバから呼ばれていない間は 0。出力遅延は
+    // そのまま残る)。鳴っていない間は音声の余裕で時計を動かさず、戻ったら出力遅延が変わったときと同じく合わせ直す
+    const bool active = header_->output_active.load(std::memory_order_relaxed) != 0;
+    if (active != last_output_active_) {
+        if (seen_active_) {
+            // 鳴っていない間に余裕がずれるか (実機で約 20 ms 小さく報告された。原因は未解明) を見るため、前後 1 秒の最小を出す
+            spdlog::info("audio: output {} (lowest audio slack in the last second {:.1f} ms)", active ? "resumed" : "stopped",
+                         double(qpc_to_us(std::min(slack_prev_min_, slack_cur_min_))) / 1000);
+            after_change_until_qpc_ = arrival_qpc + qpc_from_ms(1000);
+            after_change_min_ = LLONG_MAX;
+            after_change_resumed_ = active;
+        }
+        if (!active && seen_active_) video_clock_.note_output_stopped();
+        if (active && seen_active_ && published_ && output_delay != 0) {
+            header_->epoch.fetch_add(1, std::memory_order_release);
+            video_clock_.restart_after_output_gap();
+        }
+        seen_active_ |= active;
+        last_output_active_ = active;
+    }
 
     // 接続直後のまとめ届きの間は時計に報告しない (到着が実際より遅く見えるため)
     if (!published_ && arrival_qpc < settle_end_qpc_) return handoff();
 
-    // 出力先が無い (engine の出力遅延が 0): 音声の余裕で時計を動かさない (「なし」にしただけで映像の遅延が変わらないように)
-    if (output_delay == 0) {
+    // 出力先が無い (engine の出力遅延が 0)、または鳴っていない: 音声の余裕で時計を動かさない
+    // (「なし」にしただけで映像の遅延が変わらないように。開き直している間の余裕で時間軸を動かして、ずれを溜めないように)
+    if (output_delay == 0 || !active) {
         video_clock_.note_audio_without_output(arrival_qpc);
         if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
             published_ = true;
@@ -158,7 +199,7 @@ int64_t AudioWriter::update_synced(uint64_t session, int64_t pts_us, int64_t arr
     }
 
     // 余裕を報告する。足りなければ (音声が遅れて届いた) 時計が遅らされ、映像も待つ。
-    video_clock_.report_audio(handoff() - arrival_qpc, arrival_qpc);
+    video_clock_.report_audio(slack, arrival_qpc);
     // 時計の最初の調整が済んでから鳴らし始める (鳴り始めてから時間軸が大きく動かないように)
     if (!published_ && arrival_qpc >= warmup_end_qpc_ && video_clock_.settled()) {
         published_ = true;

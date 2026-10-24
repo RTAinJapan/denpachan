@@ -310,7 +310,10 @@ void DeviceOutput::close() {
     if (client_) client_->Stop();
     {
         std::lock_guard lk(sources_mutex_);
-        for (auto& s : sources_) s->stats().playing = false;  // 開き直すまで鳴っていない (描画が呼ばれないので残ってしまう)
+        for (auto& s : sources_) {
+            s->stats().playing = false;   // 開き直すまで鳴っていない (描画が呼ばれないので残ってしまう)
+            s->set_output_active(false);  // worker も、開き直すまで音声で時間軸を動かさない
+        }
     }
     clock_.Reset();
     render_.Reset();

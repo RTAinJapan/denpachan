@@ -60,9 +60,17 @@ void AsioOutput::set_mute(int ch, bool mute) {
 }
 
 DeviceStatus AsioOutput::status() {
-    std::lock_guard lk(status_mutex_);
-    DeviceStatus st = status_;
-    st.stalled = st.open && qpc_now() - last_render_qpc_.load() > qpc_from_ms(kStalledMs);
+    DeviceStatus st;
+    {
+        std::lock_guard lk(status_mutex_);
+        st = status_;
+        st.stalled = st.open && qpc_now() - last_render_qpc_.load() > qpc_from_ms(kStalledMs);
+    }
+    if (st.stalled) {
+        // ドライバから呼ばれていない: 鳴っていないので、worker は音声で時間軸を動かさない (呼ばれたら描画が 1 に戻す)
+        std::lock_guard lk(sources_mutex_);
+        for (auto& s : sources_) s->set_output_active(false);
+    }
     return st;
 }
 
@@ -98,7 +106,10 @@ void AsioOutput::on_opened(const denpachan_asio_format& format) {
 void AsioOutput::on_closed() {
     {
         std::lock_guard lk(sources_mutex_);
-        for (auto& s : sources_) s->stats().playing = false;  // 開き直すまで鳴っていない
+        for (auto& s : sources_) {
+            s->stats().playing = false;   // 開き直すまで鳴っていない
+            s->set_output_active(false);  // worker も、開き直すまで音声で時間軸を動かさない
+        }
     }
     std::lock_guard lk(status_mutex_);
     status_.open = false;

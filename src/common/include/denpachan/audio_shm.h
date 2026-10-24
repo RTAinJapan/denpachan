@@ -24,7 +24,7 @@
 namespace denpachan::audio {
 
 inline constexpr uint32_t kMagic = 0x41505044;  // "DPPA"
-inline constexpr uint32_t kLayoutVersion = 1;
+inline constexpr uint32_t kLayoutVersion = 2;   // 2: output_active
 inline constexpr int kNumChannels = kMaxChannels;
 inline constexpr uint32_t kSampleRate = 48000;
 inline constexpr uint32_t kChannels = 2;
@@ -54,6 +54,12 @@ struct Header {
     std::atomic<uint32_t> map_seq;
     std::atomic<uint64_t> map_frame;
     std::atomic<int64_t> map_due_qpc;
+
+    // 読み手 (engine) が書く: いま鳴らしているか。1 = デバイスが開いていて、描画の呼び出しが来ている。0 = それ以外
+    // (開けない、失って開き直している、ASIO でドライバから呼ばれていない、止めた)。output_delay_qpc は開き直す間も
+    // 前の値のままにする (設計書 §6.3) ので、鳴っていない間を書き手が知るにはこれを見る。書き手は 0 の間、音声の余裕で
+    // 時間軸を動かさず、1 に戻ったら出力遅延が変わったときと同じく合わせ直す
+    std::atomic<uint32_t> output_active;
 };
 
 static_assert(sizeof(Header) <= kHeaderBytes);

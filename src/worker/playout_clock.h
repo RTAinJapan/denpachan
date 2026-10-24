@@ -232,6 +232,31 @@ public:
         debug_.push_back(fmt::format("playout: moved {:+.2f} ms (output delay changed)", qpc_to_us(delta_qpc) / 1000.0));
     }
 
+    // engine の出力が鳴らなくなった (デバイスを失った、ドライバから呼ばれない、止めた)。その間は音声の余裕を報告しない
+    // (AudioWriter)。前の窓の音声のずれでは遅らせない (鳴っていないので、音声のために遅らせる理由がない。止める前の
+    // 「足りない」窓で 1 ms ずつ遅らせ続けた)。詰める側は前の窓の音声も見たまま (戻ったときに音声が間に合わなくならないように)
+    void note_output_stopped() {
+        std::lock_guard lk(mutex_);
+        output_stopped_ = true;
+        min_audio_slack_ = LLONG_MAX;  // この窓で止まる前に測った分も使わない
+    }
+
+    // engine の出力が鳴っていなかった (デバイスを失って開き直した、ドライバから呼ばれなかった) のが戻った: 出力遅延が
+    // 変わっていなくても、止まっていた間の窓とは比べず (音声の余裕と時間軸の関係が前と同じとは限らない)、揺れの備えの
+    // 決め直しも数え直し、開いた直後と同じく大きなずれをしばらく一度に詰める (allow_fast_adjust)。止まっていた間の
+    // 「足りない」窓が残ると、余っていても 1 ms ずつ遅らせ続けた (約 4 分)
+    void restart_after_output_gap() {
+        std::lock_guard lk(mutex_);
+        const int64_t now = now_();
+        output_stopped_ = false;
+        history_count_ = 0;
+        excess_windows_ = 0;
+        min_audio_slack_ = LLONG_MAX;
+        review_start_locked(now);
+        start_fast_locked(now);
+        debug_.push_back("playout: output resumed; history cleared");
+    }
+
     // 音声は届いているが、出力先が無い (engine の出力遅延が 0)。時間軸は音声の余裕で動かさない
     // (「なし」にしただけで映像の遅延が変わらないように)。届いていることだけ覚える (audio_reported_within)
     void note_audio_without_output(int64_t arrival_qpc) {
@@ -434,7 +459,7 @@ private:
                 // 足りない側は、直近 kHistoryWindows 窓の悪い窓が幅の内側に収まるまで 1 ms ずつ遅らせる。余っている側は、
                 // 直近 kLongHistoryWindows 窓がすべて幅を超えて余っているときだけ詰める。揺れの良い窓に釣られて詰め、
                 // 次の悪い窓でまた遅らせる、の行き来をしない
-                const int64_t short_envelope = history_envelope_locked(kHistoryWindows);
+                const int64_t short_envelope = history_envelope_locked(kHistoryWindows, !output_stopped_);
                 const int64_t long_envelope = history_envelope_locked(kLongHistoryWindows);
                 const int64_t band = band_;
                 const int64_t envelope = short_envelope < -band         ? short_envelope
@@ -603,12 +628,13 @@ private:
     }
 
     // 直近 windows 窓の、今の時間軸と揺れの備えでの目標とのずれの最小 (LLONG_MAX = 報告なし)
-    int64_t history_envelope_locked(int windows) const {
+    // audio = false: 映像の窓だけで見る (engine の出力が鳴っていない間の、足りない側。note_output_stopped)
+    int64_t history_envelope_locked(int windows, bool audio = true) const {
         int64_t envelope = LLONG_MAX;
         for (int i = 0; i < std::min(history_count_, windows); ++i) {
             const auto& w = history_[(history_next_ + kLongHistoryWindows - 1 - i) % kLongHistoryWindows];
             if (w.video != LLONG_MAX) envelope = std::min(envelope, w.video + anchor_qpc_ - buffer_ - video_headroom_);
-            if (w.audio != LLONG_MAX) envelope = std::min(envelope, w.audio + anchor_qpc_ - audio_headroom_);
+            if (audio && w.audio != LLONG_MAX) envelope = std::min(envelope, w.audio + anchor_qpc_ - audio_headroom_);
         }
         return envelope;
     }
@@ -785,12 +811,13 @@ private:
     int review_video_windows_ = 0;
     int window_audio_reports_ = 0;  // この窓で届いた音声のかたまりと、そのうち遅れて届いたもの
     int window_audio_lates_ = 0;
-    int64_t window_audio_late_sum_ = 0;                                 // そのうち遅れた量の合計
-    bool window_outage_ = false;                                        // この窓で途切れた (push_history_locked)
-    bool shortfall_ = false;                                            // 帯域不足で遅らせてから、追いつくまで
-    bool window_shortfall_ = false;                                     // この窓で帯域不足とみなした
-    int64_t shortfall_headroom_ = 0;                                    // 帯域不足で増やす前の音声の揺れの備え
-    int catch_up_pending_ = 0;                                          // 帯域不足から追いついた: この窓数のうちに余りを一度に戻す
+    int64_t window_audio_late_sum_ = 0;  // そのうち遅れた量の合計
+    bool window_outage_ = false;         // この窓で途切れた (push_history_locked)
+    bool shortfall_ = false;             // 帯域不足で遅らせてから、追いつくまで
+    bool output_stopped_ = false;        // engine の出力が鳴っていない (note_output_stopped から restart_after_output_gap まで)
+    bool window_shortfall_ = false;      // この窓で帯域不足とみなした
+    int64_t shortfall_headroom_ = 0;     // 帯域不足で増やす前の音声の揺れの備え
+    int catch_up_pending_ = 0;           // 帯域不足から追いついた: この窓数のうちに余りを一度に戻す
     int64_t window_audio_headroom_ = qpc_from_ms(kAudioHeadroomMinMs);  // この窓の始めの音声の揺れの備え
     int64_t band_ = qpc_from_ms(kDeadbandMs);                           // 動かさない幅 (update_band_locked)
     int windows_since_move_ = kStepWindows;                             // 前に時間軸を 1 ms ずつの調整などで動かしてからの窓の数

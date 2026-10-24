@@ -78,6 +78,13 @@ public:
     // 開き直すときは呼ばない (開き直した結果の値だけを知らせる。設計書 §6.3)
     void clear_output_delay() {
         if (header_) header_->output_delay_qpc.store(0);
+        set_output_active(false);
+    }
+
+    // いま鳴らしているかを worker に知らせる (audio::Header::output_active)。描画のたびに 1 にする (render)。出力
+    // (DeviceOutput / AsioOutput) が、デバイスを失ったとき、閉じたとき、止めたとき、ドライバから呼ばれなくなったときに 0 にする
+    void set_output_active(bool active) {
+        if (header_) header_->output_active.store(active ? 1 : 0, std::memory_order_relaxed);
     }
 
     // ミュート (遅延には影響しない。切り替えの瞬間だけフェードする)
