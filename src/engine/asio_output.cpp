@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include "audio_devices.h"  // to_utf8
+#include "output_devices.h"
 #include "denpachan/win_util.h"
 #include "render_log.h"
 
@@ -59,6 +60,45 @@ void AsioOutput::set_mute(int ch, bool mute) {
         if (s->options().ch == ch) s->set_mute(mute);
 }
 
+void AsioOutput::update_routes(std::vector<RouteOptions> routes) {
+    std::lock_guard update(update_mutex_);
+    for (;;) {
+        // 今の形式を写し、変わったチャンネルの ChannelSource をロックの外で作る (共有メモリを開くので、コールバックを待たせない)
+        uint32_t rate = 0;
+        int channels = 0;
+        uint64_t opened = 0;
+        int64_t base_delay = 0;
+        std::vector<RouteOptions> current;
+        {
+            std::lock_guard lk(sources_mutex_);
+            if (opened_ == 0) {
+                routes_ = std::move(routes);  // まだ開いていない: 開いたときにこの振り分けで作る
+                return;
+            }
+            rate = source_rate_, channels = source_channels_, opened = opened_, base_delay = base_delay_qpc_;
+            for (const auto& s : sources_) current.push_back(s->options());
+        }
+        std::vector<std::unique_ptr<ChannelSource>> fresh(routes.size());
+        for (size_t i = 0; i < routes.size(); ++i) {
+            if (!needs_source(current, routes[i])) continue;
+            if (routes[i].start_channel < 1 || routes[i].start_channel + 1 > channels) {
+                spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", to_utf8(options_.name), routes[i].ch,
+                             routes[i].start_channel, channels);
+            }
+            fresh[i] = std::make_unique<ChannelSource>(routes[i], rate, channels, base_delay);
+        }
+        std::vector<std::unique_ptr<ChannelSource>> old;
+        {
+            std::lock_guard lk(sources_mutex_);
+            if (opened_ != opened) continue;  // その間にドライバが開き直した: 作り直す
+            old = swap_sources(sources_, routes, fresh);
+            routes_ = routes;
+        }
+        spdlog::info("audio [{}]: routing updated without reopening", to_utf8(options_.name));
+        return;  // old はロックの外で捨てる
+    }
+}
+
 DeviceStatus AsioOutput::status() {
     DeviceStatus st;
     {
@@ -90,7 +130,11 @@ void AsioOutput::on_opened(const denpachan_asio_format& format) {
             }
             sources_.push_back(std::make_unique<ChannelSource>(r, uint32_t(format.sample_rate), format.channels, base_delay_qpc_));
         }
+        source_rate_ = uint32_t(format.sample_rate);
+        source_channels_ = format.channels;
+        ++opened_;
     }
+    note_asio_opened(options_.id, format.channels, format.sample_rate);  // デバイス一覧のチャンネル数 (開いている間は確かめられない)
     last_render_qpc_ = qpc_now();
     std::lock_guard lk(status_mutex_);
     status_.open = true;

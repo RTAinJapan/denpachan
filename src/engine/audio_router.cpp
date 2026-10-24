@@ -79,10 +79,16 @@ void AudioRouter::apply(const Config& config) {
         plan.routes.push_back(r);
     }
 
-    // 不要になった / 変わったデバイスを止める (ASIO を別のドライバに替えるときは、先に止めてから開く)
+    // 不要になった / 変わったデバイスを止める (ASIO を別のドライバに替えるときは、先に止めてから開く)。
+    // 振り分けだけが変わったデバイスは開き直さずに入れ替える (ASIO は全チャンネルで 1 つのドライバなので、開き直すと
+    // 設定を変えていないチャンネルの音も止まる)
     for (auto it = devices_.begin(); it != devices_.end();) {
         auto p = plans.find(it->first);
-        if (p == plans.end() || !same_options(p->second.options, it->second.options) || !same_routes(p->second.routes, it->second.routes)) {
+        if (p != plans.end() && same_options(p->second.options, it->second.options) && !same_routes(p->second.routes, it->second.routes)) {
+            it->second.output->update_routes(p->second.routes);
+            it->second.routes = p->second.routes;
+            ++it;
+        } else if (p == plans.end() || !same_options(p->second.options, it->second.options)) {
             spdlog::info("audio [{}]: stopping (routing changed)", to_utf8(it->second.options.name));
             it->second.output->stop();
             it = devices_.erase(it);

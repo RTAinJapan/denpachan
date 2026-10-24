@@ -42,6 +42,7 @@ public:
     const DeviceOptions& options() const override { return options_; }
 
     void set_mute(int ch, bool mute) override;
+    void update_routes(std::vector<RouteOptions> routes) override;
 
     void for_each_source(const std::function<void(ChannelSource&)>& f) override {
         std::lock_guard lk(sources_mutex_);
@@ -59,7 +60,7 @@ private:
     void write_samples(BYTE* dst, int frames);
 
     const DeviceOptions options_;
-    std::vector<RouteOptions> routes_;  // mute だけ変わる (sources_mutex_ で保護)
+    std::vector<RouteOptions> routes_;  // 開いたときに使う振り分け (sources_mutex_ で保護。set_mute、update_routes で変わる)
 
     Microsoft::WRL::ComPtr<IAudioClient> client_;
     Microsoft::WRL::ComPtr<IAudioRenderClient> render_;
@@ -108,6 +109,12 @@ public:
 private:
     std::mutex sources_mutex_;
     std::vector<std::unique_ptr<ChannelSource>> sources_;
+    // sources_ を作ったときのデバイスの形式 (sources_mutex_ で保護。update_routes が同じ形式で作る)。開くたびに opened_ が増える
+    uint32_t source_rate_ = 0;
+    int source_channels_ = 0;
+    int64_t source_base_delay_qpc_ = 0;
+    uint64_t opened_ = 0;
+    std::mutex update_mutex_;  // update_routes を 1 つずつ
 
     std::mutex status_mutex_;
     DeviceStatus status_;
