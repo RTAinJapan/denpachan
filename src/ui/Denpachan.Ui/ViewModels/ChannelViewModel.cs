@@ -556,8 +556,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
                           ("delay", $"{delay:0}"), ("res", res), ("codec", video.Str("codec")));
             var recommended = srt.At("recommend").Int("latencyMs");
             TransportLine = srt != null
-                ? F(recommended > 0 ? "main.tile.srtLineWithRecommend" : "main.tile.srtLine", ("latency", srt.Int("latencyMs")),
-                    ("recommend", recommended), ("rtt", $"{rtt:0.0}"), ("lost", $"{srt.Num("lost"):0}"), ("dropped", $"{srt.Num("dropped"):0}"))
+                ? F(recommended > 0 ? "main.tile.srtLineWithRecommend" : "main.tile.srtLine", ("latency", SrtUrl.UsFromMs(srt.Int("latencyMs"))),
+                    ("recommend", SrtUrl.UsFromMs(recommended)), ("rtt", $"{rtt:0.0}"), ("lost", $"{srt.Num("lost"):0}"), ("dropped", $"{srt.Num("dropped"):0}"))
                 : tcp != null ? F("main.tile.tcpLine", ("rtt", $"{rtt:0.0}"), ("retrans", $"{tcp.Num("retransBytes") / 1024:0}")) : "";
             // 受信中だけ出す (HW が使えれば何も出さない)
             SoftwareDecode = videoState is "live" or "hold" && !video.Bool("hwDecode");
@@ -687,12 +687,13 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (recommended <= 0) return F("srtAdvice.measuring", ("sec", r.Int("windowSec")));
         var effective = srt.Int("latencyMs");
         var configured = srt.Int("configuredLatencyMs");
-        var text = F("srtAdvice.value", ("latency", recommended), ("rtt", $"{r.Num("rttMs"):0.0}"), ("multiplier", r.Int("multiplier")),
+        var current = SrtUrl.UsFromMs(effective);  // 画面の latency は URL と同じマイクロ秒
+        var text = F("srtAdvice.value", ("latency", SrtUrl.UsFromMs(recommended)), ("rtt", $"{r.Num("rttMs"):0.0}"), ("multiplier", r.Int("multiplier")),
                      ("loss", $"{r.Num("lossPct"):0.##}"), ("sec", r.Int("windowSec")));
-        var note = r.Num("drops") > 0 ? F("srtAdvice.drops", ("drops", $"{r.Num("drops"):0}"), ("current", effective))
-                   : recommended < effective && effective > configured ? F("srtAdvice.peerLatency", ("current", effective))
-                   : recommended < effective ? F("srtAdvice.canLower", ("current", effective))
-                   : recommended > effective ? F("srtAdvice.notEnough", ("current", effective))
+        var note = r.Num("drops") > 0 ? F("srtAdvice.drops", ("drops", $"{r.Num("drops"):0}"), ("current", current))
+                   : recommended < effective && effective > configured ? F("srtAdvice.peerLatency", ("current", current))
+                   : recommended < effective ? F("srtAdvice.canLower", ("current", current))
+                   : recommended > effective ? F("srtAdvice.notEnough", ("current", current))
                    : "";
         return note.Length > 0 ? F("srtAdvice.withNote", ("value", text), ("note", note)) : text;
     }
@@ -740,7 +741,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
         if (st.At("srt") is JsonNode srt)
         {
-            Add("detail.srtLatency", $"{srt.Int("latencyMs")} ms");
+            Add("detail.srtLatency", $"{SrtUrl.UsFromMs(srt.Int("latencyMs"))} µs");  // URL と同じマイクロ秒
             Add("detail.srtRtt", $"{srt.Num("rttMs"):0.0} ms");
             Add("detail.srtBuffer", $"{srt.Int("rcvBufMs")} ms");
             Add("detail.srtLoss", $"{srt.Num("lost"):0} / {srt.Num("retrans"):0} / {srt.Num("dropped"):0}");

@@ -52,10 +52,10 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <Label x:Name="HostLabel" VerticalAlignment="Center" />
-                <TextBox x:Name="HostBox" Grid.Column="1" Margin="0,3" />
+                <TextBox x:Name="HostBox" Grid.Column="1" Margin="0,3" LostFocus="HostBox_LostFocus" />
                 <Label Grid.Row="1" Content="{l:Tr channel.port}" VerticalAlignment="Center" />
                 <TextBox x:Name="PortBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Width="120" HorizontalAlignment="Left" />
-                <Label Grid.Row="2" Content="latency (ms)" VerticalAlignment="Center" />
+                <Label Grid.Row="2" Content="latency (µs)" VerticalAlignment="Center" />
                 <StackPanel Grid.Row="2" Grid.Column="1">
                     <StackPanel Orientation="Horizontal">
                         <TextBox x:Name="LatencyBox" Margin="0,3" Width="120" />

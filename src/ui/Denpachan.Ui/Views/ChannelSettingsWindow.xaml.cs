@@ -32,7 +32,7 @@ public partial class ChannelSettingsWindow : Window
         Select(InputBox, $"{s.Str("protocol", "srt")}:{s.Str("mode", "listener")}");
         HostBox.Text = s.Str("host", "0.0.0.0");
         PortBox.Text = s.Int("port").ToString();
-        LatencyBox.Text = s.Int("latencyMs", 120).ToString();
+        LatencyBox.Text = SrtUrl.UsFromMs(s.Int("latencyMs", 120)).ToString();  // URL と同じマイクロ秒で出す
         if (channel.SrtRecommendation.Length > 0)
         {
             LatencyAdvice.Text = F("channel.latencyAdvice", ("advice", channel.SrtRecommendation));
@@ -168,7 +168,21 @@ public partial class ChannelSettingsWindow : Window
 
     private void ApplyLatency_Click(object sender, RoutedEventArgs e)
     {
-        if (_channel.SrtRecommendedLatencyMs > 0) LatencyBox.Text = _channel.SrtRecommendedLatencyMs.ToString();
+        if (_channel.SrtRecommendedLatencyMs > 0) LatencyBox.Text = SrtUrl.UsFromMs(_channel.SrtRecommendedLatencyMs).ToString();
+    }
+
+    /// <summary>接続先の欄に SRT の URL (srt://host:port?latency=...) が入ったら、ポート・latency などの欄に分ける</summary>
+    private void HostBox_LostFocus(object sender, RoutedEventArgs e) => ApplySrtUrl();
+
+    private void ApplySrtUrl()
+    {
+        if (SrtUrl.Parse(HostBox.Text) is not { } url) return;
+        HostBox.Text = url.Host.Length > 0 ? url.Host : "0.0.0.0";
+        if (url.Port is { } port) PortBox.Text = port.ToString();
+        if (url.LatencyUs is { } latency) LatencyBox.Text = latency.ToString();
+        if (url.StreamId is { } streamId) StreamIdBox.Text = streamId;
+        if (url.Passphrase is { Length: > 0 } passphrase) PassphraseBox.Password = passphrase;
+        if (url.Pbkeylen is { } pbkeylen) Select(PbkeylenBox, pbkeylen.ToString());
     }
 
     private void CopyUrl_Click(object sender, RoutedEventArgs e) => Clipboard.SetText(PushUrlBox.Text);
@@ -205,9 +219,10 @@ public partial class ChannelSettingsWindow : Window
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        ApplySrtUrl();  // 欄を離れずに保存したとき
         var errors = new List<string>();
         TryInt(PortBox, "channel.invalid.port", out var port, errors);
-        TryInt(LatencyBox, "channel.invalid.latency", out var latency, errors);
+        TryInt(LatencyBox, "channel.invalid.latency", out var latencyUs, errors);
         TryInt(BufferBox, "channel.invalid.playoutBuffer", out var buffer, errors);
         TryInt(OffsetBox, "channel.invalid.audioOffset", out var offset, errors);
         TryInt(GapBox, "channel.invalid.gap", out var gap, errors);
@@ -230,7 +245,7 @@ public partial class ChannelSettingsWindow : Window
             ["mode"] = input[1],
             ["host"] = HostBox.Text.Trim(),
             ["port"] = port,
-            ["latencyMs"] = latency,
+            ["latencyMs"] = SrtUrl.MsFromUs(latencyUs),
             ["pbkeylen"] = int.Parse(SelectedTag(PbkeylenBox)),
             ["streamId"] = StreamIdBox.Text.Trim(),
             ["app"] = AppBox.Text.Trim(),
