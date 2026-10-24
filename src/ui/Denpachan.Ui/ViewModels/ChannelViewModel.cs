@@ -756,8 +756,11 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             Add("detail.audioOut", F(outKey, ("device", ao.Str("device")), ("channels", $"{ao.Int("startChannel")}-{ao.Int("startChannel") + 1}")));
             if (ao.At("latencyMs") != null)
             {
-                Add("detail.audioLatency", F("detail.audioLatencyValue", ("latency", $"{ao.Num("latencyMs"):0.0}"),
-                                             ("error", $"{ao.Num("errorMs"):+0.00;-0.00}")));
+                // 鳴っていないとき (デバイスを失った、ドライバが止まった、出力チャンネルが範囲外など) は、engine が返す
+                // 直前の値を出さない。重複・間引きなどの回数は残す
+                Add("detail.audioLatency", ao.Bool("playing")
+                    ? F("detail.audioLatencyValue", ("latency", $"{ao.Num("latencyMs"):0.0}"), ("error", $"{ao.Num("errorMs"):+0.00;-0.00}"))
+                    : "-");
                 Add("detail.audioSlips", $"{ao.Num("slips"):0} / {ao.Num("underruns"):0} / {ao.Num("resyncs"):0}");
             }
         }
