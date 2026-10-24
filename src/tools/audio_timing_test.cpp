@@ -25,13 +25,17 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "../engine/channel_source.h"
 #include "../worker/audio_writer.h"
+#include "../worker/basic_frame_queue.h"
 #include "../worker/metrics.h"
 #include "../worker/playout_clock.h"
+#include "../worker/playout_core.h"
 #include "denpachan/audio_shm.h"
 
 namespace denpachan::engine {
@@ -51,7 +55,6 @@ std::vector<std::string> g_log;  // worker のログ (この 1 秒の分。時�
 constexpr int kChunkFrames = 1024;     // AAC の 1 かたまり
 constexpr int64_t kNetDelayMs = 30;    // 送出元から届くまで
 constexpr int kPlayoutBufferMs = 100;  // チャンネルの再生バッファ (既定)
-constexpr int64_t kFrameUs = 16'667;   // 映像 60 fps
 // 映像は、同じ pts の音声より早く届く。実機 (DVS + RTMP) で、時間軸を決めていたのは音声で、映像側の目標との余りは
 // +60〜76 ms だった (再生バッファ 100 ms、音声の出力遅延 32 ms + 揺れの備え 10 ms から、約 120 ms 早い)
 constexpr int64_t kVideoLeadMs = 120;
@@ -79,7 +82,10 @@ struct Case {
     double base_delay_ms = 32;
     Consume consume = Consume::Blocks;
     int seeds = 1;       // 種を変えて回す回数
-    bool video = false;  // 映像のフレームも届けて時計に報告する
+    bool video = false;  // 映像のフレームも届け、worker と同じく待ち行列に入れて出力スレッドの判断 (PlayoutCore) で出す
+    double video_fps = 60;
+    // 映像の待ち行列の時間の幅 (ms。0 = worker と同じ設定)。保険 (出せない状態の打ち切り) を試すときに狭める
+    double queue_span_ms = 0;
     // --- 回線のモデル ---
     // J1: 届く時刻の揺れ。0.5〜1.5 秒ごとに変わる ±jitter_ms の一様乱数。窓 (1 秒) ごとの最小の余裕が揺れる
     double jitter_ms = 0;
@@ -102,6 +108,10 @@ struct Case {
     // engine の出力遅延の変わり方 {時刻 (秒), 出力遅延 (ms)}。0 = 出力先なし (音声を「なし」にした)、それ以外は
     // その遅延でデバイスを開き直す (WDM ↔ ASIO の切り替えなど)
     std::vector<std::pair<double, double>> delay_changes = {};
+    // 出力の停止 {始まり (秒), 長さ (秒)}: デバイスを失って開き直している間 (描画が来ない)。同じ出力遅延で戻る。
+    // その間、音声の余裕を output_off_slack_ms だけずらす (実機で、失っている間だけ約 20 ms 小さく報告された)
+    std::pair<double, double> output_off = {0, 0};
+    double output_off_slack_ms = 0;
     // --- 落ち着いた後 ---
     // settle_sec より後で、disturbances の各 {始まり, 終わり} (秒) から kQuietSec 経った後
     double settle_sec = 15;
@@ -133,6 +143,27 @@ struct Case {
     double max_late_delay_growth_ms = 1e9;
     // 最後の乱れが止んでから、遅延が乱れの前の +20 ms 以内に戻るまでの時間 (秒) の上限
     double max_recovery_sec = 1e9;
+    // delay_check の間の遅延の変化の下限 (± で見るとき)
+    double min_delay_growth_ms = -1e9;
+    // 映像: 出力が min_fps を下回る秒は fps_grace の各 {始まり, 終わり} (秒) の中だけ (0 = 見ない)
+    double min_fps = 0;
+    std::vector<std::pair<double, double>> fps_grace = {};
+    // 「途切れが繰り返している」とみなした回数、出せない状態の打ち切り (取り直し) の回数
+    int max_repeats = 1'000'000;
+    int min_reanchors = 0;
+    int max_reanchors = 1'000'000;
+    double max_reanchor_delay_sec = 1e9;  // 出力が受信の半分を下回ってから、取り直すまでの時間の上限
+    double max_headroom_ms = 1e9;         // 音声の揺れの備えの上限
+    // 余りを一度に戻す (caught up) のが、{この時刻 (秒), から何秒以内} にあること
+    std::pair<double, double> catch_up_within = {0, 0};
+    // {始まり, 終わり} (秒) の間の時間軸の移動の回数の上限と、同じ向きに続いた回数の上限
+    std::pair<double, double> moves_window = {0, 0};
+    int max_moves_in_window = 1'000'000;
+    int max_same_dir_run = 1'000'000;
+    // 出力の停止の間の時間軸の移動の回数の上限、戻ってから resume_settle_sec 秒の間に一度に動かした (fast) 回数の上限
+    int max_moves_while_off = 1'000'000;
+    double resume_settle_sec = 15;
+    int max_fast_after_resume = 1'000'000;
 };
 
 struct Result {
@@ -156,6 +187,16 @@ struct Result {
     double headroom_min = 1e9, headroom_max = -1e9, headroom_last = 0;
     double late_delay_growth_ms = 0;
     double recovery_sec = -1;  // 戻るまでの時間 (-1: 乱れなし、1e9: 戻らなかった)
+    // 映像
+    int low_fps_seconds = 0;  // 出力が min_fps を下回った秒 (fps_grace の外)
+    double fps_min = 1e9;     // 1 秒ごとの出力 fps の最小 (落ち着いた後)
+    uint64_t queue_drops = 0;
+    double video_delay_max = 0;
+    int repeats = 0;
+    int reanchors = 0;
+    double reanchor_delay_sec = -1;  // 出力が受信の半分を下回ってから取り直すまで (-1: 取り直していない)
+    double catch_up_at = -1;         // catch_up_within の後、最初に一度に戻した時刻
+    int moves_in_window = 0, same_dir_run = 0, moves_while_off = 0, fast_after_resume = 0;
     std::string last_resync;
     bool ok = false;
 };
@@ -169,6 +210,10 @@ struct Second {
     std::string reasons;
     uint64_t duplicated = 0, dropped = 0, resyncs = 0, underruns = 0;
     double min_slack_ms = 0;
+    int video_fps = 0;          // 映像の出力の枚数 (この 1 秒)
+    int video_received = 0;     // 届いた枚数
+    uint64_t queue_drops = 0;   // 待ち行列から溢れて捨てた枚数
+    double video_delay_ms = 0;  // 映像の遅延 (出した時刻 - 届いた時刻) の平均
 };
 
 // 音声の揺れの備え (ms)。この版の PlayoutClock に無ければ -1 (修正前のコードとも組んで回せるように)
@@ -181,6 +226,45 @@ double audio_headroom_ms(Clock& clock) {
     }
 }
 
+// 映像のフレーム (DecodedFrame の代わり。時刻だけ)
+struct SimFrame {
+    uint64_t session = 0;
+    int64_t pts_us = 0;
+    int64_t arrival_qpc = 0;
+};
+using VideoQueue = worker::BasicFrameQueue<SimFrame>;
+
+// 映像の待ち行列を worker と同じ設定で作る (時間の幅で持つ版でなければ、前と同じ 24 枚)
+std::unique_ptr<VideoQueue> make_video_queue(double span_ms) {
+#ifdef DENPACHAN_FRAME_QUEUE_SPAN
+    auto limits = worker::video_queue_limits(kPlayoutBufferMs);
+    if (span_ms > 0) {
+        limits.max_span_qpc = qpc_from_us(int64_t(span_ms * 1000));
+        limits.max_frames = size_t(span_ms * 240 / 1000) + 2;  // 枚数では溢れさせない
+    }
+    return std::make_unique<VideoQueue>(limits);
+#else
+    (void)span_ms;
+    return std::make_unique<VideoQueue>(24);
+#endif
+}
+
+// 修正前のコードとも組めるように、無ければ何もしない呼び出し
+template <typename Clock>
+void note_video_arrival(Clock& clock, int64_t arrival_qpc) {
+    if constexpr (requires { clock.note_video_arrival(arrival_qpc); }) clock.note_video_arrival(arrival_qpc);
+}
+template <typename Source>
+void set_output_active(Source& source, bool active) {
+    if constexpr (requires { source.set_output_active(active); }) source.set_output_active(active);
+}
+template <typename Core>
+void check_progress(Core& core, int64_t now, uint64_t received, uint64_t queue_dropped, uint64_t presented) {
+    if constexpr (requires { core.check_progress(now, received, queue_dropped, presented); }) {
+        core.check_progress(now, received, queue_dropped, presented);
+    }
+}
+
 // worker のログ 1 行から、時間軸を動かした理由を取り出す (無ければ空)
 std::string move_reason(const std::string& line) {
     if (line.rfind("playout: moved ", 0) == 0 && line.rfind("playout: moved the delay", 0) != 0) {
@@ -188,6 +272,8 @@ std::string move_reason(const std::string& line) {
         const auto close = line.find(')', open);
         if (open != std::string::npos && close != std::string::npos) return line.substr(open + 1, close - open - 1);
     }
+    if (line.find("cannot keep up") != std::string::npos) return "re-anchor";
+    if (line.find("outages are repeating") != std::string::npos) return "repeating";
     if (line.find("arrived") != std::string::npos && line.find("late") != std::string::npos) {
         return line.find("(outage)") != std::string::npos ? "late (outage)" : "late";
     }
@@ -202,11 +288,12 @@ void write_csv(const std::string& path, const Case& c, const std::vector<Second>
     }
     std::fprintf(f,
                  "t_s,base_delay_ms,consume,audio_delay_ms,audio_headroom_ms,moved_ms,reasons,duplicated,dropped,resyncs,underruns,"
-                 "min_slack_ms\n");
+                 "min_slack_ms,video_fps,video_received,queue_drops,video_delay_ms\n");
     for (const auto& s : rows) {
-        std::fprintf(f, "%.0f,%.0f,%s,%.2f,%.1f,%.2f,%s,%llu,%llu,%llu,%llu,%.2f\n", s.t, c.base_delay_ms, consume_name(c.consume),
-                     s.delay_ms, s.headroom_ms, s.moved_ms, s.reasons.c_str(), (unsigned long long)s.duplicated,
-                     (unsigned long long)s.dropped, (unsigned long long)s.resyncs, (unsigned long long)s.underruns, s.min_slack_ms);
+        std::fprintf(f, "%.0f,%.0f,%s,%.2f,%.1f,%.2f,%s,%llu,%llu,%llu,%llu,%.2f,%d,%d,%llu,%.1f\n", s.t, c.base_delay_ms,
+                     consume_name(c.consume), s.delay_ms, s.headroom_ms, s.moved_ms, s.reasons.c_str(), (unsigned long long)s.duplicated,
+                     (unsigned long long)s.dropped, (unsigned long long)s.resyncs, (unsigned long long)s.underruns, s.min_slack_ms,
+                     s.video_fps, s.video_received, (unsigned long long)s.queue_drops, s.video_delay_ms);
     }
     std::fclose(f);
 }
@@ -237,6 +324,12 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     worker::PlayoutClock clock(kPlayoutBufferMs, &fake_now);
     worker::ChannelMetrics metrics;
     worker::AudioWriter writer(clock, metrics, true);
+    // 映像: 届いたら待ち行列に入れ、出力スレッドと同じ判断で取り出して、出す時刻まで待って出す
+    auto video_queue = make_video_queue(c.queue_span_ms);
+    worker::PlayoutCore core(clock, qpc_from_ms(2000));
+    const int64_t frame_us = int64_t(1e6 / c.video_fps);
+    std::optional<SimFrame> holding;  // 出す時刻を待っているフレーム
+    uint64_t video_received = 0, video_presented = 0, video_queue_drops = 0;
     if (!writer.open(ch)) {
         std::printf("FAIL %s: cannot open the audio ring\n", c.name.c_str());
         return r;
@@ -304,7 +397,8 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     int last_dir = 0;                         // 前に動かした向き
     int64_t due0_before = 0, due0_after = 0;  // delay_check の時刻の時間軸
     double moved_ms = 0;
-    double window_slack_ms = 1e9;  // 今の 1 秒の最小の余裕 (落ち着いた後)
+    std::vector<std::pair<double, double>> all_moves;  // 時間軸を動かした時刻 (秒) と量 (ms。正: 遅らせた)
+    double window_slack_ms = 1e9;                      // 今の 1 秒の最小の余裕 (落ち着いた後)
 
     std::vector<float> chunk(size_t(kChunkFrames) * 2);
     std::vector<float> mix(size_t(device_frames) * 2);
@@ -316,6 +410,7 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     int64_t last_audio_arrival = 0, last_video_arrival = 0;  // 送った順にしか届かないとき
     int64_t next_render = start;
     int renders = 0;
+    bool was_off = false;
     uint64_t base_resyncs = 0, base_underruns = 0, base_slips = 0;
     bool started = false;
     // 1 秒ごとの記録
@@ -325,6 +420,9 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     int sec_delay_n = 0;
     double sec_moved = 0;
     double sec_min_slack = 1e9;
+    int sec_video_fps = 0, sec_video_received = 0;
+    uint64_t sec_queue_drops = 0;
+    double sec_video_delay_sum = 0;
     uint64_t prev_resyncs = 0, prev_underruns = 0, prev_dup = 0, prev_drop = 0;
     double next_sec = 1;
     const int64_t end = start + qpc_from_us(int64_t(c.seconds * 1e6));
@@ -334,9 +432,12 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
         // 送出元: かたまり k の時刻 (送出元の時計) と、届く時刻
         for (;;) {
             const double sent = k * chunk_sec / (1 + c.sender_ppm * 1e-6);
+            const double at = sent + kNetDelayMs / 1000.0;
+            const bool off = c.output_off.second > 0 && at >= c.output_off.first && at < c.output_off.first + c.output_off.second;
+            const double off_ms = off ? -c.output_off_slack_ms : 0.0;  // 停止中は余裕が小さく報告される (K の再現)
             int64_t arrival =
-                start +
-                qpc_from_us(int64_t((sent + (kNetDelayMs + c.late_ms(k, sent, seed) + jitter_now + next_chunk_jitter) / 1000.0) * 1e6));
+                start + qpc_from_us(int64_t(
+                            (sent + (kNetDelayMs + c.late_ms(k, sent, seed) + jitter_now + next_chunk_jitter + off_ms) / 1000.0) * 1e6));
             if (c.in_order) arrival = std::max(arrival, last_audio_arrival);
             if (arrival > g_now) break;
             last_audio_arrival = arrival;
@@ -376,9 +477,9 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
                 window_slack_ms = std::min(window_slack_ms, slack);
             }
         }
-        // 映像: 同じ回線で届く (V1 では映像だけさらに遅れる)。時計に余裕を報告する (worker の playout と同じ)
+        // 映像: 同じ回線で届く (V1 では映像だけさらに遅れる)。デコードしたら待ち行列に入れる (worker のデコーダと同じ)
         while (c.video) {
-            const double sent = double(vf) * kFrameUs / 1e6 / (1 + c.sender_ppm * 1e-6);
+            const double sent = double(vf) * double(frame_us) / 1e6 / (1 + c.sender_ppm * 1e-6);
             const double late = c.late_ms(-1, sent, seed) + c.video_late_ms(-1, sent, seed);
             int64_t arrival =
                 start + qpc_from_us(int64_t((sent + (kNetDelayMs - kVideoLeadMs + late + jitter_now + next_video_jitter) / 1000.0) * 1e6));
@@ -386,9 +487,30 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             if (arrival > g_now) break;
             last_video_arrival = arrival;
             next_video_jitter = chunk_jitter(video_rng);
-            const int64_t pts_us = int64_t(vf) * kFrameUs;
+            const int64_t pts_us = int64_t(vf) * frame_us;
             ++vf;
-            clock.report_video(clock.due(1, pts_us, arrival) - arrival, kFrameUs);
+            ++video_received, ++sec_video_received;
+            note_video_arrival(clock, arrival);
+            if (video_queue->push(SimFrame{1, pts_us, arrival})) ++video_queue_drops, ++sec_queue_drops;
+        }
+        // 映像の出力スレッド: 取り出して判断し (PlayoutCore)、出す時刻が来たら出す。出したらすぐ次を取り出す
+        while (c.video) {
+            check_progress(core, g_now, video_received, video_queue_drops, video_presented);
+            if (!holding) {
+                auto f = video_queue->pop(std::chrono::milliseconds(0));
+                if (!f) break;
+                int64_t target = 0;
+                if (core.on_frame(worker::FrameMeta{f->session, f->pts_us, f->arrival_qpc}, g_now, video_queue->size(), target) !=
+                    worker::PlayoutCore::Decision::Present) {
+                    continue;  // 取り残された、または遅れたフレーム
+                }
+                holding = *f;
+            }
+            const worker::FrameMeta meta{holding->session, holding->pts_us, holding->arrival_qpc};
+            if (core.target(meta) > g_now) break;  // まだ出す時刻ではない (待っている間に時間軸が動いたら取り直す)
+            ++video_presented, ++sec_video_fps;
+            sec_video_delay_sum += double(qpc_to_us(g_now - holding->arrival_qpc)) / 1000.0;
+            holding.reset();
         }
         if (!source && c.device_open_sec > 0 && t >= c.device_open_sec && next_change == 0) {
             open_device();
@@ -413,6 +535,7 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
                 moved_ms += std::fabs(d);
                 sec_moved += d;
                 if (due0 != last_due0) {
+                    all_moves.push_back({t, d});
                     const int dir = due0 > last_due0 ? 1 : -1;
                     if (settled) {
                         ++r.moves;
@@ -428,8 +551,15 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
                 if (due0_after == 0 && t >= c.delay_check.second) due0_after = due0;
             }
         }
+        // 出力の停止 (デバイスを失って開き直している間): 描画が来ない。戻ったら同じ出力遅延で描画を始め直す
+        const bool output_off = c.output_off.second > 0 && t >= c.output_off.first && t < c.output_off.first + c.output_off.second;
+        if (source && output_off != was_off) {
+            set_output_active(*source, !output_off);
+            if (!output_off) render_start = next_render = g_now, renders = 0;
+            was_off = output_off;
+        }
         // デバイス: デバイスの時計で決まった間隔 (Consume) ごとに描画する。これから書くバッファは lead 後に鳴る
-        if (source && g_now >= next_render) {
+        if (source && !output_off && g_now >= next_render) {
             std::fill(mix.begin(), mix.end(), 0.0f);
             // これから書くバッファが鳴る時刻 (engine は再生位置から求める。取る時刻が揺れるデバイスでは、これも揺れる)
             source->render(mix.data(), device_frames, g_now + lead, base_delay);
@@ -469,6 +599,8 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
                 sec.duplicated = dup - prev_dup, sec.dropped = drop - prev_drop;
                 sec.resyncs = resyncs - prev_resyncs, sec.underruns = underruns - prev_underruns;
                 sec.min_slack_ms = sec_min_slack < 1e9 ? sec_min_slack : 0;
+                sec.video_fps = sec_video_fps, sec.video_received = sec_video_received, sec.queue_drops = sec_queue_drops;
+                sec.video_delay_ms = sec_video_fps > 0 ? sec_video_delay_sum / sec_video_fps : 0;
                 seconds.push_back(sec);
                 const bool sec_settled = settled_at(next_sec - 1);
                 if (sec_settled) {
@@ -490,6 +622,7 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             }
             prev_resyncs = resyncs, prev_underruns = underruns, prev_dup = dup, prev_drop = drop;
             sec_delay_sum = 0, sec_delay_n = 0, sec_moved = 0, sec_min_slack = 1e9;
+            sec_video_fps = 0, sec_video_received = 0, sec_queue_drops = 0, sec_video_delay_sum = 0;
             window_slack_ms = 1e9;
             g_log.clear();
             next_sec += 1;
@@ -529,6 +662,53 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
         }
         r.recovery_sec = last_over >= c.seconds - 1 ? 1e9 : last_over - last_end;
     }
+    // 映像と、乱れの前後の動き
+    auto in_any = [](double t, const std::vector<std::pair<double, double>>& list) {
+        for (const auto& [from, until] : list) {
+            if (t > from && t <= until) return true;
+        }
+        return false;
+    };
+    double first_low_sec = -1;
+    for (const auto& s : seconds) {
+        if (s.headroom_ms > r.headroom_max) r.headroom_max = s.headroom_ms;
+        r.queue_drops += s.queue_drops;
+        r.video_delay_max = std::max(r.video_delay_max, s.video_delay_ms);
+        if (s.reasons.find("repeating") != std::string::npos) ++r.repeats;
+        if (s.reasons.find("re-anchor") != std::string::npos) {
+            ++r.reanchors;
+            if (first_low_sec >= 0 && r.reanchor_delay_sec < 0) r.reanchor_delay_sec = s.t - first_low_sec;
+        }
+        if (!c.video || s.t <= 10) continue;  // 開始直後は見ない
+        if (s.video_received >= 10 && s.video_fps * 2 < s.video_received && first_low_sec < 0) first_low_sec = s.t;
+        if (c.min_fps > 0 && s.video_fps < c.min_fps && !in_any(s.t, c.fps_grace)) ++r.low_fps_seconds;
+        if (settled_at(s.t - 1)) r.fps_min = std::min(r.fps_min, double(s.video_fps));
+    }
+    if (c.catch_up_within.second > 0) {
+        for (const auto& s : seconds) {
+            if (s.t > c.catch_up_within.first && s.reasons.find("catch up") != std::string::npos) {
+                r.catch_up_at = s.t - c.catch_up_within.first;
+                break;
+            }
+        }
+    }
+    int run = 0, last_sign = 0;
+    for (const auto& [t, d] : all_moves) {
+        if (c.output_off.second > 0 && t >= c.output_off.first && t < c.output_off.first + c.output_off.second) ++r.moves_while_off;
+        if (c.moves_window.second > 0 && t >= c.moves_window.first && t < c.moves_window.second) {
+            ++r.moves_in_window;
+            const int sign = d > 0 ? 1 : -1;
+            run = sign == last_sign ? run + 1 : 1;
+            last_sign = sign;
+            r.same_dir_run = std::max(r.same_dir_run, run);
+        }
+    }
+    if (c.output_off.second > 0) {
+        const double resume = c.output_off.first + c.output_off.second;
+        for (const auto& s : seconds) {
+            if (s.t > resume && s.t <= resume + c.resume_settle_sec && s.reasons.find("fast") != std::string::npos) ++r.fast_after_resume;
+        }
+    }
     {
         std::lock_guard lk(st.reason_mutex);
         r.last_resync = st.last_resync_reason;
@@ -556,6 +736,16 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
         {"settled delay", r.delay_max <= c.max_settled_delay_ms},
         {"delay keeps growing", r.late_delay_growth_ms <= c.max_late_delay_growth_ms},
         {"recovery", r.recovery_sec <= c.max_recovery_sec},
+        {"delay change", c.delay_check.second == 0 || r.delay_growth_ms >= c.min_delay_growth_ms},
+        {"video fps", r.low_fps_seconds == 0},
+        {"repeating", r.repeats <= c.max_repeats},
+        {"re-anchors", r.reanchors >= c.min_reanchors && r.reanchors <= c.max_reanchors},
+        {"re-anchor delay", r.reanchors == 0 || r.reanchor_delay_sec <= c.max_reanchor_delay_sec},
+        {"headroom", r.headroom_max <= c.max_headroom_ms},
+        {"catch up", c.catch_up_within.second == 0 || (r.catch_up_at >= 0 && r.catch_up_at <= c.catch_up_within.second)},
+        {"moves in window", r.moves_in_window <= c.max_moves_in_window && r.same_dir_run <= c.max_same_dir_run},
+        {"moves while output stopped", r.moves_while_off <= c.max_moves_while_off},
+        {"fast after resume", r.fast_after_resume <= c.max_fast_after_resume},
     };
     std::string failed;
     for (const auto& check : checks) {
@@ -570,6 +760,17 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             fmt::format(", delay grew {:+.1f} ms from {:.0f} s to {:.0f} s", r.delay_growth_ms, c.delay_check.first, c.delay_check.second);
     }
     if (r.recovery_sec >= 0) extra += r.recovery_sec >= 1e9 ? ", never recovered" : fmt::format(", recovered in {:.0f} s", r.recovery_sec);
+    if (c.video) {
+        extra += fmt::format(", video fps min {:.0f} ({} low s), queue drops {}, video delay max {:.0f} ms",
+                             r.fps_min < 1e9 ? r.fps_min : 0.0, r.low_fps_seconds, r.queue_drops, r.video_delay_max);
+    }
+    if (r.repeats > 0) extra += fmt::format(", repeating {}", r.repeats);
+    if (r.reanchors > 0) extra += fmt::format(", re-anchored {} ({:.0f} s after output fell)", r.reanchors, r.reanchor_delay_sec);
+    if (c.catch_up_within.second > 0)
+        extra += r.catch_up_at >= 0 ? fmt::format(", caught up after {:.0f} s", r.catch_up_at) : ", no catch up";
+    if (c.moves_window.second > 0) extra += fmt::format(", {} moves in window (run {})", r.moves_in_window, r.same_dir_run);
+    if (c.output_off.second > 0)
+        extra += fmt::format(", {} moves while stopped, {} fast after resume", r.moves_while_off, r.fast_after_resume);
     if (!r.last_resync.empty()) extra += ", last resync: " + r.last_resync;
     if (!failed.empty()) extra += " [failed: " + failed + "]";
     std::printf(
@@ -585,31 +786,39 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     return r;
 }
 
+// 1 回の途切れで、いつもなら at に届くものの遅れ (ms)。from から ms の間止まり、止まっていた分は speed 倍の速さで
+// 順に届く (RTMP / TCP。実機では 790 ms の途切れの後に 62 ms の遅れが続いた)。speed = 0 なら止まり終わりに一度に届く
+double stall_late(double at, double from, double ms, double speed) {
+    const double until = from + ms / 1000.0;
+    if (at < from) return 0.0;
+    if (speed <= 0) return at < until ? (until - at) * 1000.0 : 0.0;
+    const double delivered = until + (at - from) / speed;  // 止まり終わりから speed 倍で届け直す
+    return delivered > at ? (delivered - at) * 1000.0 : 0.0;
+}
+
 // 途切れ (S1、TCP 型): {止まり始める時刻 (秒), 止まる長さ (ms)}。止まっていた間の分は、止まり終わりにまとめて届く
-LateFn stalls(std::vector<std::pair<double, double>> list) {
-    return [list](int, double sent, uint32_t) {
+// (speed > 0 なら、その速さで順に届く)
+LateFn stalls(std::vector<std::pair<double, double>> list, double speed = 0) {
+    return [list, speed](int, double sent, uint32_t) {
         const double at = sent + kNetDelayMs / 1000.0;  // いつもなら届く時刻
-        for (const auto& [from, ms] : list) {
-            const double until = from + ms / 1000.0;
-            if (at >= from && at < until) return (until - at) * 1000.0;
-        }
-        return 0.0;
+        double late = 0;
+        for (const auto& [from, ms] : list) late = std::max(late, stall_late(at, from, ms, speed));
+        return late;
     };
 }
 
-// 繰り返す途切れ (S2): from から until まで every 秒ごとに、min_ms〜max_ms (種で決まる) 止まる
-LateFn repeated_stalls(double from, double every, double until, double min_ms, double max_ms) {
+// 繰り返す途切れ (S2): from から until まで every 秒ごとに、min_ms〜max_ms (種で決まる) 止まる (speed は stalls と同じ)
+LateFn repeated_stalls(double from, double every, double until, double min_ms, double max_ms, double speed = 0) {
     return [=](int, double sent, uint32_t seed) {
         const double at = sent + kNetDelayMs / 1000.0;
-        if (at < from || at >= until + max_ms / 1000.0) return 0.0;
+        if (at < from) return 0.0;
         const int i = int((at - from) / every);
         const double begin = from + i * every;
         if (begin >= until) return 0.0;
         Rng g{seed * 2246822519u + uint32_t(i) * 3266489917u};
         g.next();
         const double ms = min_ms + g.next() * (max_ms - min_ms);
-        const double stop = begin + ms / 1000.0;
-        return at >= begin && at < stop ? (stop - at) * 1000.0 : 0.0;
+        return stall_late(at, begin, ms, speed);
     };
 }
 
@@ -629,12 +838,15 @@ LateFn throttle(double from, double seconds, double rate) {
 int main(int argc, char** argv) {
     int only = 0;
     std::string csv_dir;
+    std::string name_filter;  // --name: 名前がこれで始まる場合だけ回す
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "-v") == 0) {
             g_verbose = true;
             if (i + 1 < argc && std::isdigit((unsigned char)argv[i + 1][0])) only = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--csv") == 0 && i + 1 < argc) {
             csv_dir = argv[++i];
+        } else if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
+            name_filter = argv[++i];
         }
     }
     // worker のログは、時間軸を動かした理由を CSV に書くために debug まで集める (表示は -v のときだけ)
@@ -964,12 +1176,157 @@ int main(int argc, char** argv) {
          .max_reversals = 0,
          .max_settled_jumps = 0},
     };
+    // ---- 途切れの後の映像 (「b7ea6e9: DVS 実機確認の結果と修正案」の T1〜T7)。映像は待ち行列と出力スレッドの判断を通して出す。
+    // RTMP は止まっていた分を 4 倍の速さで順に届け、SRT は止まり終わりに一度に届ける
+    auto t1 = [&](const char* name, double fps, double stall_speed, bool rtmp) {
+        Case c{.name = name,
+               .seconds = 190,
+               .seeds = 5,
+               .video = true,
+               .video_fps = fps,
+               .jitter_ms = 4,
+               // 790 ms 止まり、届き直した 84 ms 後にもう一度 62 ms 遅れる (実機の ch1)
+               .late_ms = stalls({{60.0, 790}, {60.874, 62}}, stall_speed),
+               .in_order = rtmp,
+               .settle_sec = 60,
+               .disturbances = {{60, 61}},
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .delay_check = {59, 70},
+               .max_delay_growth_ms = 10,
+               .min_delay_growth_ms = -10,
+               .min_fps = fps * 55 / 60,
+               .fps_grace = {{60, 66}},
+               .max_repeats = 0,
+               .max_reanchors = 0,
+               .catch_up_within = {60, 5}};
+        return c;
+    };
+    auto t2 = [&](const char* name, double stall_speed, bool rtmp) {
+        Case c{.name = name,
+               .seconds = 190,
+               .seeds = 5,
+               .video = true,
+               .jitter_ms = 4,
+               .late_ms = stalls({{60.0, 70}}, stall_speed),
+               .in_order = rtmp,
+               .settle_sec = 60,
+               .disturbances = {{60, 61}},
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .max_reanchors = 0,
+               .catch_up_within = {60, 5},
+               .moves_window = {65, 185},
+               .max_moves_in_window = 6};
+        return c;
+    };
+    auto t3 = [&](const char* name, double fps) {
+        Case c{.name = name,
+               .seconds = 660,
+               .seeds = 5,
+               .video = true,
+               .video_fps = fps,
+               .jitter_ms = 4,
+               .late_ms = repeated_stalls(60, 30, 360, 500, 500, 4),
+               .in_order = true,
+               .settle_sec = 60,
+               .disturbances = {{60, 361}},
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .max_recovery_sec = 180,
+               .min_fps = fps * 55 / 60,
+               .max_reanchors = 0,
+               .max_headroom_ms = 1000};
+        for (int i = 0; i < 10; ++i) c.fps_grace.push_back({60.0 + 30 * i, 62.0 + 30 * i});  // 各途切れから 2 秒
+        return c;
+    };
+    cases.push_back(t1("T1. RTMP 790 ms + 62 ms outage, 60 fps", 60, 4, true));
+    cases.push_back(t1("T1s. SRT 790 ms + 62 ms outage, 60 fps", 60, 0, false));
+    cases.push_back(t2("T2. RTMP 70 ms outage", 4, true));
+    cases.push_back(t2("T2s. SRT 70 ms outage", 0, false));
+    cases.push_back(t3("T3. RTMP 500 ms outages every 30 s for 5 min, 60 fps", 60));
+    {
+        // 帯域不足: 一度に 1 秒遅らせる瞬間は、映像もその分止まる (A/V を保つ)。その後は待ち行列から 60 fps で出す
+        Case c{.name = "T4. R1 10 s at 0.9x from 60 s",
+               .seconds = 300,
+               .seeds = 5,
+               .video = true,
+               .jitter_ms = 4,
+               .late_ms = throttle(60, 10, 0.9),
+               .in_order = true,
+               .settle_sec = 60,
+               .disturbances = {{60, 70}},
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .max_settled_resyncs = 1,
+               .max_underruns = 1,
+               .max_settled_jumps = 1,
+               .max_recovery_sec = 120,
+               .min_fps = 55,
+               .fps_grace = {{60, 62}},
+               .max_reanchors = 0};
+        cases.push_back(c);
+    }
+    {
+        // 出力の停止 (デバイスを失って開き直す。同じ出力遅延で戻る): 停止の 1 秒前に小さな遅れが 4 回 (1〜8 ms)。
+        // 停止中は音声の余裕が 20 ms 小さく報告される
+        Case c{.name = "T5. output stopped for 30 s, back with the same output delay",
+               .seconds = 240,
+               .seeds = 5,
+               .video = true,
+               .jitter_ms = 4,
+               .late_ms = stalls({{59.0, 11}, {59.25, 18}, {59.5, 15}, {59.75, 11}}),
+               .in_order = true,
+               .output_off = {60, 30},
+               .output_off_slack_ms = 20,
+               .settle_sec = 60,
+               .disturbances = {{59, 90}},
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .max_reanchors = 0,
+               .moves_window = {105, 225},
+               .max_moves_in_window = 6,
+               .max_same_dir_run = 5,
+               .max_moves_while_off = 0,
+               .max_fast_after_resume = 2};
+        cases.push_back(c);
+    }
+    cases.push_back(t1("T6a. RTMP 790 ms + 62 ms outage, 30 fps", 30, 4, true));
+    cases.push_back(t3("T6b. RTMP 500 ms outages every 30 s for 5 min, 30 fps", 30));
+    {
+        // 保険: 待ち行列を 300 ms にして、900 ms の途切れで遅延を約 900 ms にする (余りを戻すまでの約 5 秒、待ち行列に
+        // 収まらない)。出せない状態を打ち切って取り直す
+        Case c{.name = "T7. queue of 300 ms, delay of ~900 ms after an outage",
+               .seconds = 200,
+               .seeds = 1,
+               .video = true,
+               .queue_span_ms = 300,
+               .jitter_ms = 4,
+               .late_ms = stalls({{60.0, 900}}, 4),
+               .in_order = true,
+               .settle_sec = 60,
+               .disturbances = {{60, 61}},
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .min_fps = 55,
+               .fps_grace = {{60, 66}},
+               .min_reanchors = 1,
+               .max_reanchors = 1,
+               .max_reanchor_delay_sec = 4};
+        cases.push_back(c);
+    }
+
     // デバイスの違い: 安定した回線 (1)、裾の重い揺れ (4)、繰り返す途切れ (7)、帯域不足 (10) を、基本遅延 10 / 32 / 100 ms と
     // 取る仕方 3 つの組み合わせでも回す。条件はどのデバイスでも同じ (デバイスに合わせて緩めない)
     const size_t base_cases = cases.size();
     for (size_t i = 0; i < base_cases; ++i) {
         const std::string& name = cases[i].name;
-        if (name.rfind("1. ", 0) != 0 && name.rfind("4. ", 0) != 0 && name.rfind("7. ", 0) != 0 && name.rfind("10. ", 0) != 0) continue;
+        // 途切れの後の映像 (T1〜T5) も同じ
+        bool matrix = false;
+        for (const char* prefix : {"1. ", "4. ", "7. ", "10. ", "T1. ", "T1s. ", "T2. ", "T2s. ", "T3. ", "T4. ", "T5. "}) {
+            matrix |= name.rfind(prefix, 0) == 0;
+        }
+        if (!matrix) continue;
         for (double base : {10.0, 32.0, 100.0}) {
             for (Consume consume : {Consume::Steady, Consume::Blocks, Consume::Irregular}) {
                 if (base == 32 && consume == Consume::Blocks) continue;  // 元の場合と同じ
@@ -985,7 +1342,7 @@ int main(int argc, char** argv) {
     int ch = 1;
     for (size_t i = 0; i < cases.size(); ++i) {
         const auto& c = cases[i];
-        if (only == 0 || only == int(i) + 1) {
+        if ((only == 0 || only == int(i) + 1) && c.name.rfind(name_filter, 0) == 0) {
             for (int s = 0; s < c.seeds; ++s) {
                 const uint32_t seed = 12345u + 7919u * uint32_t(s);  // 種 1 つ目は前と同じ (今までの場合の結果を変えない)
                 std::string csv;
