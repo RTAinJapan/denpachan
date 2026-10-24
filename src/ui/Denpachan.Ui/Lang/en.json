@@ -102,6 +102,7 @@
   "channel.audioModeShared": "Shared",
   "channel.audioModeExclusive": "Exclusive",
   "channel.audioModeAsio": "Not used for an ASIO driver (shared / exclusive applies to WASAPI devices only)",
+  "channel.startChannelOutOfRange": "{channels} (out of range)",
   "channel.audioOffset": "Audio offset (ms)",
   "channel.fade": "Fade briefly when receiving starts or stops (prevents clicks)",
   "channel.reconnectNote": "Changing the input settings reconnects this channel.",
@@ -319,5 +320,6 @@
   "msg.audio.deviceNotFound": "Device not found",
   "msg.audio.deviceLost": "Lost the device (reopening)",
   "msg.audio.driverStalled": "The driver is not calling back (no sound)",
+  "msg.audio.startChannelOutOfRange": "The device has no output channels {channels} (it has {deviceChannels} ch)",
   "msg.audio.asioOneDriver": "Only one ASIO driver can be used at a time (another channel uses a different ASIO driver)"
 }

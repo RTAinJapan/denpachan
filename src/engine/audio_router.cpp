@@ -177,6 +177,11 @@ json AudioRouter::channel_status(int ch) {
                 j["error"] = {{"id", "audio.deviceLost"}};  // 開けていたのに失った (DVS の停止、モードの切り替えなど)。開き直している
             } else if (st.stalled) {
                 j["error"] = {{"id", "audio.driverStalled"}};  // ASIO のドライバから呼ばれていない
+            } else if (st.open && (r.start_channel < 1 || r.start_channel > st.channels)) {
+                // 出力チャンネルがデバイスに無い (2ch ずつのデバイスで 3-4 を選んだままなど)。何も出ていない
+                j["error"] = {{"id", "audio.startChannelOutOfRange"},
+                              {"channels", std::to_string(r.start_channel) + "-" + std::to_string(r.start_channel + 1)},
+                              {"deviceChannels", st.channels}};
             }
             if (snap.found) {
                 j["playing"] = snap.playing && st.open && !st.stalled;

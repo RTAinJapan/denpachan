@@ -303,10 +303,21 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         {
             if (value == null) return;
             var old = _audioDevice;
+            var oldStart = _audioStartChannel;
             if (!SetProperty(ref _audioDevice, value)) return;
+            // 選んだデバイスに今の出力チャンネルが無ければ 1-2 にする (DVS 4.5 の WDM は 2ch ずつのデバイスで、既定の 3-4 などが無い)。
+            // 設定を読んだだけのとき (_applying) は変えず、範囲外と表示する
+            var resetStart = !_applying && !StartChannelFits(value, _audioStartChannel);
+            if (resetStart) _audioStartChannel = 1;
             UpdateStartChannelOptions();
             if (_applying) return;
-            _ = PatchOrRevertAsync(new JsonObject { ["audio"] = new JsonObject { ["device"] = value } }, () => AudioDevice = old);
+            var audio = new JsonObject { ["device"] = value };
+            if (resetStart) audio["startChannel"] = 1;
+            _ = PatchOrRevertAsync(new JsonObject { ["audio"] = audio }, () =>
+            {
+                _audioStartChannel = oldStart;
+                AudioDevice = old;
+            });
         }
     }
 
@@ -341,15 +352,31 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         _applying = false;
     }
 
+    /// <summary>デバイスのチャンネル数 (見つからない・分からなければ 0)</summary>
+    private int DeviceChannels(string device) => _main.AudioDevices.FirstOrDefault(d => d.Name == device)?.Channels ?? 0;
+
+    /// <summary>出力チャンネル (start-start+1) がデバイスにあるか。チャンネル数が分からなければ、あるとみなす</summary>
+    private bool StartChannelFits(string device, int start)
+    {
+        var channels = DeviceChannels(device);
+        return channels <= 0 || start + 1 <= channels;
+    }
+
     private void UpdateStartChannelOptions()
     {
-        var channels = _main.AudioDevices.FirstOrDefault(d => d.Name == _audioDevice)?.Channels ?? 2;
+        var known = DeviceChannels(_audioDevice);
+        var channels = _main.AudioDevices.Any(d => d.Name == _audioDevice) ? known : 2;
         // ASIO のドライバは、別の ASIO ドライバを使っている間はチャンネル数が分からない (0)。そのときは広く出す
         if (channels <= 0) channels = 64;
         channels = Math.Clamp(channels, 2, 64);
         var options = new List<Option<int>>();
         for (var start = 1; start + 1 <= channels; start += 2) options.Add(new(start, $"{start}-{start + 1}"));
-        if (!options.Any(o => o.Value == _audioStartChannel)) options.Add(new(_audioStartChannel, $"{_audioStartChannel}-{_audioStartChannel + 1}"));
+        if (!options.Any(o => o.Value == _audioStartChannel))
+        {
+            // 設定にあるがデバイスに無い出力チャンネル (チャンネル数が分かっているときは範囲外と出す)
+            var label = $"{_audioStartChannel}-{_audioStartChannel + 1}";
+            options.Add(new(_audioStartChannel, known > 0 ? F("channel.startChannelOutOfRange", ("channels", label)) : label));
+        }
         var applying = _applying;
         _applying = true;
         StartChannelOptions = options;

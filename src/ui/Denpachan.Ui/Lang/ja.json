@@ -102,6 +102,7 @@
   "channel.audioModeShared": "共有",
   "channel.audioModeExclusive": "排他",
   "channel.audioModeAsio": "ASIO のドライバに出すときは使いません (共有 / 排他は WASAPI のデバイスのときだけ)",
+  "channel.startChannelOutOfRange": "{channels} (範囲外)",
   "channel.audioOffset": "音声オフセット (ms)",
   "channel.fade": "受信の開始・途絶の瞬間に短いフェードをかける (ノイズ防止)",
   "channel.reconnectNote": "受信の設定を変えると一旦切断されます。",
@@ -319,5 +320,6 @@
   "msg.audio.deviceNotFound": "デバイスが見つかりません",
   "msg.audio.deviceLost": "デバイスを失いました (開き直しています)",
   "msg.audio.driverStalled": "ドライバから呼ばれていません (音は出ていません)",
+  "msg.audio.startChannelOutOfRange": "出力チャンネル {channels} がデバイスにありません (デバイスは {deviceChannels} ch)",
   "msg.audio.asioOneDriver": "ASIO のドライバは同時に 1 つしか使えません (別のチャンネルが別の ASIO ドライバを使っています)"
 }

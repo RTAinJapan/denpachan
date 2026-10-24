@@ -1,9 +1,9 @@
 {
-  "_comment": "音声の出力の状態: ch1 デバイスを失った (開き直している)、ch2 排他モードで開けず共有モードで出している、ch4 ASIO のドライバから呼ばれていない",
+  "_comment": "音声の出力の状態: ch1 デバイスを失った (開き直している)、ch2 排他モードで開けず共有モードで出している、ch3 出力チャンネル 3-4 が 2ch のデバイスに無い、ch4 ASIO のドライバから呼ばれていない",
   "channels": [
     { "name": "Game A", "enabled": true, "vcam": 1, "source": { "protocol": "srt", "mode": "listener", "port": 9001 }, "audio": { "device": "DVS Transmit  1-2 (Dante Virtual Soundcard)", "startChannel": 1 } },
     { "name": "Game B", "enabled": true, "vcam": 2, "source": { "protocol": "srt", "mode": "listener", "port": 9002 }, "audio": { "device": "DVS Transmit  3-4 (Dante Virtual Soundcard)", "startChannel": 1, "mode": "exclusive" } },
-    { "name": "Game C", "enabled": true, "vcam": 3, "source": { "protocol": "srt", "mode": "listener", "port": 9003 }, "audio": { "device": "DVS Transmit  5-6 (Dante Virtual Soundcard)", "startChannel": 1 } },
+    { "name": "Game C", "enabled": true, "vcam": 3, "source": { "protocol": "srt", "mode": "listener", "port": 9003 }, "audio": { "device": "DVS Transmit  5-6 (Dante Virtual Soundcard)", "startChannel": 3 } },
     { "name": "Game D", "enabled": true, "vcam": 4, "source": { "protocol": "srt", "mode": "listener", "port": 9004 }, "audio": { "device": "ASIO: Dante Virtual Soundcard (x64)", "startChannel": 7 } }
   ],
   "state": {
@@ -35,7 +35,7 @@
         "video": { "state": "live", "connected": true, "connections": 1, "peer": "192.168.1.13:51234", "codec": "h264", "width": 1920, "height": 1080, "hwDecode": true, "bitrateMbps": 6.1, "decodeFps": 60, "outputFps": 60, "delayMs": 48, "droppedLate": 0, "droppedQueue": 0, "decodeErrors": 0, "lastError": "" },
         "srt": { "latencyMs": 120, "rttMs": 12.0, "rcvBufMs": 140, "recvMbps": 6.2, "lost": 0, "retrans": 0, "dropped": 0, "configuredLatencyMs": 120, "recommend": { "latencyMs": 40, "multiplier": 3, "rttMs": 12.5, "lossPct": 0, "drops": 0, "windowSec": 60 } },
         "audioIn": { "peakDb": [-12.5, -14.1], "delayMs": 52, "avOffsetMs": 1, "gaps": 0 },
-        "audioOut": { "open": true, "exclusive": false, "mute": false, "playing": true, "latencyMs": 32.4, "errorMs": 0.3, "slips": 20, "underruns": 0, "resyncs": 1, "peakDb": [-12.5, -14.1], "device": "DVS Transmit  5-6 (Dante Virtual Soundcard)", "deviceId": "x3", "api": "wasapi", "startChannel": 1 },
+        "audioOut": { "device": "DVS Transmit  5-6 (Dante Virtual Soundcard)", "deviceId": "x3", "open": true, "api": "wasapi", "exclusive": false, "startChannel": 3, "mute": false, "error": { "id": "audio.startChannelOutOfRange", "channels": "3-4", "deviceChannels": 2 }, "playing": false, "latencyMs": 32.4, "errorMs": 0.0, "slips": 0, "underruns": 0, "resyncs": 0, "peakDb": [-100, -100] },
         "record": { "state": "off", "file": "", "seconds": 0, "bytes": 0, "dropped": 0, "error": "" }
       },
       {
@@ -60,7 +60,7 @@
     "channels": [
       { "statusText": "受信中", "audioKind": "error" },
       { "statusText": "受信中", "audioKind": "warn" },
-      { "statusText": "受信中", "audioKind": "ok" },
+      { "statusText": "受信中", "audioKind": "error" },
       { "statusText": "受信中", "audioKind": "error" }
     ]
   }
