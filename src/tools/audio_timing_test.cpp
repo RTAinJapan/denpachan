@@ -55,6 +55,8 @@ struct Case {
     double device_open_sec = 0;  // engine がデバイスを開く時刻 (0 = worker より先)
     // かたまり k が、いつもより何 ms 遅れて届くか
     std::function<double(int k, double t)> late_ms = [](int, double) { return 0.0; };
+    // 届く時刻の揺れ: 0.5〜1.5 秒ごとに変わる ±jitter_ms の一様乱数 (決まった種)。窓 (1 秒) ごとの最小の余裕が揺れる
+    double jitter_ms = 0;
     uint64_t max_slips = 0;
     uint64_t max_resyncs = 0;  // 鳴らし始めた 1 回は数えない
     uint64_t min_resyncs = 0;
@@ -93,6 +95,13 @@ Result run(const Case& c, int ch) {
     route.ch = ch;
     auto open_device = [&] { source = std::make_unique<engine::ChannelSource>(route, audio::kSampleRate, 2, qpc_from_ms(kBaseDelayMs)); };
     if (c.device_open_sec <= 0) open_device();
+    uint32_t rng = 12345;  // 到着の揺れ (決まった種の線形合同法)
+    auto jitter = [&] {
+        rng = rng * 1664525u + 1013904223u;
+        return (double(rng >> 8) / double(1u << 24) * 2 - 1) * c.jitter_ms;
+    };
+    double jitter_now = jitter();
+    double jitter_until = 0;  // 揺れの値を次に変える時刻 (送出元の時計、秒)
 
     std::vector<float> chunk(size_t(kChunkFrames) * 2);
     std::vector<float> mix(size_t(kDeviceFrames) * 2);
@@ -110,8 +119,12 @@ Result run(const Case& c, int ch) {
         // 送出元: かたまり k の時刻 (送出元の時計) と、届く時刻
         for (;;) {
             const double sent = k * chunk_sec / (1 + c.sender_ppm * 1e-6);
-            const int64_t arrival = start + qpc_from_us(int64_t((sent + (kNetDelayMs + c.late_ms(k, sent)) / 1000.0) * 1e6));
+            const int64_t arrival = start + qpc_from_us(int64_t((sent + (kNetDelayMs + c.late_ms(k, sent) + jitter_now) / 1000.0) * 1e6));
             if (arrival > g_now) break;
+            if (sent >= jitter_until) {
+                jitter_now = jitter();
+                jitter_until = sent + 1.0 + jitter() / std::max(1.0, c.jitter_ms) * 0.5;
+            }
             for (int i = 0; i < kChunkFrames; ++i) {
                 const float v = 0.25f * float(std::sin(2 * 3.14159265 * 440.0 * (double(k) * kChunkFrames + i) / audio::kSampleRate));
                 chunk[2 * size_t(i)] = v;
@@ -215,6 +228,15 @@ int main(int argc, char** argv) {
          .max_slips = 1500,
          .max_resyncs = 40,
          .min_resyncs = 1},
+        // 届く時刻が揺れる (RTMP の到着、DVS が 10 ms 前後の単位で音を取る): 窓ごとの最小の余裕も揺れるが、
+        // それで時間軸を一度に行き来させない
+        {.name = "arrivals jitter +-5 ms", .seconds = 60, .jitter_ms = 5, .max_slips = 100, .max_resyncs = 2},
+        {.name = "arrivals jitter +-5 ms, late arrivals right after start",
+         .seconds = 60,
+         .late_ms = startup_late,
+         .jitter_ms = 5,
+         .max_slips = 100,
+         .max_resyncs = 4},
     };
     bool ok = true;
     int ch = 1;
