@@ -57,7 +57,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     private string _lastUnreachable = "";  // 繋がらない理由 (メッセージの JSON。言語を変えても同じ)
     private bool? _lastConnected;
     private string _lastWorkerState = "";
-    private string _lastSharedFallback = "";  // 共有モードに切り替えた理由 (変わったときだけイベントに出す)
+    private string _lastSharedFallback = "";
+    private bool _audioLost;  // 音声デバイスを失っている (変わったときだけイベントに出す)  // 共有モードに切り替えた理由 (変わったときだけイベントに出す)
 
     public ChannelViewModel(MainViewModel main, int id)
     {
@@ -573,17 +574,25 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (Mute) audioNotes.Add(T("main.tile.audioMuted"));
         if (dropouts + gaps > 0) audioNotes.Add(F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")));
         var audioLatency = $"{audioOut.Num("latencyMs"):0}";
+        // デバイスを失った / ドライバが止まった (開き直している)。「失った」「戻った」をイベントに 1 行ずつ出す
+        var audioErrorId = audioOut.At("error").Str("id");
+        var lost = audioErrorId is "audio.deviceLost" or "audio.driverStalled";
+        if (lost && !_audioLost) events.Add(new(F("event.audioDeviceLost", ("device", audioOut.Str("device")), ("error", Message(audioOut.At("error")))), true));
+        else if (!lost && _audioLost && audioOut != null && audioOut.Bool("open")) events.Add(new(F("event.audioDeviceBack", ("device", audioOut.Str("device")))));
+        _audioLost = lost;
+        // 開いていなければ、鳴っていたときの値 (playing) が残っていてもエラーにする
         AudioLine = audioOut switch
         {
             null => T("main.tile.audioNone"),
             _ when audioOut.At("error") != null => F("main.tile.audioError", ("error", Message(audioOut.At("error"))), ("device", audioOut.Str("device"))),
+            _ when !audioOut.Bool("open") => T("main.tile.audioCannotOpen"),
             _ when audioOut.Bool("playing") => audioNotes.Count == 0
                 ? F("main.tile.audioPlaying", ("latency", audioLatency))
                 : F("main.tile.audioPlayingWithNotes", ("latency", audioLatency), ("notes", string.Join(T("common.listSeparator"), audioNotes))),
-            _ => T(audioOut.Bool("open") ? "main.tile.audioIdle" : "main.tile.audioCannotOpen"),
+            _ => T("main.tile.audioIdle"),
         };
         AudioKind = audioOut == null ? "ok"
-                    : audioOut.At("error") != null || (!audioOut.Bool("open") && !audioOut.Bool("playing")) ? "error"
+                    : audioOut.At("error") != null || !audioOut.Bool("open") ? "error"
                     : dropouts + gaps > 0 || sharedFallback.Length > 0 ? "warn"
                     : "ok";
 

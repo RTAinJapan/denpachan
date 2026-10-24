@@ -305,6 +305,10 @@ bool DeviceOutput::open() {
 
 void DeviceOutput::close() {
     if (client_) client_->Stop();
+    {
+        std::lock_guard lk(sources_mutex_);
+        for (auto& s : sources_) s->stats().playing = false;  // 開き直すまで鳴っていない (描画が呼ばれないので残ってしまう)
+    }
     clock_.Reset();
     render_.Reset();
     client_.Reset();

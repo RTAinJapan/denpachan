@@ -48,6 +48,7 @@ private:
     denpachan_asio_callbacks callbacks_{};  // open に渡すコールバックの表 (output_ が開いている間は残す)
     std::atomic<bool> stopping_{false};
     int64_t base_delay_qpc_ = 0;
+    std::atomic<int64_t> last_render_qpc_{0};  // 最後にドライバから呼ばれた時刻 (止まったのを状態に出す)
 
     std::mutex sources_mutex_;
     std::vector<std::unique_ptr<ChannelSource>> sources_;

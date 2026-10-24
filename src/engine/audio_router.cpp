@@ -173,8 +173,13 @@ json AudioRouter::channel_status(int ch) {
                 snap.peak_l = stats.peak_l.exchange(0);
                 snap.peak_r = stats.peak_r.exchange(0);
             });
+            if (!st.open && st.ever_opened) {
+                j["error"] = {{"id", "audio.deviceLost"}};  // 開けていたのに失った (DVS の停止、モードの切り替えなど)。開き直している
+            } else if (st.stalled) {
+                j["error"] = {{"id", "audio.driverStalled"}};  // ASIO のドライバから呼ばれていない
+            }
             if (snap.found) {
-                j["playing"] = snap.playing;
+                j["playing"] = snap.playing && st.open && !st.stalled;
                 j["latencyMs"] = snap.latency_ms;
                 j["errorMs"] = snap.error_ms;
                 j["slips"] = snap.slips;

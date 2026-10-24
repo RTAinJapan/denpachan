@@ -19,7 +19,7 @@
   "main.tile.testSlot": "Test",
   "main.tile.testSlotTip": "A stream test slot. The stream test bot may start, stop, record or change the latency of this channel",
   "main.tile.transportTip": "Yellow: below the recommended latency / TCP retransmissions. Red: packets dropped in the last minute",
-  "main.tile.audioTip": "Yellow: dropouts or resyncs in the last minute, or playing in shared mode because exclusive mode failed. Red: the audio device cannot be opened",
+  "main.tile.audioTip": "Yellow: dropouts or resyncs in the last minute, or playing in shared mode because exclusive mode failed. Red: the audio device cannot be opened or was lost (reopening)",
   "main.tile.start": "Start",
   "main.tile.stop": "Stop",
   "main.tile.record": "● Record",
@@ -204,6 +204,8 @@
   "event.ffmpegFound": "FFmpeg found",
   "event.audioSharedFallback": "Could not open the device in exclusive mode; playing in shared mode ({device})",
   "event.audioSharedFallbackTooSlow": "The device does not keep up with the exclusive-mode period; playing in shared mode ({device})",
+  "event.audioDeviceLost": "Audio: {error} ({device})",
+  "event.audioDeviceBack": "The audio device is back ({device})",
   "event.rtmpRestarted": "Restarted the RTMP server ({reason})",
   "event.configLoadFailed": "Cannot read the settings: {error}",
   "event.devicesFailed": "Cannot get the audio devices: {error}",
@@ -315,5 +317,7 @@
   "msg.ffmpeg.missing": "FFmpeg {series} (shared build) not found ({dlls}).",
   "msg.ffmpeg.version": "FFmpeg version mismatch: {lib} {found} ({required} or later required). Use the FFmpeg {series} shared build",
   "msg.audio.deviceNotFound": "Device not found",
+  "msg.audio.deviceLost": "Lost the device (reopening)",
+  "msg.audio.driverStalled": "The driver is not calling back (no sound)",
   "msg.audio.asioOneDriver": "Only one ASIO driver can be used at a time (another channel uses a different ASIO driver)"
 }

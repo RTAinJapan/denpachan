@@ -19,7 +19,7 @@
   "main.tile.testSlot": "テスト用",
   "main.tile.testSlotTip": "配信テスト用のチャンネルです。配信テストの bot が開始・停止・録画・latency の変更をすることがあります",
   "main.tile.transportTip": "黄: 推奨 latency に足りない / TCP の再送あり。赤: 直近 1 分に取りこぼしあり",
-  "main.tile.audioTip": "黄: 直近 1 分に音切れ・合わせ直しあり、または排他モードで開けず共有モードで出している。赤: 音声デバイスを開けない",
+  "main.tile.audioTip": "黄: 直近 1 分に音切れ・合わせ直しあり、または排他モードで開けず共有モードで出している。赤: 音声デバイスを開けない・失った (開き直している)",
   "main.tile.start": "開始",
   "main.tile.stop": "停止",
   "main.tile.record": "● 録画",
@@ -204,6 +204,8 @@
   "event.ffmpegFound": "FFmpeg が見つかりました",
   "event.audioSharedFallback": "排他モードで開けなかったので、共有モードで出しています ({device})",
   "event.audioSharedFallbackTooSlow": "排他モードの周期にデバイスが追いつかないので、共有モードで出しています ({device})",
+  "event.audioDeviceLost": "音声: {error} ({device})",
+  "event.audioDeviceBack": "音声デバイスが戻りました ({device})",
   "event.rtmpRestarted": "RTMP サーバを再起動しました ({reason})",
   "event.configLoadFailed": "設定を読めませんでした: {error}",
   "event.devicesFailed": "音声デバイスを取得できませんでした: {error}",
@@ -315,5 +317,7 @@
   "msg.ffmpeg.missing": "FFmpeg {series} (shared 版) が見つかりません ({dlls})。",
   "msg.ffmpeg.version": "FFmpeg の版が合いません: {lib} {found} ({required} 以上が必要)。FFmpeg {series} の shared 版を指定してください",
   "msg.audio.deviceNotFound": "デバイスが見つかりません",
+  "msg.audio.deviceLost": "デバイスを失いました (開き直しています)",
+  "msg.audio.driverStalled": "ドライバから呼ばれていません (音は出ていません)",
   "msg.audio.asioOneDriver": "ASIO のドライバは同時に 1 つしか使えません (別のチャンネルが別の ASIO ドライバを使っています)"
 }
