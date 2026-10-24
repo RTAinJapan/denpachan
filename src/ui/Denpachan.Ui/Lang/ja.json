@@ -45,6 +45,7 @@
   "main.tile.audioMuted": "ミュート中",
   "main.tile.audioSharedFallback": "共有モードで出力中",
   "main.tile.audioDropouts": "音切れ {count} 回/分",
+  "main.tile.audioResyncs": "合わせ直し {count} 回/分",
   "main.tile.audioIdle": "音声 待機中",
   "main.tile.audioCannotOpen": "音声デバイスを開けません",
   "main.tile.recRecording": "● REC {duration}  {size}  {file}",

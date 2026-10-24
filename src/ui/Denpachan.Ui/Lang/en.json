@@ -45,6 +45,7 @@
   "main.tile.audioMuted": "muted",
   "main.tile.audioSharedFallback": "playing in shared mode",
   "main.tile.audioDropouts": "dropouts {count}/min",
+  "main.tile.audioResyncs": "resyncs {count}/min",
   "main.tile.audioIdle": "Audio idle",
   "main.tile.audioCannotOpen": "Cannot open the audio device",
   "main.tile.recRecording": "● REC {duration}  {size}  {file}",

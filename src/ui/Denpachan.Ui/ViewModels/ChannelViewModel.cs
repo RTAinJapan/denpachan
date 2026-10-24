@@ -151,7 +151,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     // 直近 1 分の増分 (累積カウンタから)
     private static readonly TimeSpan WarnWindow = TimeSpan.FromSeconds(60);
-    private readonly RateTracker _audioDropouts = new(WarnWindow);  // 音切れ + 合わせ直し
+    private readonly RateTracker _audioDropouts = new(WarnWindow);  // デバイスの音切れ (underruns)
+    private readonly RateTracker _audioResyncs = new(WarnWindow);   // 合わせ直し (フェードして鳴らす位置を合わせ直した)
     private readonly RateTracker _audioGaps = new(WarnWindow);      // worker 側の音声の抜け
     private readonly RateTracker _srtDropped = new(WarnWindow);
     private readonly RateTracker _tcpRetrans = new(WarnWindow);
@@ -585,10 +586,11 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         var peak = audioOut?.At("peakDb") as JsonArray ?? audioIn?.At("peakDb") as JsonArray;
         PeakL = peak is { Count: 2 } ? PeakOf(peak[0]) : -100;
         PeakR = peak is { Count: 2 } ? PeakOf(peak[1]) : -100;
-        // 直近 1 分の音切れ (デバイスの音切れ + 合わせ直し、worker 側の抜け)
-        var dropouts = audioOut != null && audioOut.At("latencyMs") != null
-            ? _audioDropouts.Add(audioOut.Num("underruns") + audioOut.Num("resyncs"))
-            : 0;
+        // 直近 1 分の音切れ (デバイスの音切れ、worker 側の抜け) と合わせ直し。合わせ直しも短い無音 (フェード) が入るが、
+        // 届いた音が足りなかったのではない (時間軸が動いた、デバイスを開き直したなど) ので分けて出す
+        var hasCounts = audioOut != null && audioOut.At("latencyMs") != null;
+        var dropouts = hasCounts ? _audioDropouts.Add(audioOut.Num("underruns")) : 0;
+        var resyncs = hasCounts ? _audioResyncs.Add(audioOut.Num("resyncs")) : 0;
         var gaps = audioIn != null ? _audioGaps.Add(audioIn.Num("gaps")) : 0;
         // 再生中の補足 (ミュート、音切れ)。あれば「、」でつないで後ろに出す
         // 排他モードを頼まれたが共有モードで出している (開けない・周期に追いつけない)
@@ -603,6 +605,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (sharedFallback.Length > 0) audioNotes.Add(T("main.tile.audioSharedFallback"));
         if (Mute) audioNotes.Add(T("main.tile.audioMuted"));
         if (dropouts + gaps > 0) audioNotes.Add(F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")));
+        if (resyncs > 0) audioNotes.Add(F("main.tile.audioResyncs", ("count", $"{resyncs:0}")));
         var audioLatency = $"{audioOut.Num("latencyMs"):0}";
         // デバイスを失った / ドライバが止まった (開き直している)。「失った」「戻った」をイベントに 1 行ずつ出す
         var audioErrorId = audioOut.At("error").Str("id");
@@ -623,7 +626,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         };
         AudioKind = audioOut == null ? "ok"
                     : audioOut.At("error") != null || !audioOut.Bool("open") ? "error"
-                    : dropouts + gaps > 0 || sharedFallback.Length > 0 ? "warn"
+                    : dropouts + gaps + resyncs > 0 || sharedFallback.Length > 0 ? "warn"
                     : "ok";
 
         var record = st.At("record");
