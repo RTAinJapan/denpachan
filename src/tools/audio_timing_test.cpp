@@ -667,10 +667,10 @@ int main(int argc, char** argv) {
          .max_slips = 300,
          .max_resyncs = 4},
         {.name = "device opens 5 s after the stream started", .seconds = 60, .device_open_sec = 5, .max_slips = 100, .max_resyncs = 3},
-        // 設計で追うクロック差 (200 ppm) より大きい場合: 時間軸は 3 秒に 1 ms (333 ppm) までしか追わない
-        // (毎秒動かすと engine の重複・間引きが 1 秒に 48 回になり、2 秒続くと合わせ直しになる)。追いきれない遅延の余りは
-        // 3 フレームを超えたら一度に戻す (合わせ直し 1 回)
-        {.name = "sender clock 400 ppm fast (a little faster than the time base follows)",
+        // 設計で追うクロック差 (200 ppm) より大きい場合: 時間軸は 2 秒に 1 ms (500 ppm) までしか追わない
+        // (毎秒動かすと engine の重複・間引きが 1 秒に 48 回になり、2 秒続くと合わせ直しになる)。余っている側は直近 2 分の
+        // 窓で見るので、詰め始めるのは遅れる。追いきれない遅延の余りは 3 フレームを超えたら一度に戻す (合わせ直し 1 回)
+        {.name = "sender clock 400 ppm fast (within what the time base follows)",
          .seconds = 60,
          .sender_ppm = 400,
          .max_slips = 1500,
@@ -681,7 +681,7 @@ int main(int argc, char** argv) {
          .max_slips = 3000,
          .max_resyncs = 4,
          .min_resyncs = 1},
-        // 落ち着いた後の揺れ (実機の DVS で窓ごとに ±2〜4 ms): 揺れに反応して時間軸を 1 ms ずつ行き来させない。
+        // 落ち着いた後の揺れ (実機の DVS + RTMP で窓ごとに ±2〜4 ms): 揺れに反応して時間軸を 1 ms ずつ行き来させない。
         // クロック差は、揺れがあっても合わせ直しなしで追う
         {.name = "arrivals jitter +-4 ms for 5 min",
          .seconds = 300,
@@ -790,6 +790,8 @@ int main(int argc, char** argv) {
          .max_moves = 3,
          .max_reversals = 0,
          .max_settled_jumps = 0},
+        // 揺れの幅が大きいと、時間軸がその幅を覆う所まで (直近の窓で見えた悪い揺れに合わせて) 1 ms ずつ遅らせ終えるのに
+        // 80 秒ほどかかる種がある。その分の同じ向きの移動は許す (行き来は 0 のまま)
         {.name = "2. J1 jitter +-30 ms, 10 min",
          .seconds = 600,
          .seeds = 5,
@@ -801,7 +803,7 @@ int main(int argc, char** argv) {
          .max_resyncs = 1'000,
          .max_settled_resyncs = 0,
          .max_settled_underruns = 0,
-         .max_moves = 3,
+         .max_moves = 8,
          .max_reversals = 0,
          .max_settled_jumps = 0,
          .max_settled_delay_ms = 100},
@@ -942,9 +944,9 @@ int main(int argc, char** argv) {
          .disturbances = {{60, 70}},
          .max_slips = 10000,
          .max_resyncs = 1'000,
-         .max_settled_resyncs = 0,
+         .max_settled_resyncs = 1,  // 追いついた後に、余分な遅延を一度に戻す 1 回
          .max_underruns = 1,
-         .max_settled_jumps = 0,
+         .max_settled_jumps = 1,
          .max_recovery_sec = 120},
         // 出力先の切り替え (出力遅延 32 → 29 ms): 切り替え直後の乱れは問わない
         {.name = "11. J1 +-30 ms, output delay 32 -> 29 ms at 60 s",
