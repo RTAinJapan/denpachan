@@ -71,6 +71,7 @@ private:
     SharedMapping vcam_mappings_[vcam::kNumCams];
     vcam::Header* vcam_headers_[vcam::kNumCams] = {};
     int64_t last_audio_retry_qpc_ = 0;
+    uint64_t last_audio_changes_ = 0;  // 前の tick で見たデバイスの増減の回数
     std::atomic<int> shutdown_request_{0};
     bool ffmpeg_ok_ = false;
     std::string ffmpeg_message_;  // 見つからないときの説明

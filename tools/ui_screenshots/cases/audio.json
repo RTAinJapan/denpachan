@@ -1,5 +1,18 @@
 {
-  "_comment": "音声の出力の状態: ch1 デバイスを失った (開き直している)、ch2 排他モードで開けず共有モードで出している、ch3 出力チャンネル 3-4 が 2ch のデバイスに無い、ch4 ASIO のドライバから呼ばれていない",
+  "_comment": "音声の出力の状態と出力先の一覧 (名前の自然順に並ぶ): ch1 デバイスを失った (開き直している)、ch2 排他モードで開けず共有モードで出している、ch3 出力チャンネル 3-4 が 2ch のデバイスに無い、ch4 ASIO のドライバから呼ばれていない",
+  "audioDevices": [
+    { "name": "DVS Transmit  1-2 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "DVS Transmit  7-8 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "DVS Transmit  11-12 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "スピーカー (Realtek(R) Audio)", "channels": 2, "sampleRate": 48000 },
+    { "name": "DVS Transmit  15-16 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "DVS Transmit  13-14 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "DVS Transmit  3-4 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "DVS Transmit  9-10 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "DVS Transmit  5-6 (Dante Virtual Soundcard)", "channels": 2, "sampleRate": 48000 },
+    { "name": "ASIO: Dante Virtual Soundcard (x64)", "channels": 16, "sampleRate": 48000 },
+    { "name": "CABLE Input (VB-Audio Virtual Cable)", "channels": 2, "sampleRate": 48000 }
+  ],
   "channels": [
     { "name": "Game A", "enabled": true, "vcam": 1, "source": { "protocol": "srt", "mode": "listener", "port": 9001 }, "audio": { "device": "DVS Transmit  1-2 (Dante Virtual Soundcard)", "startChannel": 1 } },
     { "name": "Game B", "enabled": true, "vcam": 2, "source": { "protocol": "srt", "mode": "listener", "port": 9002 }, "audio": { "device": "DVS Transmit  3-4 (Dante Virtual Soundcard)", "startChannel": 1, "mode": "exclusive" } },
@@ -58,9 +71,9 @@
   "expect": {
     "connected": true,
     "channels": [
-      { "statusText": "受信中", "audioKind": "error" },
+      { "statusText": "受信中", "audioKind": "error", "audioDeviceChoices": "なし | ASIO: Dante Virtual Soundcard (x64) | CABLE Input (VB-Audio Virtual Cable) | DVS Transmit  1-2 (Dante Virtual Soundcard) | DVS Transmit  3-4 (Dante Virtual Soundcard) | DVS Transmit  5-6 (Dante Virtual Soundcard) | DVS Transmit  7-8 (Dante Virtual Soundcard) | DVS Transmit  9-10 (Dante Virtual Soundcard) | DVS Transmit  11-12 (Dante Virtual Soundcard) | DVS Transmit  13-14 (Dante Virtual Soundcard) | DVS Transmit  15-16 (Dante Virtual Soundcard) | スピーカー (Realtek(R) Audio)" },
       { "statusText": "受信中", "audioKind": "warn" },
-      { "statusText": "受信中", "audioKind": "error" },
+      { "statusText": "受信中", "audioKind": "error", "startChannelOptions": "1-2 | 3-4 (範囲外)" },
       { "statusText": "受信中", "audioKind": "error" }
     ]
   }

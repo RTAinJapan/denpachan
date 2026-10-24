@@ -342,9 +342,12 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     public void RefreshAudioDeviceChoices()
     {
+        // 「なし」を先頭に、残り (ASIO のドライバと、設定にあるが見つからないデバイスも) は名前の自然順に並べる
+        var names = _main.AudioDevices.Select(d => d.Name).Distinct().ToList();
+        if (_audioDevice != "" && !names.Contains(_audioDevice)) names.Add(_audioDevice);
+        names.Sort(NaturalOrder.Instance);
         var choices = new List<Option<string>> { new("", T("common.none")) };
-        choices.AddRange(_main.AudioDevices.Select(d => new Option<string>(d.Name, d.Name)));
-        if (_audioDevice != "" && !choices.Any(c => c.Value == _audioDevice)) choices.Add(new(_audioDevice, _audioDevice));  // 設定にあるが見つからないデバイス
+        choices.AddRange(names.Select(n => new Option<string>(n, n)));
         _applying = true;
         AudioDeviceChoices = choices;
         OnPropertyChanged(nameof(AudioDevice));

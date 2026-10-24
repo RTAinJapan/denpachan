@@ -34,16 +34,22 @@ public:
     bool has_missing() const { return !missing_.empty(); }
 
 private:
+    // 出せないチャンネル (デバイスが見つからない、別の ASIO ドライバを使っている) の設定の値
+    struct Unrouted {
+        std::string device;
+        int start_channel = 1;
+        bool operator==(const Unrouted&) const = default;
+    };
     struct Device {
         DeviceOptions options;
         std::vector<RouteOptions> routes;
         std::unique_ptr<AudioOutput> output;  // WASAPI (DeviceOutput) または ASIO (AsioOutput)
     };
-    std::map<std::wstring, Device> devices_;       // デバイス ID ごと
-    std::map<int, std::string> missing_;           // チャンネル → 見つからないデバイス名
-    std::map<int, std::string> asio_busy_;         // チャンネル → 使えない ASIO ドライバ (別の ASIO ドライバを使っている)
-    std::map<int, std::string> logged_missing_;    // ログに出した missing_ (変わったときだけ出す)
-    std::map<int, std::string> logged_asio_busy_;  // ログに出した asio_busy_ (変わったときだけ出す)
+    std::map<std::wstring, Device> devices_;    // デバイス ID ごと
+    std::map<int, Unrouted> missing_;           // チャンネル → 見つからないデバイス
+    std::map<int, Unrouted> asio_busy_;         // チャンネル → 使えない ASIO ドライバ (別の ASIO ドライバを使っている)
+    std::map<int, Unrouted> logged_missing_;    // ログに出した missing_ (変わったときだけ出す)
+    std::map<int, Unrouted> logged_asio_busy_;  // ログに出した asio_busy_ (変わったときだけ出す)
 };
 
 }  // namespace denpachan::engine

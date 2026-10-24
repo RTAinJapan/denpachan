@@ -4,6 +4,7 @@
 #include <mmdeviceapi.h>
 #include <wrl/client.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -27,6 +28,12 @@ std::optional<AudioDeviceInfo> find_audio_device(EDataFlow flow, const std::wstr
 // 音声の出力先 (WASAPI と ASIO を合わせたもの) は output_devices.h
 
 Microsoft::WRL::ComPtr<IMMDevice> open_audio_device(const std::wstring& id);
+
+// WASAPI のデバイスの増減・有効 / 無効 (DVS のモードの切り替え、サウンドの設定での無効化など) を数える。
+// engine の状態に載せ、画面は数が変わったら一覧を読み直す。start は engine の起動時に 1 回 (MTA のスレッドで)
+void start_audio_device_watch();
+void stop_audio_device_watch();
+uint64_t audio_device_changes();
 
 std::string to_utf8(const std::wstring& s);
 std::wstring from_utf8(const std::string& s);

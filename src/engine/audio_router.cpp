@@ -49,7 +49,7 @@ void AudioRouter::apply(const Config& config) {
         if (!ch.enabled || ch.audio.device.empty()) continue;
         const auto dev = find_output_device(from_utf8(ch.audio.device));
         if (!dev) {
-            missing_[ch.id] = ch.audio.device;
+            missing_[ch.id] = {ch.audio.device, ch.audio.start_channel};
             continue;
         }
         if (dev->asio) {
@@ -58,7 +58,7 @@ void AudioRouter::apply(const Config& config) {
                 asio_name = dev->name;
             }
             if (dev->id != asio_id) {
-                asio_busy_[ch.id] = ch.audio.device;
+                asio_busy_[ch.id] = {ch.audio.device, ch.audio.start_channel};
                 continue;
             }
         }
@@ -107,12 +107,12 @@ void AudioRouter::apply(const Config& config) {
         }
     }
     if (missing_ != logged_missing_) {  // 5 秒ごとの apply で毎回出さない
-        for (const auto& [ch, name] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, name);
+        for (const auto& [ch, u] : missing_) spdlog::warn("ch{}: audio device not found: {}", ch, u.device);
         logged_missing_ = missing_;
     }
     if (asio_busy_ != logged_asio_busy_) {  // 同じく、変わったときだけ出す
-        for (const auto& [ch, name] : asio_busy_) {
-            spdlog::warn("ch{}: {} is not used: only one ASIO driver at a time ({} is in use)", ch, name, to_utf8(asio_name));
+        for (const auto& [ch, u] : asio_busy_) {
+            spdlog::warn("ch{}: {} is not used: only one ASIO driver at a time ({} is in use)", ch, u.device, to_utf8(asio_name));
         }
         logged_asio_busy_ = asio_busy_;
     }
@@ -127,11 +127,18 @@ void AudioRouter::set_mute(int ch, bool mute) {
 }
 
 json AudioRouter::channel_status(int ch) {
+    // 出せないチャンネルも、出力チャンネルは設定の値を返す (画面の詳細に出す)
     if (auto it = missing_.find(ch); it != missing_.end()) {
-        return {{"device", it->second}, {"open", false}, {"error", {{"id", "audio.deviceNotFound"}}}};
+        return {{"device", it->second.device},
+                {"open", false},
+                {"startChannel", it->second.start_channel},
+                {"error", {{"id", "audio.deviceNotFound"}}}};
     }
     if (auto it = asio_busy_.find(ch); it != asio_busy_.end()) {
-        return {{"device", it->second}, {"open", false}, {"error", {{"id", "audio.asioOneDriver"}}}};
+        return {{"device", it->second.device},
+                {"open", false},
+                {"startChannel", it->second.start_channel},
+                {"error", {{"id", "audio.asioOneDriver"}}}};
     }
     for (auto& [id, d] : devices_) {
         for (const auto& r : d.routes) {

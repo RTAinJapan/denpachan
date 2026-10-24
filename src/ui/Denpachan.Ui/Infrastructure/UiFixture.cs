@@ -14,6 +14,7 @@ namespace Denpachan.Ui.Infrastructure;
 ///   switchLanguage  流し込んだあとで言語を変える (全体設定で変えたときと同じ。その場で変わるかの試験)
 ///   connected   engine に繋がっているふりをするか (既定 true)
 ///   general     全体の設定 (patchGeneral と同じ形。省略時は既定値)
+///   audioDevices  音声の出力先の一覧 (listAudioDevices と同じ形: name / channels / sampleRate)
 ///   channels    チャンネルの設定の配列 (getConfig の channels と同じ形。書いた項目だけ既定値に上書き)
 ///   state       engine の state 通知の data と同じ形
 ///   repeat      state を何回流すか (グラフの履歴を作る。ビットレート・遅延・RTT は少し揺らす)
@@ -38,6 +39,10 @@ public static class UiFixture
         var general = DefaultGeneral();
         if (fixture.At("general") is JsonObject g) Merge(general, g);
         vm.SetGeneralConfigFromFixture(general);
+        if (fixture.At("audioDevices") is JsonArray devices)
+        {
+            vm.SetAudioDevicesFromFixture(devices.Select(d => new AudioDeviceItem(d.Str("name"), d.Int("channels"), d.Int("sampleRate"))).ToList());
+        }
 
         if (fixture.At("channels") is JsonArray channels)
         {
@@ -128,6 +133,9 @@ public static class UiFixture
                 Expect(p + "isLocked", ch.IsLocked, e["isLocked"]);
                 Expect(p + "testSlot", ch.TestSlot, e["testSlot"]);
                 Expect(p + "previewMessage", ch.PreviewMessage, e["previewMessage"]);
+                Expect(p + "audioLine", ch.AudioLine, e["audioLine"]);
+                Expect(p + "audioDeviceChoices", string.Join(" | ", ch.AudioDeviceChoices.Select(o => o.Label)), e["audioDeviceChoices"]);
+                Expect(p + "startChannelOptions", string.Join(" | ", ch.StartChannelOptions.Select(o => o.Label)), e["startChannelOptions"]);
             }
         }
         return failures;
