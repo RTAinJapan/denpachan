@@ -52,6 +52,23 @@ int64_t frame_duration_us(const AVStream* st) {
     return av_rescale(1'000'000, rate.den, rate.num);
 }
 
+// 1 パケットのデコード (録画への受け渡しを含む) が kSlowDecodeLogMs を超えたら、抜けるときに記録する
+constexpr int64_t kSlowDecodeLogMs = 200;
+class SlowDecodeLog {
+public:
+    explicit SlowDecodeLog(const char* kind) : kind_(kind), start_(qpc_now()) {}
+    ~SlowDecodeLog() {
+        const int64_t ms = qpc_to_us(qpc_now() - start_) / 1000;
+        if (ms > kSlowDecodeLogMs) spdlog::warn("decoder: decoding one {} packet took {} ms", kind_, ms);
+    }
+    SlowDecodeLog(const SlowDecodeLog&) = delete;
+    SlowDecodeLog& operator=(const SlowDecodeLog&) = delete;
+
+private:
+    const char* kind_;
+    const int64_t start_;
+};
+
 }  // namespace
 
 Decoder::Decoder(std::string input_format, ByteQueue& input, FrameQueue& output, AudioWriter* audio, ChannelMetrics& metrics, bool allow_hw)
@@ -539,6 +556,9 @@ bool Decoder::run_session(uint64_t session) {
         }
         // ここから先のデコード処理 (ブロックしないはず) で固まったら engine が検出する
         DecoderBusy busy(metrics_);
+        // 1 パケットの処理が kSlowDecodeLogMs を超えたら記録する (乱れの調べ方。設計書 §6.3)。全チャンネルが同時に
+        // 遅れていれば、共有している GPU (HW デコード) の詰まりを疑える
+        const SlowDecodeLog slow(pkt->stream_index == vidx ? "video" : "audio");
         if (recorder_ && recorder_->wants_packets()) {  // パススルー録画 (参照を渡すだけ)
             if (pkt->stream_index == vidx) recorder_->video_packet(pkt.get());
             else if (pkt->stream_index == aidx) recorder_->audio_packet(pkt.get());

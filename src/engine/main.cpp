@@ -26,6 +26,7 @@
 #include "config.h"
 #include "device_output.h"
 #include "denpachan/crash_dump.h"
+#include "denpachan/stall_watch.h"
 #include "denpachan/win_util.h"
 #include "engine.h"
 #include "ipc_server.h"
@@ -168,6 +169,7 @@ int wmain(int argc, wchar_t** argv) {
 
     Engine engine(opts->config_path.empty() ? default_config_path() : opts->config_path, exe_dir() + L"\\denpachan-worker.exe", log_dir);
     spdlog::info("engine start");
+    StallWatch stall_watch("engine");  // プロセスが止まったら記録する (乱れの調べ方。設計書 §6.3)
     engine.init();
 
     IpcServer ipc([&](const std::string& method, const nlohmann::json& params) { return engine.handle(method, params); });
