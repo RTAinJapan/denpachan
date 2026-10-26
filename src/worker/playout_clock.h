@@ -22,8 +22,11 @@
 // - 落ち着いた後の 1 ms ずつの調整 (送出元とのクロック差、揺れの備えを減らした分): その窓のずれではなく、直近の窓の
 //   ずれの最小 (揺れの悪い側の包絡。前の窓も今の時間軸と揺れの備えで計算し直す) で決める。直近 kHistoryWindows 窓の包絡が
 //   動かさない幅 (band_) を超えて足りなければ遅らせ、直近 kLongHistoryWindows 窓の包絡が幅を超えて余っていれば
-//   (= その間の窓がすべて余っていれば) 詰める。前に動かしてから kStepWindows 窓は空ける (engine の重複・間引きが
-//   同じ向きに続いて合わせ直しにならないように)。
+//   (= その間の窓がすべて余っていれば) 詰める。長い包絡は詰める側だけに使い、遅らせるのは直近 kHistoryWindows 窓で足りない
+//   ときだけ。前に動かしてから kStepWindows 窓は空ける (engine の重複・間引きが同じ向きに続いて合わせ直しにならないように)。
+//   - 最初の調整の窓と、鳴らし始めてすぐ (kFastAdjustMs) の窓は直近の窓に入れない。接続直後のまとめ届きで、音声と映像の
+//     届き方が大きくずれる (RTMP で 234 ms) ので、揺れとして数えると備えを跳ね上げ、包絡に残って余りを戻せなかった。
+//     測った揺れから備えの下限を決めるのも、kHistoryWindows 窓が溜まってから。
 //   - 動かさない幅は、測った揺れ (直近の窓のずれの散らばり) の半分 (update_band_locked)。揺れの大きい回線ほど広い。
 //   - これまでの形で起きたこと: 幅 2 ms では揺れのたびに ±1 ms ずつ行き来した (約 1 分 45 秒に 30 回以上)。その窓のずれで、
 //     足りない側だけすぐに動かすと、揺れが下に振れるたびに +1 ms し、数秒後に良い窓に釣られて −1 ms で戻した。
@@ -187,7 +190,10 @@ public:
                 grow_headroom_locked(audio_headroom_, late, kAudioHeadroomMaxMs, now, last_audio_late_qpc_, kHeadroomGrowMaxMs);
                 // 備えが、測った揺れ (直近の窓のずれの散らばり) の半分より小さければ、そこまで増やす。遅れた分ずつでは、
                 // 揺れの大きい回線で備えが小さいまま遅れて届き続け、決め直す (review_headroom_locked) 間も取れなかった
-                audio_headroom_ = std::max(audio_headroom_, std::min(history_spread_locked() / 2, qpc_from_ms(kAudioHeadroomMaxMs)));
+                // 揺れを測れるだけの窓 (kHistoryWindows) が溜まってから (それまでの散らばりは接続直後の届き方で、揺れではない)
+                if (history_count_ >= kHistoryWindows) {
+                    audio_headroom_ = std::max(audio_headroom_, std::min(history_spread_locked() / 2, qpc_from_ms(kAudioHeadroomMaxMs)));
+                }
             }
             // 遅らせるのは遅れた分だけ (増やした備えの分まで一度に遅らせると、裾の重い揺れで遅らせすぎて戻すのを繰り返した)
             const int64_t shift = late;
@@ -395,7 +401,12 @@ private:
                     fmt::format("playout: audio caught up after arriving slower than real time; audio headroom back to {:.0f} ms",
                                 qpc_to_us(audio_headroom_) / 1000.0));
             }
-            push_history_locked(after_outage || shortfall_window);
+            // 最初の調整の窓 (!settled_) と、鳴らし始めてすぐ (kFastAdjustMs。大きなずれは一度に詰める間) の窓も入れない:
+            // 接続直後のまとめ届きで、音声と映像の届き方が大きくずれ (RTMP で 234 ms)、それが最初の数窓に残る。入れると、
+            // その窓が直近の窓の散らばりを広げて備えを跳ね上げ (10 → 119 ms)、包絡に残って、余っているのに 1 ms ずつ
+            // 遅らせ続け、決め直しでも caught up でも余りを戻せなかった (約 2 分)。その間の大きなずれは fast で詰める
+            const bool starting = !settled_ || now < fast_until_qpc_;
+            push_history_locked(after_outage || shortfall_window || starting);
             ++windows_since_move_;
             update_band_locked();
             // 遅延の余りは、その窓だけでなく直近の窓すべてで見る (揺れの良い窓が続いただけで一度に戻さない。揺れが ±30 ms の
@@ -437,6 +448,8 @@ private:
                 const int64_t envelope = history_envelope_locked(kLongHistoryWindows);
                 step = envelope != LLONG_MAX ? std::max(envelope, int64_t(0)) : 0;  // 前からの余りも、この 1 回で一緒に戻す
                 reason = "headroom cut";
+                // 詰めなかったときは、どの窓が止めたかを出す (直近 kLongHistoryWindows 窓の包絡の最小)
+                if (step == 0) debug_.push_back("playout: headroom cut moved nothing: " + envelope_source_locked(kLongHistoryWindows));
                 log_.push_back(fmt::format(
                     "playout: headroom reduced to audio {:.0f} / video {:.0f} ms (no late audio for {} s); delay reduced {:.1f} ms at once",
                     qpc_to_us(audio_headroom_) / 1000.0, qpc_to_us(video_headroom_) / 1000.0, kHeadroomReviewMs / 1000,
@@ -469,9 +482,11 @@ private:
                 const int64_t short_envelope = history_envelope_locked(kHistoryWindows, !output_stopped_);
                 const int64_t long_envelope = history_envelope_locked(kLongHistoryWindows);
                 const int64_t band = band_;
-                const int64_t envelope = short_envelope < -band         ? short_envelope
-                                         : repeated_outages_locked(now) ? std::min(long_envelope, int64_t(0))
-                                                                        : long_envelope;
+                // 遅らせるのは直近 kHistoryWindows 窓で足りないときだけ。長い包絡は詰める側だけに使う (長い包絡の負の値で
+                // 遅らせると、30 窓から抜けた古い窓 (接続直後の窓など) で、余っているのに 1 ms ずつ遅らせ続けた)
+                const int64_t envelope = short_envelope < -band                                       ? short_envelope
+                                         : repeated_outages_locked(now) || long_envelope == LLONG_MAX ? 0
+                                                                                                      : std::max(long_envelope, int64_t(0));
                 step = std::clamp(envelope, -limit, limit);
                 if (envelope == LLONG_MAX || history_count_ < kStepWindows || std::llabs(envelope) <= band) {
                     step = 0;
@@ -482,6 +497,11 @@ private:
                 } else {
                     // クロック差、揺れの備えを減らした分、悪い窓が幅を超えた分: 1 ms 動かす
                     reason = "step";
+                    debug_.push_back(fmt::format("playout: step from the envelope {:+.1f} ms ({}), band {:.1f} ms",
+                                                 qpc_to_us(envelope) / 1000.0,
+                                                 envelope == short_envelope ? envelope_source_locked(kHistoryWindows, !output_stopped_)
+                                                                            : envelope_source_locked(kLongHistoryWindows),
+                                                 qpc_to_us(band) / 1000.0));
                 }
             }
             if (std::abs(step) > qpc_from_ms(kEpochJumpMs) && settled_) ++jumps_;
@@ -637,6 +657,25 @@ private:
     }
 
     // 直近 windows 窓の、今の時間軸と揺れの備えでの目標とのずれの最小 (LLONG_MAX = 報告なし)
+    // 包絡の最小になった窓 (何窓前か、映像 / 音声のどちらか、その値)。動かした理由を debug ログで追えるように
+    std::string envelope_source_locked(int windows, bool audio = true) const {
+        int64_t envelope = LLONG_MAX;
+        int age = -1;
+        const char* side = "";
+        for (int i = 0; i < std::min(history_count_, windows); ++i) {
+            const auto& w = history_[(history_next_ + kLongHistoryWindows - 1 - i) % kLongHistoryWindows];
+            if (w.video != LLONG_MAX && w.video + anchor_qpc_ - buffer_ - video_headroom_ < envelope) {
+                envelope = w.video + anchor_qpc_ - buffer_ - video_headroom_;
+                age = i + 1, side = "video";
+            }
+            if (audio && w.audio != LLONG_MAX && w.audio + anchor_qpc_ - audio_headroom_ < envelope) {
+                envelope = w.audio + anchor_qpc_ - audio_headroom_;
+                age = i + 1, side = "audio";
+            }
+        }
+        return age < 0 ? std::string("no windows") : fmt::format("{} {} windows ago {}", side, age, fmt_ms(envelope));
+    }
+
     // audio = false: 映像の窓だけで見る (engine の出力が鳴っていない間の、足りない側。note_output_stopped)
     int64_t history_envelope_locked(int windows, bool audio = true) const {
         int64_t envelope = LLONG_MAX;

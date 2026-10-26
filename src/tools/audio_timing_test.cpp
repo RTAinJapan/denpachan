@@ -58,6 +58,7 @@ constexpr int kPlayoutBufferMs = 100;  // チャンネルの再生バッファ (
 // 映像は、同じ pts の音声より早く届く。実機 (DVS + RTMP) で、時間軸を決めていたのは音声で、映像側の目標との余りは
 // +60〜76 ms だった (再生バッファ 100 ms、音声の出力遅延 32 ms + 揺れの備え 10 ms から、約 120 ms 早い)
 constexpr int64_t kVideoLeadMs = 120;
+constexpr double kSpareMs = 5;    // これを超えて余っている秒は「余っている」(動かさない幅の下限と同じ)
 constexpr double kQuietSec = 60;  // 乱れが止んでから、これだけ経てば「落ち着いた後」
 
 // 到着の遅れ (ms)。k: かたまりの番号 (映像は -1)、sent: 送った時刻 (送出元の時計、秒)、seed: 乱数の種
@@ -156,7 +157,13 @@ struct Case {
     int min_reanchors = 0;
     int max_reanchors = 1'000'000;
     double max_reanchor_delay_sec = 1e9;  // 出力が受信の半分を下回ってから、取り直すまでの時間の上限
-    double max_headroom_ms = 1e9;         // 音声の揺れの備えの上限
+    double max_headroom_ms = 1e9;         // 音声の揺れの備えの上限 (開始直後も含む)
+    // この時刻 (秒) の 1 秒の、音声の余裕の最小から揺れの備えを除いた余りの絶対値の上限 (0 = 見ない)
+    double excess_check_sec = 0;
+    double max_excess_ms = 1e9;
+    // {始まり, 終わり} (秒) の間に、余っている (その秒の余りが kSpareMs を超えている) のに遅らせる向きに続けて動かした回数の上限
+    std::pair<double, double> spare_window = {0, 0};
+    int max_up_while_spare = 1'000'000;
     // 余りを一度に戻す (caught up) のが、{この時刻 (秒), から何秒以内} にあること
     std::pair<double, double> catch_up_within = {0, 0};
     // {始まり, 終わり} (秒) の間の時間軸の移動の回数の上限と、同じ向きに続いた回数の上限
@@ -200,6 +207,8 @@ struct Result {
     double reanchor_delay_sec = -1;  // 出力が受信の半分を下回ってから取り直すまで (-1: 取り直していない)
     double catch_up_at = -1;         // catch_up_within の後、最初に一度に戻した時刻
     int moves_in_window = 0, same_dir_run = 0, moves_while_off = 0, fast_after_resume = 0;
+    double excess_at = 0;    // excess_check_sec の 1 秒の余り
+    int up_while_spare = 0;  // 余っているのに遅らせる向きに続けて動かした回数の最大
     std::string last_resync;
     bool ok = false;
 };
@@ -698,6 +707,22 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             }
         }
     }
+    // 開始直後の余り (備えを除いた分) と、余っているのに遅らせ続けたか
+    auto excess_of = [&](double t) {
+        for (const auto& s : seconds) {
+            if (s.t >= t) return s.min_slack_ms - s.headroom_ms;
+        }
+        return 0.0;
+    };
+    if (c.excess_check_sec > 0) r.excess_at = excess_of(c.excess_check_sec);
+    if (c.spare_window.second > 0) {
+        int up = 0;
+        for (const auto& [t, d] : all_moves) {
+            if (t < c.spare_window.first || t >= c.spare_window.second) continue;
+            up = d > 0 && excess_of(t) > kSpareMs ? up + 1 : 0;
+            r.up_while_spare = std::max(r.up_while_spare, up);
+        }
+    }
     int run = 0, last_sign = 0;
     for (const auto& [t, d] : all_moves) {
         if (c.output_off.second > 0 && t >= c.output_off.first && t < c.output_off.first + c.output_off.second) ++r.moves_while_off;
@@ -748,6 +773,8 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
         {"re-anchors", r.reanchors >= c.min_reanchors && r.reanchors <= c.max_reanchors},
         {"re-anchor delay", r.reanchors == 0 || r.reanchor_delay_sec <= c.max_reanchor_delay_sec},
         {"headroom", r.headroom_max <= c.max_headroom_ms},
+        {"excess after start", std::fabs(r.excess_at) <= c.max_excess_ms},
+        {"delayed while spare", r.up_while_spare <= c.max_up_while_spare},
         {"catch up", c.catch_up_within.second == 0 || (r.catch_up_at >= 0 && r.catch_up_at <= c.catch_up_within.second)},
         {"moves in window", r.moves_in_window <= c.max_moves_in_window && r.same_dir_run <= c.max_same_dir_run},
         {"moves while output stopped", r.moves_while_off <= c.max_moves_while_off},
@@ -775,6 +802,8 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     if (c.catch_up_within.second > 0)
         extra += r.catch_up_at >= 0 ? fmt::format(", caught up after {:.0f} s", r.catch_up_at) : ", no catch up";
     if (c.moves_window.second > 0) extra += fmt::format(", {} moves in window (run {})", r.moves_in_window, r.same_dir_run);
+    if (c.excess_check_sec > 0) extra += fmt::format(", excess {:+.1f} ms at {:.0f} s", r.excess_at, c.excess_check_sec);
+    if (c.spare_window.second > 0) extra += fmt::format(", delayed {} times in a row while spare", r.up_while_spare);
     if (c.output_off.second > 0)
         extra += fmt::format(", {} moves while stopped, {} fast after resume", r.moves_while_off, r.fast_after_resume);
     if (!r.last_resync.empty()) extra += ", last resync: " + r.last_resync;
@@ -1324,6 +1353,26 @@ int main(int argc, char** argv) {
                .max_fast_after_resume = 2};
         cases.push_back(c);
     }
+    // 接続直後の最初の窓で、音声と映像の届き方が大きくずれる (RTMP でサーバーに溜まった分を受け取るとき)。その 4.5 秒後に
+    // 音声が 5 ms 遅れて届く。最初の窓を揺れと数えて備えを跳ね上げない、余っているのに遅らせ続けない (N)
+    for (const double gap : {30.0, 100.0, 230.0, 500.0}) {
+        Case c{.name = fmt::format("T9. first window audio {:.0f} ms ahead of video, then 5 ms late", gap),
+               .seconds = 180,
+               .seeds = 5,
+               .video = true,
+               .jitter_ms = 3,
+               .late_ms = stalls({{6.0, 17}}),
+               .video_late_ms = [gap](int, double sent, uint32_t) { return sent < 2.0 ? gap : 0.0; },
+               .in_order = true,
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .max_headroom_ms = 30,
+               .excess_check_sec = 17,
+               .max_excess_ms = 10,
+               .spare_window = {6, 180},
+               .max_up_while_spare = 3};
+        cases.push_back(c);
+    }
     cases.push_back(t1("T6a. RTMP 790 ms + 62 ms outage, 30 fps", 30, 4, true));
     cases.push_back(t3("T6b. RTMP 500 ms outages every 30 s for 5 min, 30 fps", 30));
     {
@@ -1356,7 +1405,7 @@ int main(int argc, char** argv) {
         const std::string& name = cases[i].name;
         // 途切れの後の映像 (T1〜T5) も同じ
         bool matrix = false;
-        for (const char* prefix : {"1. ", "4. ", "7. ", "10. ", "T1. ", "T1s. ", "T2. ", "T2s. ", "T3. ", "T4. ", "T5. "}) {
+        for (const char* prefix : {"1. ", "4. ", "7. ", "10. ", "T1. ", "T1s. ", "T2. ", "T2s. ", "T3. ", "T4. ", "T5. ", "T9. "}) {
             matrix |= name.rfind(prefix, 0) == 0;
         }
         if (!matrix) continue;
