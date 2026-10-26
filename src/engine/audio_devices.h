@@ -34,6 +34,8 @@ Microsoft::WRL::ComPtr<IMMDevice> open_audio_device(const std::wstring& id);
 void start_audio_device_watch();
 void stop_audio_device_watch();
 uint64_t audio_device_changes();
+// 出力先の一覧が変わったことにする (ASIO のドライバを開いてチャンネル数が分かったときなど。画面が一覧を読み直す)
+void note_audio_devices_changed();
 
 std::string to_utf8(const std::wstring& s);
 std::wstring from_utf8(const std::string& s);

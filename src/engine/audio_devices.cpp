@@ -102,6 +102,8 @@ void stop_audio_device_watch() {
 
 uint64_t audio_device_changes() { return g_device_changes.load(); }
 
+void note_audio_devices_changed() { ++g_device_changes; }
+
 ComPtr<IMMDevice> open_audio_device(const std::wstring& id) {
     ComPtr<IMMDevice> dev;
     if (auto e = enumerator()) e->GetDevice(id.c_str(), &dev);
