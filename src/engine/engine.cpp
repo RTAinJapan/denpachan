@@ -146,6 +146,8 @@ void Engine::init() {
         for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
     }
     audio_.apply(config_);
+    start_audio_device_watch();
+    last_audio_changes_ = audio_device_changes();
 }
 
 void Engine::apply_rtmp_locked() {
@@ -188,7 +190,11 @@ void Engine::tick() {
             for (const auto& ch : config_.channels) apply_channel_locked(ch.id);
         }
     }
-    if (audio_.has_missing() && qpc_now() - last_audio_retry_qpc_ > qpc_from_ms(kAudioRetryMs)) {
+    // デバイスが増減したら、見つからなかったデバイスをすぐに探し直す (それ以外は kAudioRetryMs ごと)
+    const uint64_t changes = audio_device_changes();
+    const bool devices_changed = changes != last_audio_changes_;
+    last_audio_changes_ = changes;
+    if (audio_.has_missing() && (devices_changed || qpc_now() - last_audio_retry_qpc_ > qpc_from_ms(kAudioRetryMs))) {
         last_audio_retry_qpc_ = qpc_now();
         audio_.apply(config_);
     }
@@ -196,6 +202,7 @@ void Engine::tick() {
 
 void Engine::shutdown(bool stop_workers) {
     std::lock_guard lk(mutex_);
+    stop_audio_device_watch();
     if (stop_workers) {
         for (auto& w : workers_) w->stop();
         rtmpd_->stop();
@@ -455,6 +462,7 @@ json Engine::state_locked() {
                           {"droppedQueue", m.dropped_queue},
                           {"decodeErrors", m.decode_errors},
                           {"rejectedSenders", w.rejected_senders},  // 今の送出元が送っている間に来て断った接続 (累計)
+                          {"playoutRestarts", w.playout_restarts},  // 映像が遅延に追いつけず時間軸を作り直した回数 (累計)
                           {"lastError", message_json(m.last_error)}};
             if (c.source.protocol == "srt") {
                 j["srt"] = {{"latencyMs", m.srt_latency_ms},
@@ -497,6 +505,7 @@ json Engine::state_locked() {
     return {{"channels", channels},
             {"rtmpServer", rtmp},
             {"audioDevices", audio_.devices_status()},
+            {"audioDeviceChanges", audio_device_changes()},  // WASAPI のデバイスの増減の回数 (変わったら画面が一覧を読み直す)
             {"ffmpeg", {{"ok", ffmpeg_ok_}, {"message", message_json(ffmpeg_message_)}}}};
 }
 

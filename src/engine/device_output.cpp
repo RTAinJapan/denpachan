@@ -22,8 +22,22 @@ namespace {
 constexpr REFERENCE_TIME kMinExclusivePeriod = 30'000;     // 3ms (100ns 単位)
 constexpr REFERENCE_TIME kRetryExclusivePeriod = 100'000;  // 周期に追いつけなかったら 10ms から試し直す
 constexpr REFERENCE_TIME kMaxExclusivePeriod = 200'000;    // 20ms を超えるなら共有モードにする
-constexpr int64_t kCalibrateMs = 1000;                     // 開いた直後、GetPosition と padding の差をこの間測る (中央値を使う)
-constexpr int64_t kPositionMaxOffMs = 30;                  // 差がいつもよりこれ以上ずれたら (位置のリセットなど) 測り直す
+// 再生位置 (GetPosition) と padding による時刻の差 (設計書 §6.3)。開いた直後は落ち着くまで (kCalibrateSkipMs) 使わず、
+// 続く kCalibrateMs の中央値を差とする。DVS では、開いた直後の差が落ち着いた後と 10 ms 違うことがあった
+constexpr int64_t kCalibrateSkipMs = 1000;
+constexpr int64_t kCalibrateMs = 2000;
+constexpr int64_t kPositionMaxOffMs = 30;  // 差がいつもよりこれ以上ずれたら (位置のリセットなど) 測り直す
+// 測り終えた後も差の中央値を kOffsetCheckMs ごとに見て、kOffsetMovedMs 以上ずれたままなのが kOffsetMovedChecks 回続いたら、
+// その値に替える (開いた直後に測った値が偏っていたとき)
+constexpr int64_t kOffsetCheckMs = 1000;
+constexpr int64_t kOffsetMovedMs = 3;
+constexpr int kOffsetMovedChecks = 3;
+constexpr int64_t kNoPositionLogMs = 5000;  // 再生位置が取れないのがこれだけ続いたらログに出す
+
+int64_t median(std::vector<int64_t>& v) {
+    std::nth_element(v.begin(), v.begin() + ptrdiff_t(v.size() / 2), v.end());
+    return v[v.size() / 2];
+}
 
 struct CoTaskMemDeleter {
     void operator()(void* p) const { CoTaskMemFree(p); }
@@ -40,6 +54,12 @@ bool is_float_format(const WAVEFORMATEX* f) {
 const char* sample_type_name(int type) {
     static const char* names[] = {"float32", "int16", "int24", "int24in32", "int32"};
     return names[type];
+}
+
+std::string join(const std::vector<std::string>& items) {
+    std::string out;
+    for (const auto& s : items) out += (out.empty() ? "" : "; ") + s;
+    return out;
 }
 
 }  // namespace
@@ -59,6 +79,9 @@ void DeviceOutput::stop() {
     stop_ = true;
     SetEvent(stop_event_.get());
     if (thread_.joinable()) thread_.join();
+    // 出力先が無くなった (ルーティングが変わった、音声を「なし」にした) ことを worker に知らせる
+    std::lock_guard lk(sources_mutex_);
+    for (auto& s : sources_) s->clear_output_delay();
 }
 
 void DeviceOutput::set_mute(int ch, bool mute) {
@@ -69,9 +92,132 @@ void DeviceOutput::set_mute(int ch, bool mute) {
         if (s->options().ch == ch) s->set_mute(mute);
 }
 
+void DeviceOutput::update_routes(std::vector<RouteOptions> routes) {
+    std::lock_guard update(update_mutex_);
+    for (;;) {
+        // 今の形式を写し、変わったチャンネルの ChannelSource をロックの外で作る (共有メモリを開くので、描画を待たせない)
+        uint32_t rate = 0;
+        int channels = 0;
+        uint64_t opened = 0;
+        int64_t base_delay = 0;
+        std::vector<RouteOptions> current;
+        {
+            std::lock_guard lk(sources_mutex_);
+            if (opened_ == 0) {
+                routes_ = std::move(routes);  // まだ開いていない: 開いたときにこの振り分けで作る
+                return;
+            }
+            rate = source_rate_, channels = source_channels_, opened = opened_, base_delay = source_base_delay_qpc_;
+            for (const auto& s : sources_) current.push_back(s->options());
+        }
+        std::vector<std::unique_ptr<ChannelSource>> fresh(routes.size());
+        for (size_t i = 0; i < routes.size(); ++i) {
+            if (!needs_source(current, routes[i])) continue;
+            if (routes[i].start_channel < 1 || routes[i].start_channel > channels) {
+                spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", to_utf8(options_.name), routes[i].ch,
+                             routes[i].start_channel, channels);
+            }
+            fresh[i] = std::make_unique<ChannelSource>(routes[i], rate, channels, base_delay);
+        }
+        std::vector<std::unique_ptr<ChannelSource>> old;
+        {
+            std::lock_guard lk(sources_mutex_);
+            if (opened_ != opened) continue;  // その間に開き直した: 作り直す
+            old = swap_sources(sources_, routes, fresh);
+            routes_ = routes;
+        }
+        spdlog::info("audio [{}]: routing updated without reopening", to_utf8(options_.name));
+        return;  // old はロックの外で捨てる
+    }
+}
+
 DeviceStatus DeviceOutput::status() {
     std::lock_guard lk(status_mutex_);
     return status_;
+}
+
+// 排他モードで開く。デバイスが受け付ける形式ごとに、周期 (最小 → 既定 → 10 ms → 20 ms) とチャンネルの配置を変えて試す。
+// DVS 4.5 は IsFormatSupported が通るのに Initialize が E_INVALIDARG を返したので、試したものをすべてログに出す。
+// どれでも開けなければ E_FAIL、試している間にデバイスが消えたら AUDCLNT_E_DEVICE_INVALIDATED
+HRESULT DeviceOutput::initialize_exclusive(const WAVEFORMATEX* mix, const std::function<bool()>& activate) {
+    const std::string name = to_utf8(options_.name);
+    struct Candidate {
+        SampleType type;
+        WORD bits;
+        WORD valid;
+        GUID subformat;
+    };
+    const Candidate candidates[] = {
+        {SampleType::Float32, 32, 32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT}, {SampleType::Int32, 32, 32, KSDATAFORMAT_SUBTYPE_PCM},
+        {SampleType::Int24In32, 32, 24, KSDATAFORMAT_SUBTYPE_PCM},      {SampleType::Int24, 24, 24, KSDATAFORMAT_SUBTYPE_PCM},
+        {SampleType::Int16, 16, 16, KSDATAFORMAT_SUBTYPE_PCM},
+    };
+    REFERENCE_TIME def_period = 0, min_period = 0;
+    client_->GetDevicePeriod(&def_period, &min_period);
+
+    // 周期の候補: 前に決めた周期 (追いつけなくて延ばしたもの) 以上のものだけ
+    const REFERENCE_TIME lowest = std::max({min_period, kMinExclusivePeriod, exclusive_period_});
+    std::vector<REFERENCE_TIME> periods;
+    for (const REFERENCE_TIME p : {lowest, def_period, kRetryExclusivePeriod, kMaxExclusivePeriod}) {
+        if (p >= lowest && p <= kMaxExclusivePeriod && std::find(periods.begin(), periods.end(), p) == periods.end()) periods.push_back(p);
+    }
+    // チャンネルの配置: ミックス形式のもの。先頭から順に埋めた配置と違えば (0 = 指定なし も含む)、そちらも試す
+    const DWORD mix_mask =
+        mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE ? reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mix)->dwChannelMask : 0;
+    const DWORD plain_mask = channels_ >= 1 && channels_ <= 18 ? DWORD((1u << channels_) - 1) : 0;
+    std::vector<DWORD> masks{mix_mask};
+    if (plain_mask != mix_mask) masks.push_back(plain_mask);
+
+    std::vector<std::string> tried;
+    bool any_supported = false;
+    for (const auto& c : candidates) {
+        for (const DWORD mask : masks) {
+            WAVEFORMATEXTENSIBLE fmt{};
+            fmt.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+            fmt.Format.nChannels = WORD(channels_);
+            fmt.Format.nSamplesPerSec = rate_;
+            fmt.Format.wBitsPerSample = c.bits;
+            fmt.Format.nBlockAlign = WORD(channels_ * c.bits / 8);
+            fmt.Format.nAvgBytesPerSec = rate_ * fmt.Format.nBlockAlign;
+            fmt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+            fmt.Samples.wValidBitsPerSample = c.valid;
+            fmt.dwChannelMask = mask;
+            fmt.SubFormat = c.subformat;
+            if (!activate()) return AUDCLNT_E_DEVICE_INVALIDATED;  // Initialize に失敗したクライアントは使い回せない
+            if (client_->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &fmt.Format, nullptr) != S_OK) continue;
+            any_supported = true;
+            for (REFERENCE_TIME period : periods) {
+                if (!activate()) return AUDCLNT_E_DEVICE_INVALIDATED;
+                HRESULT hr = test_fail_exclusive ? E_INVALIDARG
+                                                 : client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                                                       period, period, &fmt.Format, nullptr);
+                if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+                    UINT32 frames = 0;
+                    client_->GetBufferSize(&frames);
+                    period = REFERENCE_TIME(std::llround(10'000'000.0 * frames / rate_));
+                    if (!activate()) return AUDCLNT_E_DEVICE_INVALIDATED;
+                    hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format,
+                                             nullptr);
+                }
+                if (SUCCEEDED(hr)) {
+                    sample_type_ = c.type;
+                    if (!tried.empty()) {
+                        spdlog::info("audio [{}]: exclusive mode opened with {} {}/{} bit, mask 0x{:x}, period {:.1f} ms (after: {})", name,
+                                     sample_type_name(int(c.type)), c.bits, c.valid, mask, double(period) / 10'000, join(tried));
+                    }
+                    return hr;
+                }
+                tried.push_back(fmt::format("{} {}/{} bit mask 0x{:x} {:.1f} ms -> 0x{:08x}", sample_type_name(int(c.type)), c.bits,
+                                            c.valid, mask, double(period) / 10'000, uint32_t(hr)));
+            }
+        }
+    }
+    spdlog::warn(
+        "audio [{}]: cannot open in exclusive mode ({} Hz, {} ch, mix mask 0x{:x}, device period default {:.1f} ms / minimum "
+        "{:.1f} ms; {}); falling back to shared mode",
+        name, rate_, channels_, mix_mask, double(def_period) / 10'000, double(min_period) / 10'000,
+        any_supported ? fmt::format("tried {}", join(tried)) : std::string("no exclusive-mode format supported"));
+    return E_FAIL;
 }
 
 bool DeviceOutput::open() {
@@ -92,59 +238,20 @@ bool DeviceOutput::open() {
     channels_ = mix->nChannels;
     rate_ = mix->nSamplesPerSec;
 
-    // 排他モードの周期に追いつけないデバイスは共有モードに切り替える (run() で検出)
+    // 排他モードで開けない・周期に追いつけないデバイスは共有モードに切り替える (追いつけないのは run() で検出)
     exclusive_ = options_.exclusive && !exclusive_failed_;
     HRESULT hr = E_FAIL;
     if (exclusive_) {
-        // 排他モード: デバイスが受け付ける形式を順に試す
-        struct Candidate {
-            SampleType type;
-            WORD bits;
-            WORD valid;
-            GUID subformat;
-        };
-        const Candidate candidates[] = {
-            {SampleType::Float32, 32, 32, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT}, {SampleType::Int32, 32, 32, KSDATAFORMAT_SUBTYPE_PCM},
-            {SampleType::Int24In32, 32, 24, KSDATAFORMAT_SUBTYPE_PCM},      {SampleType::Int24, 24, 24, KSDATAFORMAT_SUBTYPE_PCM},
-            {SampleType::Int16, 16, 16, KSDATAFORMAT_SUBTYPE_PCM},
-        };
-        WAVEFORMATEXTENSIBLE fmt{};
-        bool found = false;
-        for (const auto& c : candidates) {
-            fmt = WAVEFORMATEXTENSIBLE{};
-            fmt.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-            fmt.Format.nChannels = WORD(channels_);
-            fmt.Format.nSamplesPerSec = rate_;
-            fmt.Format.wBitsPerSample = c.bits;
-            fmt.Format.nBlockAlign = WORD(channels_ * c.bits / 8);
-            fmt.Format.nAvgBytesPerSec = rate_ * fmt.Format.nBlockAlign;
-            fmt.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
-            fmt.Samples.wValidBitsPerSample = c.valid;
-            fmt.dwChannelMask =
-                mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE ? reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix.get())->dwChannelMask : 0;
-            fmt.SubFormat = c.subformat;
-            if (client_->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &fmt.Format, nullptr) == S_OK) {
-                sample_type_ = c.type;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            spdlog::log(fail_level, "audio [{}]: no exclusive-mode format supported ({} Hz, {} ch)", name, rate_, channels_);
-            return false;
-        }
-        REFERENCE_TIME def_period = 0, min_period = 0;
-        client_->GetDevicePeriod(&def_period, &min_period);
-        REFERENCE_TIME period = std::max({min_period, kMinExclusivePeriod, exclusive_period_});
-        hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format, nullptr);
-        if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
-            UINT32 frames = 0;
-            client_->GetBufferSize(&frames);
-            period = REFERENCE_TIME(std::llround(10'000'000.0 * frames / rate_));
+        hr = initialize_exclusive(mix.get(), activate);
+        if (hr == AUDCLNT_E_DEVICE_INVALIDATED) return false;  // 試している間にデバイスが消えた (戻ったら排他モードでまた試す)
+        if (FAILED(hr)) {
             if (!activate()) return false;
-            hr = client_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, period, period, &fmt.Format, nullptr);
+            exclusive_failed_ = true;
+            exclusive_fallback_ = "initFailed";
+            exclusive_ = false;
         }
-    } else {
+    }
+    if (!exclusive_) {
         // 共有モード: ミックス形式のまま (通常 float32)
         if (is_float_format(mix.get()) && mix->wBitsPerSample == 32) {
             sample_type_ = SampleType::Float32;
@@ -192,8 +299,14 @@ bool DeviceOutput::open() {
         spdlog::info("audio [{}]: no audio clock; using the buffer padding for timing", name);
     }
     position_ready_ = false;
-    calibrate_until_qpc_ = 0;
+    calibrate_start_qpc_ = 0;
     calibrate_samples_.clear();
+    offset_check_samples_.clear();
+    offset_check_end_qpc_ = 0;
+    offset_moved_checks_ = 0;
+    no_position_since_qpc_ = 0;
+    no_position_calls_ = 0;
+    no_position_logged_ = false;
 
     // 音声の基本遅延 = 書いてから鳴り終わるまでの最大 + 余裕。
     // 共有モード: 書く量 + 先行して鳴る量 = バッファ 1 つ分
@@ -209,8 +322,12 @@ bool DeviceOutput::open() {
                 spdlog::warn("audio [{}]: ch{} start channel {} is out of range (device has {} ch)", name, r.ch, r.start_channel,
                              channels_);
             }
-            sources_.push_back(std::make_unique<ChannelSource>(r, rate_, channels_));
+            sources_.push_back(std::make_unique<ChannelSource>(r, rate_, channels_, base_delay_qpc_));
         }
+        source_rate_ = rate_;
+        source_channels_ = channels_;
+        source_base_delay_qpc_ = base_delay_qpc_;
+        ++opened_;
     }
 
     if (FAILED(client_->Start())) return false;
@@ -218,7 +335,9 @@ bool DeviceOutput::open() {
     {
         std::lock_guard lk(status_mutex_);
         status_.open = true;
+        status_.ever_opened = true;
         status_.exclusive = exclusive_;
+        status_.exclusive_fallback = options_.exclusive && !exclusive_ ? exclusive_fallback_ : "";
         status_.sample_rate = int(rate_);
         status_.channels = channels_;
         status_.sample_format = sample_type_name(int(sample_type_));
@@ -232,6 +351,13 @@ bool DeviceOutput::open() {
 
 void DeviceOutput::close() {
     if (client_) client_->Stop();
+    {
+        std::lock_guard lk(sources_mutex_);
+        for (auto& s : sources_) {
+            s->stats().playing = false;   // 開き直すまで鳴っていない (描画が呼ばれないので残ってしまう)
+            s->set_output_active(false);  // worker も、開き直すまで音声で時間軸を動かさない
+        }
+    }
     clock_.Reset();
     render_.Reset();
     client_.Reset();
@@ -284,22 +410,45 @@ int64_t DeviceOutput::heard_time_locked(int64_t now, uint32_t lead_frames) {
     // 再生位置による時刻: 位置 pos のフレームが qpc_pos に鳴っていたので、書いた量との差の分だけ後に鳴る。
     // 揺れが 1 ms 未満で、デバイスのクロックにも追従する
     UINT64 pos = 0, qpc_pos = 0;
-    if (FAILED(clock_->GetPosition(&pos, &qpc_pos)) || qpc_pos == 0) return by_padding;
+    const HRESULT hr = clock_->GetPosition(&pos, &qpc_pos);
+    if (FAILED(hr) || qpc_pos == 0) {
+        // 取れない (開いた直後など): padding のまま。続くときはログに出す (DVS で、測り終えるまで 4 分かかったことがある)
+        if (no_position_since_qpc_ == 0) no_position_since_qpc_ = now;
+        ++no_position_calls_;
+        if (!no_position_logged_ && now - no_position_since_qpc_ > qpc_from_ms(kNoPositionLogMs)) {
+            no_position_logged_ = true;
+            render_log().info(
+                "audio [{}]: no position from the audio clock for {} s (GetPosition 0x{:08x}, time {}); using the buffer "
+                "padding",
+                to_utf8(options_.name), kNoPositionLogMs / 1000, uint32_t(hr), qpc_pos);
+        }
+        return by_padding;
+    }
+    if (no_position_since_qpc_ != 0) {
+        if (no_position_logged_) {
+            render_log().info("audio [{}]: the audio clock gives a position again after {:.1f} s ({} calls)", to_utf8(options_.name),
+                              double(qpc_to_us(now - no_position_since_qpc_)) / 1e6, no_position_calls_);
+        }
+        no_position_since_qpc_ = 0;
+        no_position_calls_ = 0;
+        no_position_logged_ = false;
+    }
     const double pos_frames = double(pos) * rate_ / double(clock_freq_);
     const int64_t at = qpc_from_us(int64_t(qpc_pos / 10));  // qpc_pos は 100ns 単位に直した QPC
     const int64_t by_position = at + qpc_from_us(int64_t((double(written_frames_) - pos_frames) * 1'000'000 / rate_));
 
-    // 平均の時刻 (= 遅延) は今までと同じにする: 開いた直後の 1 秒で padding との差 (中央値) を測って差し引く
+    // 平均の時刻 (= 遅延) は今までと同じにする: padding との差 (中央値) を測って差し引く
     const int64_t diff = by_position - by_padding;
     if (!position_ready_) {
-        if (calibrate_until_qpc_ == 0) calibrate_until_qpc_ = now + qpc_from_ms(kCalibrateMs);
+        if (calibrate_start_qpc_ == 0) calibrate_start_qpc_ = now;
+        if (now < calibrate_start_qpc_ + qpc_from_ms(kCalibrateSkipMs)) return by_padding;  // 開いた直後は使わない
         calibrate_samples_.push_back(diff);
-        if (now < calibrate_until_qpc_) return by_padding;
-        std::nth_element(calibrate_samples_.begin(), calibrate_samples_.begin() + ptrdiff_t(calibrate_samples_.size() / 2),
-                         calibrate_samples_.end());
-        position_offset_qpc_ = calibrate_samples_[calibrate_samples_.size() / 2];
+        if (now < calibrate_start_qpc_ + qpc_from_ms(kCalibrateSkipMs + kCalibrateMs)) return by_padding;
+        position_offset_qpc_ = median(calibrate_samples_);
         calibrate_samples_.clear();
         position_ready_ = true;
+        offset_check_end_qpc_ = now + qpc_from_ms(kOffsetCheckMs);
+        offset_moved_checks_ = 0;
         render_log().info("audio [{}]: timing from the audio clock (offset {:+.2f} ms from the buffer padding)", to_utf8(options_.name),
                           double(qpc_to_us(position_offset_qpc_)) / 1000.0);
     }
@@ -308,8 +457,24 @@ int64_t DeviceOutput::heard_time_locked(int64_t now, uint32_t lead_frames) {
         render_log().info("audio [{}]: audio clock moved {:+.1f} ms; measuring again", to_utf8(options_.name),
                           double(qpc_to_us(diff - position_offset_qpc_)) / 1000.0);
         position_ready_ = false;
-        calibrate_until_qpc_ = 0;
+        calibrate_start_qpc_ = 0;
+        calibrate_samples_.clear();
+        offset_check_samples_.clear();
         return by_padding;
+    }
+    // 測った差が偏っていないか: 中央値が kOffsetMovedMs 以上ずれたままなら、その値に替える
+    offset_check_samples_.push_back(diff);
+    if (now >= offset_check_end_qpc_) {
+        const int64_t m = median(offset_check_samples_);
+        offset_check_samples_.clear();
+        offset_check_end_qpc_ = now + qpc_from_ms(kOffsetCheckMs);
+        offset_moved_checks_ = std::llabs(m - position_offset_qpc_) >= qpc_from_ms(kOffsetMovedMs) ? offset_moved_checks_ + 1 : 0;
+        if (offset_moved_checks_ >= kOffsetMovedChecks) {
+            render_log().info("audio [{}]: offset from the buffer padding moved {:+.2f} -> {:+.2f} ms; using the new offset",
+                              to_utf8(options_.name), double(qpc_to_us(position_offset_qpc_)) / 1000.0, double(qpc_to_us(m)) / 1000.0);
+            position_offset_qpc_ = m;
+            offset_moved_checks_ = 0;
+        }
     }
     return by_position - position_offset_qpc_;
 }
@@ -387,6 +552,7 @@ void DeviceOutput::run() {
                     const REFERENCE_TIME current = REFERENCE_TIME(std::llround(10'000'000.0 * buffer_frames_ / rate_));
                     exclusive_period_ = std::max(kRetryExclusivePeriod, current * 2);
                     exclusive_failed_ = exclusive_period_ > kMaxExclusivePeriod;
+                    if (exclusive_failed_) exclusive_fallback_ = "tooSlow";
                     spdlog::warn(
                         "audio [{}]: device does not keep up with the exclusive-mode period ({:.0f}/{:.0f} "
                         "calls/s); {}",

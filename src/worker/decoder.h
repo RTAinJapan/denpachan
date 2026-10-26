@@ -93,8 +93,10 @@ private:
     int64_t last_pts_us_ = AV_NOPTS_VALUE;
 
     // HW デコードの結果を取り出す先のバッファのプール (transfer_frame)。
-    // AVBufferPool は一度増えると縮まない: 同時に生きているフレームの最大 (FrameQueue + 録画キュー + 出力・プレビューの保持分。
-    // 4K で録画が詰まると 600 MB 前後) まで増えると、その分を確保したまま持ち続ける (漏れではない。形式・大きさが変わると作り直す)
+    // AVBufferPool は一度増えると縮まない: 同時に生きているフレームの最大 (FrameQueue + 録画キュー + 出力・プレビューの保持分) まで
+    // 増えると、その分を確保したまま持ち続ける (漏れではない。形式・大きさが変わると作り直す)。FrameQueue は遅延が大きい間
+    // 再生バッファ + 1.3 秒分 (60 fps で再生バッファ 0 なら 80 枚。video_queue_limits) まで溜まるので、1920×1080 の NV12 で
+    // 約 250 MB、4K で約 1 GB になりうる (4K で録画が詰まると、それに録画キューの分が足される)
     FramePtr transfer_frame(const AVFrame* hw);
     AVBufferPool* transfer_pool_ = nullptr;
     AVPixelFormat pool_format_ = AV_PIX_FMT_NONE;

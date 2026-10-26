@@ -28,6 +28,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly SystemStats _systemStats = new();
     private bool _systemSampling;
     private long _lastRtmpRestarts = -1;
+    private double _lastAudioDeviceChanges = -1;  // engine が数えたデバイスの増減 (変わったら一覧を読み直す)
+    private bool _loadingDevices;                 // 一覧を読んでいる (ASIO の探査で時間がかかることがある)
+    private bool _reloadDevices;                  // 読んでいる間にまた変わった
 
     public MainViewModel()
     {
@@ -103,6 +106,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     internal void SetConnectedFromFixture(bool connected) => Connected = connected;
     internal void SetGeneralConfigFromFixture(JsonNode general) => GeneralConfig = general;
     internal void ApplyStateFromFixture(JsonNode state) => OnState(state);
+
+    internal void SetAudioDevicesFromFixture(List<AudioDeviceItem> devices)
+    {
+        AudioDevices = devices;
+        foreach (var ch in Channels) ch.RefreshAudioDeviceChoices();
+    }
 
     // ---- 仮想カメラの登録 (zip を展開してすぐ使えるように、このユーザーに自動で登録する) ----
 
@@ -322,6 +331,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             Log(F("event.rtmpRestarted", ("reason", Message(rtmp.At("lastEvent")))), true);
         }
         _lastRtmpRestarts = restarts;
+
+        // 音声デバイスが増減したら (DVS のモードの切り替えなど)、メニューを使わなくても一覧を読み直す
+        var deviceChanges = state.Num("audioDeviceChanges");
+        if (!relabel && _lastAudioDeviceChanges >= 0 && deviceChanges != _lastAudioDeviceChanges && Connected) _ = LoadDevicesAsync();
+        _lastAudioDeviceChanges = deviceChanges;
     }
 
     public async Task LoadConfigAsync()
@@ -348,6 +362,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public async Task LoadDevicesAsync()
     {
+        if (_loadingDevices)
+        {
+            _reloadDevices = true;  // 読み終わったらもう一度読む
+            return;
+        }
+        _loadingDevices = true;
         try
         {
             var result = await _client.CallAsync("listAudioDevices");
@@ -359,6 +379,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         catch (EngineException e)
         {
             Log(F("event.devicesFailed", ("error", e.Message)), true);
+        }
+        finally
+        {
+            _loadingDevices = false;
+        }
+        if (_reloadDevices)
+        {
+            _reloadDevices = false;
+            await LoadDevicesAsync();
         }
     }
 

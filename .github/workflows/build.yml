@@ -132,6 +132,22 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP/engine.log" -Pattern 'ffmpeg.missing' -SimpleMatch -Quiet)) { Get-Content "$env:RUNNER_TEMP/engine.log"; throw 'engine did not report missing FFmpeg' }
           Write-Host 'OK: no FFmpeg DLLs in the output; worker and engine handle missing FFmpeg'
 
+      # 音声の時間軸: worker の書き手と engine の読み手を仮想の時計で動かし、回線の状態 (揺れ、途切れ、欠落、帯域不足) と
+      # デバイス (基本遅延、取る仕方) ごとに、合わせ直し・音切れ・時間軸の動きを確かめる
+      # (音声デバイスは要らない。src/tools/audio_timing_test.cpp)。1 秒ごとの推移は CSV にして成果物に残す
+      - name: Audio timing test
+        shell: pwsh
+        run: |
+          & out/build/bin/Release/audio_timing_test.exe --csv out/audio-timing
+          if ($LASTEXITCODE -ne 0) { throw "audio_timing_test failed ($LASTEXITCODE)" }
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: audio-timing-csv
+          path: out/audio-timing
+          if-no-files-found: ignore
+
       # 画面の文言: コードが使うキー (画面・C++ のメッセージ ID) と言語ファイル (Lang/*.json) が食い違っていないか
       - name: UI text keys
         shell: pwsh

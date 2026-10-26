@@ -4,6 +4,7 @@
 #include <functiondiscoverykeys_devpkey.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cwctype>
 
 using Microsoft::WRL::ComPtr;
@@ -39,7 +40,69 @@ std::wstring lower(std::wstring s) {
     return s;
 }
 
+std::atomic<uint64_t> g_device_changes{0};
+
+// デバイスの通知を受けて数える (通知は Windows のスレッドから来るので、ここでは数えるだけ)
+class DeviceWatcher final : public IMMNotificationClient {
+public:
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG n = --refs_;
+        if (n == 0) delete this;
+        return n;
+    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IMMNotificationClient)) {
+            *out = static_cast<IMMNotificationClient*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR, DWORD) override { return changed(); }
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { return changed(); }
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { return changed(); }
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow, ERole, LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY key) override {
+        // 名前が変わったら一覧も変わる
+        const bool name = key.pid == PKEY_Device_FriendlyName.pid && IsEqualGUID(key.fmtid, PKEY_Device_FriendlyName.fmtid);
+        return name ? changed() : S_OK;
+    }
+
+private:
+    static HRESULT changed() {
+        ++g_device_changes;
+        return S_OK;
+    }
+    std::atomic<ULONG> refs_{1};
+};
+
+ComPtr<IMMDeviceEnumerator> g_watch_enumerator;
+ComPtr<DeviceWatcher> g_watcher;
+
 }  // namespace
+
+void start_audio_device_watch() {
+    if (g_watcher) return;
+    g_watch_enumerator = enumerator();
+    if (!g_watch_enumerator) return;
+    g_watcher.Attach(new DeviceWatcher());
+    if (FAILED(g_watch_enumerator->RegisterEndpointNotificationCallback(g_watcher.Get()))) {
+        g_watcher.Reset();
+        g_watch_enumerator.Reset();
+    }
+}
+
+void stop_audio_device_watch() {
+    if (g_watcher && g_watch_enumerator) g_watch_enumerator->UnregisterEndpointNotificationCallback(g_watcher.Get());
+    g_watcher.Reset();
+    g_watch_enumerator.Reset();
+}
+
+uint64_t audio_device_changes() { return g_device_changes.load(); }
+
+void note_audio_devices_changed() { ++g_device_changes; }
 
 ComPtr<IMMDevice> open_audio_device(const std::wstring& id) {
     ComPtr<IMMDevice> dev;

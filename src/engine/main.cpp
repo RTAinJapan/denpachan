@@ -8,7 +8,9 @@
 //   denpachan-engine                  通常起動 (終了時に worker も止める)
 //   denpachan-engine --keep-workers   終了しても worker を止めない (engine を入れ替えるとき)
 //   denpachan-engine --list-devices
+//   denpachan-engine --test-fail-exclusive   試験用: 排他モードで開けないことにする (共有モードへの切り替えの試験)
 
+#include <spdlog/cfg/env.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -22,6 +24,7 @@
 
 #include "audio_devices.h"
 #include "config.h"
+#include "device_output.h"
 #include "denpachan/crash_dump.h"
 #include "denpachan/win_util.h"
 #include "engine.h"
@@ -40,6 +43,7 @@ namespace {
 struct Options {
     bool list_devices = false;
     bool keep_workers = false;
+    bool test_fail_exclusive = false;
     std::wstring config_path;
     std::wstring log_file;
 };
@@ -50,7 +54,8 @@ void print_usage() {
         "  --config PATH      config file          [%APPDATA%\\denpachan\\config.json]\n"
         "  --log-file PATH    log file             [%LOCALAPPDATA%\\denpachan\\logs\\engine.log]\n"
         "  --keep-workers     leave workers running on exit\n"
-        "  --list-devices     list audio output devices\n",
+        "  --list-devices     list audio output devices\n"
+        "  --test-fail-exclusive  (test) fail every exclusive-mode open\n",
         stderr);
 }
 
@@ -66,6 +71,8 @@ std::optional<Options> parse_args(int argc, wchar_t** argv) {
             o.list_devices = true;
         } else if (a == L"--keep-workers") {
             o.keep_workers = true;
+        } else if (a == L"--test-fail-exclusive") {
+            o.test_fail_exclusive = true;
         } else if (a == L"--config") {
             const auto v = value();
             if (!v) return std::nullopt;
@@ -96,6 +103,8 @@ void setup_logging(const std::wstring& log_file) {
     logger->set_pattern("%Y-%m-%d %H:%M:%S.%e [%n] %^%l%$ %v");
     logger->flush_on(spdlog::level::warn);
     spdlog::set_default_logger(logger);
+    // 調べるとき: 環境変数 SPDLOG_LEVEL=debug で debug のログも出す (worker は engine から引き継ぐ。設計書 §6.3)
+    spdlog::cfg::load_env_levels();
     spdlog::flush_every(std::chrono::seconds(1));
     setup_render_log();  // 音声の描画スレッド用 (非同期。render_log.h)
 }
@@ -136,6 +145,11 @@ int wmain(int argc, wchar_t** argv) {
     const std::wstring log_dir = local_app_dir(L"logs");
     setup_logging(opts->log_file.empty() ? log_dir + L"\\engine.log" : opts->log_file);
     install_crash_dump(local_app_dir(L"dumps"), L"engine");
+
+    if (opts->test_fail_exclusive) {
+        test_fail_exclusive = true;
+        spdlog::warn("test: exclusive-mode opens will fail (--test-fail-exclusive)");
+    }
 
     SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
     SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);

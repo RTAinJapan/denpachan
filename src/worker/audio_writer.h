@@ -21,6 +21,7 @@
 //
 // 小さな抜け (10ms 超) は無音で埋め、重なりは捨てて、サンプル番号と時刻の対応を保つ。
 
+#include <climits>
 #include <cstdint>
 
 #include "denpachan/audio_shm.h"
@@ -48,6 +49,7 @@ private:
     void append(const float* data, int frames);                                    // data == nullptr なら無音
     int64_t update_clock(int64_t pts_us, int64_t arrival_qpc);                     // 低遅延
     int64_t update_synced(uint64_t session, int64_t pts_us, int64_t arrival_qpc);  // A/V 同期
+    void note_slack(int64_t slack, int64_t arrival_qpc);
 
     PlayoutClock& video_clock_;
     ChannelMetrics& metrics_;
@@ -68,6 +70,20 @@ private:
     bool published_ = false;  // ウォームアップが終わって読み手に時刻を見せているか
     int64_t window_start_qpc_ = 0;
     int64_t window_min_slack_ = 0;  // 窓内で最も余裕のなかったチャンクの (due - arrival)
+    // A/V 同期: 最後に見た engine の出力遅延と、時計が一度に大きく動いた回数 (変わったら epoch を進める)
+    int64_t last_output_delay_ = 0;
+    int64_t last_nonzero_output_delay_ = 0;  // 最後に出力先があったときの出力遅延 (0 = まだ無い)
+    uint64_t clock_jumps_ = 0;
+    // engine がいま鳴らしているか (audio::Header::output_active。前回見た値と、一度でも鳴ったか)
+    bool last_output_active_ = false;
+    bool seen_active_ = false;
+    // 音声の余裕の 1 秒ごとの最小 (今と前の 1 秒) と、出力が止まった・戻った後の 1 秒の最小 (ログ用)
+    int64_t slack_bucket_start_qpc_ = 0;
+    int64_t slack_cur_min_ = LLONG_MAX;
+    int64_t slack_prev_min_ = LLONG_MAX;
+    int64_t after_change_until_qpc_ = 0;
+    int64_t after_change_min_ = LLONG_MAX;
+    bool after_change_resumed_ = false;
 };
 
 }  // namespace denpachan::worker

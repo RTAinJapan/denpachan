@@ -12,6 +12,7 @@
 
 #include "audio_router.h"
 #include "config.h"
+#include "ffmpeg_available.h"
 #include "denpachan/rtmp_routes.h"
 #include "denpachan/vcam_shm.h"
 #include "denpachan/win_util.h"
@@ -71,6 +72,7 @@ private:
     SharedMapping vcam_mappings_[vcam::kNumCams];
     vcam::Header* vcam_headers_[vcam::kNumCams] = {};
     int64_t last_audio_retry_qpc_ = 0;
+    uint64_t last_audio_changes_ = 0;  // 前の tick で見たデバイスの増減の回数
     std::atomic<int> shutdown_request_{0};
     bool ffmpeg_ok_ = false;
     std::string ffmpeg_message_;  // 見つからないときの説明
@@ -78,8 +80,5 @@ private:
     ChannelsView channels_view_;
     nlohmann::json last_channels_;  // 最後に作った channels (getChannels で返す)
 };
-
-// FFmpeg の DLL を使えるか (音声のリサンプルが確かめてから使う)
-bool ffmpeg_available();
 
 }  // namespace denpachan::engine

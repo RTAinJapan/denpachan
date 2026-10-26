@@ -28,6 +28,7 @@ struct WorkerSnapshot {
     bool has_metrics = false;
     worker_status::Metrics metrics{};
     uint64_t rejected_senders = 0;  // worker_status::Header の末尾の欄
+    uint64_t playout_restarts = 0;  // 同じく
 };
 
 class WorkerProcess {

@@ -3,8 +3,9 @@
 //
 // - 共有モード: IAudioClient3 で最小周期を使えれば使う (低遅延)。だめなら既定周期。
 // - 排他モード: Windows の音声エンジンを通らない (通知音が混ざらない、音量スライダーの影響なし)。
-//   その間は他のアプリがこのデバイスを使えない。デバイスからの呼び出しが周期に追いつかなければ
-//   周期を延ばし、それでもだめなら共有モードに切り替える。
+//   その間は他のアプリがこのデバイスを使えない。開けなければ (形式・周期を変えて試しても Initialize が通らない)
+//   その場で共有モードで開く。デバイスからの呼び出しが周期に追いつかなければ周期を延ばし、
+//   それでもだめなら共有モードに切り替える。
 // - デバイスが消えたら (DVS の再起動など) 1 秒ごとに開き直す。その間も他のデバイスは止まらない。
 // - バッファがいつ鳴るかは、再生位置 (IAudioClock::GetPosition) から求める (設計書 §6.3)。
 
@@ -13,6 +14,7 @@
 #include <wrl/client.h>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,6 +26,9 @@
 #include "denpachan/win_util.h"
 
 namespace denpachan::engine {
+
+// 試験用: 排他モードの Initialize を必ず失敗させる (engine の --test-fail-exclusive。共有モードへの切り替えを確かめる)
+inline std::atomic<bool> test_fail_exclusive{false};
 
 class DeviceOutput : public AudioOutput {
 public:
@@ -37,6 +42,7 @@ public:
     const DeviceOptions& options() const override { return options_; }
 
     void set_mute(int ch, bool mute) override;
+    void update_routes(std::vector<RouteOptions> routes) override;
 
     void for_each_source(const std::function<void(ChannelSource&)>& f) override {
         std::lock_guard lk(sources_mutex_);
@@ -48,12 +54,13 @@ private:
 
     void run();
     bool open();
+    HRESULT initialize_exclusive(const WAVEFORMATEX* mix, const std::function<bool()>& activate);
     void close();
     bool render();
     void write_samples(BYTE* dst, int frames);
 
     const DeviceOptions options_;
-    std::vector<RouteOptions> routes_;  // mute だけ変わる (sources_mutex_ で保護)
+    std::vector<RouteOptions> routes_;  // 開いたときに使う振り分け (sources_mutex_ で保護。set_mute、update_routes で変わる)
 
     Microsoft::WRL::ComPtr<IAudioClient> client_;
     Microsoft::WRL::ComPtr<IAudioRenderClient> render_;
@@ -62,7 +69,8 @@ private:
     int quick_losses_ = 0;   // 開いてすぐ (kQuickLossMs 以内) 失ったのが続いた回数 (開き直しの間を延ばす)
     static constexpr int64_t kQuickLossMs = 5000;
     bool exclusive_ = false;               // いま排他モードで開いているか
-    bool exclusive_failed_ = false;        // 排他モードの周期に追いつけなかった (以後は共有モード)
+    bool exclusive_failed_ = false;        // 排他モードで開けない・周期に追いつけなかった (以後は共有モード)
+    std::string exclusive_fallback_;       // 共有モードにした理由 ("initFailed" / "tooSlow")
     REFERENCE_TIME exclusive_period_ = 0;  // 0 = デバイスの最小周期
     SampleType sample_type_ = SampleType::Float32;
     int channels_ = 0;
@@ -73,15 +81,21 @@ private:
 
     // 鳴る時刻の測り方 (render)。GetCurrentPadding (「今 + 溜まっている量」) は仮想デバイスなどで数 ms 揺れるので、
     // IAudioClock::GetPosition (再生位置とその時刻) から求める。平均の時刻 (遅延) は今までと変えないよう、
-    // 開いた直後に padding との差を測っておいて差し引く。
+    // 開いて落ち着いてから padding との差を測っておいて差し引く (測った値が偏っていたら、あとで替える)。
     int64_t heard_time_locked(int64_t now, uint32_t lead_frames);
     Microsoft::WRL::ComPtr<IAudioClock> clock_;
     uint64_t clock_freq_ = 0;
     uint64_t written_frames_ = 0;      // デバイスのバッファに書いたフレーム数 (開いてから)
-    int64_t position_offset_qpc_ = 0;  // GetPosition による時刻 - padding による時刻 (測り終えたら固定)
+    int64_t position_offset_qpc_ = 0;  // GetPosition による時刻 - padding による時刻
     bool position_ready_ = false;      // 差を測り終えた
-    int64_t calibrate_until_qpc_ = 0;
+    int64_t calibrate_start_qpc_ = 0;  // 再生位置が取れるようになった時刻 (0 = まだ)
     std::vector<int64_t> calibrate_samples_;
+    std::vector<int64_t> offset_check_samples_;  // 測り終えた後の差 (kOffsetCheckMs ごとに中央値を見る)
+    int64_t offset_check_end_qpc_ = 0;
+    int offset_moved_checks_ = 0;
+    int64_t no_position_since_qpc_ = 0;  // 再生位置が取れなくなった時刻 (0 = 取れている)
+    uint64_t no_position_calls_ = 0;
+    bool no_position_logged_ = false;
 
     // 診断: デバイスからの呼び出し回数と最大間隔
     int64_t last_render_qpc_ = 0;
@@ -95,6 +109,12 @@ public:
 private:
     std::mutex sources_mutex_;
     std::vector<std::unique_ptr<ChannelSource>> sources_;
+    // sources_ を作ったときのデバイスの形式 (sources_mutex_ で保護。update_routes が同じ形式で作る)。開くたびに opened_ が増える
+    uint32_t source_rate_ = 0;
+    int source_channels_ = 0;
+    int64_t source_base_delay_qpc_ = 0;
+    uint64_t opened_ = 0;
+    std::mutex update_mutex_;  // update_routes を 1 つずつ
 
     std::mutex status_mutex_;
     DeviceStatus status_;

@@ -19,4 +19,8 @@ std::vector<AudioDeviceInfo> list_output_devices();
 // 出力先を設定の値 (表示名または ID) で探す。"ASIO: " で始まる名前は ASIO のドライバ
 std::optional<AudioDeviceInfo> find_output_device(const std::wstring& query);
 
+// ASIO のドライバを開いた (AsioOutput)。開いている間は確かめに開けないので、一覧のチャンネル数はこの値を使う
+// (分からないと、画面の開始チャンネルの一覧が 64 ch 分になった)
+void note_asio_opened(const std::wstring& id, int channels, int sample_rate);
+
 }  // namespace denpachan::engine

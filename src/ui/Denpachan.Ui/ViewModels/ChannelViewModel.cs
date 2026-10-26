@@ -51,12 +51,15 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
     // 前回の状態 (イベントログ用)
     private long _lastRestarts = -1;
     private long _lastRejected = -1;  // 断った別の送出元の数 (前回の状態)
+    private long _lastPlayoutRestarts = -1;  // 映像が遅延に追いつけず時間軸を作り直した回数 (前回の状態)
     private long _rejectedPending;    // まだイベントログに出していない分
     private DateTime _rejectedLoggedAt = DateTime.MinValue;
     private string _lastVideoState = "";
     private string _lastUnreachable = "";  // 繋がらない理由 (メッセージの JSON。言語を変えても同じ)
     private bool? _lastConnected;
     private string _lastWorkerState = "";
+    private string _lastSharedFallback = "";
+    private bool _audioLost;  // 音声デバイスを失っている (変わったときだけイベントに出す)  // 共有モードに切り替えた理由 (変わったときだけイベントに出す)
 
     public ChannelViewModel(MainViewModel main, int id)
     {
@@ -149,7 +152,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     // 直近 1 分の増分 (累積カウンタから)
     private static readonly TimeSpan WarnWindow = TimeSpan.FromSeconds(60);
-    private readonly RateTracker _audioDropouts = new(WarnWindow);  // 音切れ + 合わせ直し
+    private readonly RateTracker _audioDropouts = new(WarnWindow);  // デバイスの音切れ (underruns)
+    private readonly RateTracker _audioResyncs = new(WarnWindow);   // 合わせ直し (フェードして鳴らす位置を合わせ直した)
     private readonly RateTracker _audioGaps = new(WarnWindow);      // worker 側の音声の抜け
     private readonly RateTracker _srtDropped = new(WarnWindow);
     private readonly RateTracker _tcpRetrans = new(WarnWindow);
@@ -301,10 +305,21 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         {
             if (value == null) return;
             var old = _audioDevice;
+            var oldStart = _audioStartChannel;
             if (!SetProperty(ref _audioDevice, value)) return;
+            // 選んだデバイスに今の出力チャンネルが無ければ 1-2 にする (DVS 4.5 の WDM は 2ch ずつのデバイスで、既定の 3-4 などが無い)。
+            // 設定を読んだだけのとき (_applying) は変えず、範囲外と表示する
+            var resetStart = !_applying && !StartChannelFits(value, _audioStartChannel);
+            if (resetStart) _audioStartChannel = 1;
             UpdateStartChannelOptions();
             if (_applying) return;
-            _ = PatchOrRevertAsync(new JsonObject { ["audio"] = new JsonObject { ["device"] = value } }, () => AudioDevice = old);
+            var audio = new JsonObject { ["device"] = value };
+            if (resetStart) audio["startChannel"] = 1;
+            _ = PatchOrRevertAsync(new JsonObject { ["audio"] = audio }, () =>
+            {
+                _audioStartChannel = oldStart;
+                AudioDevice = old;
+            });
         }
     }
 
@@ -329,9 +344,12 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
 
     public void RefreshAudioDeviceChoices()
     {
+        // 「なし」を先頭に、残り (ASIO のドライバと、設定にあるが見つからないデバイスも) は名前の自然順に並べる
+        var names = _main.AudioDevices.Select(d => d.Name).Distinct().ToList();
+        if (_audioDevice != "" && !names.Contains(_audioDevice)) names.Add(_audioDevice);
+        names.Sort(NaturalOrder.Instance);
         var choices = new List<Option<string>> { new("", T("common.none")) };
-        choices.AddRange(_main.AudioDevices.Select(d => new Option<string>(d.Name, d.Name)));
-        if (_audioDevice != "" && !choices.Any(c => c.Value == _audioDevice)) choices.Add(new(_audioDevice, _audioDevice));  // 設定にあるが見つからないデバイス
+        choices.AddRange(names.Select(n => new Option<string>(n, n)));
         _applying = true;
         AudioDeviceChoices = choices;
         OnPropertyChanged(nameof(AudioDevice));
@@ -339,15 +357,31 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         _applying = false;
     }
 
+    /// <summary>デバイスのチャンネル数 (見つからない・分からなければ 0)</summary>
+    private int DeviceChannels(string device) => _main.AudioDevices.FirstOrDefault(d => d.Name == device)?.Channels ?? 0;
+
+    /// <summary>出力チャンネル (start-start+1) がデバイスにあるか。チャンネル数が分からなければ、あるとみなす</summary>
+    private bool StartChannelFits(string device, int start)
+    {
+        var channels = DeviceChannels(device);
+        return channels <= 0 || start + 1 <= channels;
+    }
+
     private void UpdateStartChannelOptions()
     {
-        var channels = _main.AudioDevices.FirstOrDefault(d => d.Name == _audioDevice)?.Channels ?? 2;
+        var known = DeviceChannels(_audioDevice);
+        var channels = _main.AudioDevices.Any(d => d.Name == _audioDevice) ? known : 2;
         // ASIO のドライバは、別の ASIO ドライバを使っている間はチャンネル数が分からない (0)。そのときは広く出す
         if (channels <= 0) channels = 64;
         channels = Math.Clamp(channels, 2, 64);
         var options = new List<Option<int>>();
         for (var start = 1; start + 1 <= channels; start += 2) options.Add(new(start, $"{start}-{start + 1}"));
-        if (!options.Any(o => o.Value == _audioStartChannel)) options.Add(new(_audioStartChannel, $"{_audioStartChannel}-{_audioStartChannel + 1}"));
+        if (!options.Any(o => o.Value == _audioStartChannel))
+        {
+            // 設定にあるがデバイスに無い出力チャンネル (チャンネル数が分かっているときは範囲外と出す)
+            var label = $"{_audioStartChannel}-{_audioStartChannel + 1}";
+            options.Add(new(_audioStartChannel, known > 0 ? F("channel.startChannelOutOfRange", ("channels", label)) : label));
+        }
         var applying = _applying;
         _applying = true;
         StartChannelOptions = options;
@@ -499,6 +533,10 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
             _rejectedPending = 0;
             _rejectedLoggedAt = DateTime.Now;
         }
+        // 映像が遅延に追いつけず、時間軸を作り直した (worker の保険。普段は起きない)
+        var playoutRestarts = (long)video.Num("playoutRestarts");
+        if (_lastPlayoutRestarts >= 0 && playoutRestarts > _lastPlayoutRestarts) events.Add(new(T("event.playoutRestarted"), true));
+        _lastPlayoutRestarts = playoutRestarts;
         _lastRestarts = restarts;
         _lastWorkerState = workerState;
         _lastConnected = connected;
@@ -518,8 +556,8 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
                           ("delay", $"{delay:0}"), ("res", res), ("codec", video.Str("codec")));
             var recommended = srt.At("recommend").Int("latencyMs");
             TransportLine = srt != null
-                ? F(recommended > 0 ? "main.tile.srtLineWithRecommend" : "main.tile.srtLine", ("latency", srt.Int("latencyMs")),
-                    ("recommend", recommended), ("rtt", $"{rtt:0.0}"), ("lost", $"{srt.Num("lost"):0}"), ("dropped", $"{srt.Num("dropped"):0}"))
+                ? F(recommended > 0 ? "main.tile.srtLineWithRecommend" : "main.tile.srtLine", ("latency", SrtUrl.UsFromMs(srt.Int("latencyMs"))),
+                    ("recommend", SrtUrl.UsFromMs(recommended)), ("rtt", $"{rtt:0.0}"), ("lost", $"{srt.Num("lost"):0}"), ("dropped", $"{srt.Num("dropped"):0}"))
                 : tcp != null ? F("main.tile.tcpLine", ("rtt", $"{rtt:0.0}"), ("retrans", $"{tcp.Num("retransBytes") / 1024:0}")) : "";
             // 受信中だけ出す (HW が使えれば何も出さない)
             SoftwareDecode = videoState is "live" or "hold" && !video.Bool("hwDecode");
@@ -553,28 +591,48 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         var peak = audioOut?.At("peakDb") as JsonArray ?? audioIn?.At("peakDb") as JsonArray;
         PeakL = peak is { Count: 2 } ? PeakOf(peak[0]) : -100;
         PeakR = peak is { Count: 2 } ? PeakOf(peak[1]) : -100;
-        // 直近 1 分の音切れ (デバイスの音切れ + 合わせ直し、worker 側の抜け)
-        var dropouts = audioOut != null && audioOut.At("latencyMs") != null
-            ? _audioDropouts.Add(audioOut.Num("underruns") + audioOut.Num("resyncs"))
-            : 0;
+        // 直近 1 分の音切れ (デバイスの音切れ、worker 側の抜け) と合わせ直し。合わせ直しも短い無音 (フェード) が入るが、
+        // 届いた音が足りなかったのではない (時間軸が動いた、デバイスを開き直したなど) ので分けて出す
+        var hasCounts = audioOut != null && audioOut.At("latencyMs") != null;
+        var dropouts = hasCounts ? _audioDropouts.Add(audioOut.Num("underruns")) : 0;
+        var resyncs = hasCounts ? _audioResyncs.Add(audioOut.Num("resyncs")) : 0;
         var gaps = audioIn != null ? _audioGaps.Add(audioIn.Num("gaps")) : 0;
         // 再生中の補足 (ミュート、音切れ)。あれば「、」でつないで後ろに出す
+        // 排他モードを頼まれたが共有モードで出している (開けない・周期に追いつけない)
+        var sharedFallback = audioOut.Str("exclusiveFallback");
+        if (sharedFallback.Length > 0 && sharedFallback != _lastSharedFallback)
+        {
+            events.Add(new(F(sharedFallback == "tooSlow" ? "event.audioSharedFallbackTooSlow" : "event.audioSharedFallback",
+                             ("device", audioOut.Str("device"))), true));
+        }
+        _lastSharedFallback = sharedFallback;
         var audioNotes = new List<string>();
+        if (sharedFallback.Length > 0) audioNotes.Add(T("main.tile.audioSharedFallback"));
         if (Mute) audioNotes.Add(T("main.tile.audioMuted"));
         if (dropouts + gaps > 0) audioNotes.Add(F("main.tile.audioDropouts", ("count", $"{dropouts + gaps:0}")));
+        // 合わせ直しはタイルでは回数を出さず、黄にするだけ (回数は詳細)
         var audioLatency = $"{audioOut.Num("latencyMs"):0}";
+        // デバイスを失った / ドライバが止まった (開き直している)。「失った」「戻った」をイベントに 1 行ずつ出す
+        var audioErrorId = audioOut.At("error").Str("id");
+        var lost = audioErrorId is "audio.deviceLost" or "audio.driverStalled";
+        if (lost && !_audioLost) events.Add(new(F("event.audioDeviceLost", ("device", audioOut.Str("device")), ("error", Message(audioOut.At("error")))), true));
+        else if (!lost && _audioLost && audioOut != null && audioOut.Bool("open")) events.Add(new(F("event.audioDeviceBack", ("device", audioOut.Str("device")))));
+        _audioLost = lost;
+        // 開いていなければ、鳴っていたときの値 (playing) が残っていてもエラーにする
         AudioLine = audioOut switch
         {
             null => T("main.tile.audioNone"),
-            _ when audioOut.At("error") != null => F("main.tile.audioError", ("error", Message(audioOut.At("error"))), ("device", audioOut.Str("device"))),
+            // タイルには短く出す (全文は詳細とイベント。デバイス名はすぐ下の選択と同じなので出さない)
+            _ when audioOut.At("error") != null => F("main.tile.audioError", ("error", AudioErrorShort(audioOut.At("error")))),
+            _ when !audioOut.Bool("open") => F("main.tile.audioError", ("error", T("main.tile.audioCannotOpen"))),
             _ when audioOut.Bool("playing") => audioNotes.Count == 0
                 ? F("main.tile.audioPlaying", ("latency", audioLatency))
                 : F("main.tile.audioPlayingWithNotes", ("latency", audioLatency), ("notes", string.Join(T("common.listSeparator"), audioNotes))),
-            _ => T(audioOut.Bool("open") ? "main.tile.audioIdle" : "main.tile.audioCannotOpen"),
+            _ => T("main.tile.audioIdle"),
         };
         AudioKind = audioOut == null ? "ok"
-                    : audioOut.At("error") != null || (!audioOut.Bool("open") && !audioOut.Bool("playing")) ? "error"
-                    : dropouts + gaps > 0 ? "warn"
+                    : audioOut.At("error") != null || !audioOut.Bool("open") ? "error"
+                    : dropouts + gaps + resyncs > 0 || sharedFallback.Length > 0 ? "warn"
                     : "ok";
 
         var record = st.At("record");
@@ -630,15 +688,27 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         if (recommended <= 0) return F("srtAdvice.measuring", ("sec", r.Int("windowSec")));
         var effective = srt.Int("latencyMs");
         var configured = srt.Int("configuredLatencyMs");
-        var text = F("srtAdvice.value", ("latency", recommended), ("rtt", $"{r.Num("rttMs"):0.0}"), ("multiplier", r.Int("multiplier")),
+        var current = SrtUrl.UsFromMs(effective);  // 画面の latency は URL と同じマイクロ秒
+        var text = F("srtAdvice.value", ("latency", SrtUrl.UsFromMs(recommended)), ("rtt", $"{r.Num("rttMs"):0.0}"), ("multiplier", r.Int("multiplier")),
                      ("loss", $"{r.Num("lossPct"):0.##}"), ("sec", r.Int("windowSec")));
-        var note = r.Num("drops") > 0 ? F("srtAdvice.drops", ("drops", $"{r.Num("drops"):0}"), ("current", effective))
-                   : recommended < effective && effective > configured ? F("srtAdvice.peerLatency", ("current", effective))
-                   : recommended < effective ? F("srtAdvice.canLower", ("current", effective))
-                   : recommended > effective ? F("srtAdvice.notEnough", ("current", effective))
+        var note = r.Num("drops") > 0 ? F("srtAdvice.drops", ("drops", $"{r.Num("drops"):0}"), ("current", current))
+                   : recommended < effective && effective > configured ? F("srtAdvice.peerLatency", ("current", current))
+                   : recommended < effective ? F("srtAdvice.canLower", ("current", current))
+                   : recommended > effective ? F("srtAdvice.notEnough", ("current", current))
                    : "";
         return note.Length > 0 ? F("srtAdvice.withNote", ("value", text), ("note", note)) : text;
     }
+
+    /// <summary>タイルに出す、音声のエラーの短い言い方 (全文は詳細の「音声のエラー」とイベントに出す)</summary>
+    private static string AudioErrorShort(JsonNode? error) => error.Str("id") switch
+    {
+        "audio.deviceLost" => T("main.tile.audioReopening"),
+        "audio.driverStalled" => T("main.tile.audioStalled"),
+        "audio.deviceNotFound" => T("main.tile.audioNotFound"),
+        "audio.startChannelOutOfRange" => T("main.tile.audioOutOfRange"),
+        "audio.asioOneDriver" => T("main.tile.audioAsioBusy"),
+        _ => Message(error),
+    };
 
     private static double PeakOf(JsonNode? v) => v is JsonValue j && j.TryGetValue<double>(out var d) && double.IsFinite(d) ? d : -100;
 
@@ -683,7 +753,7 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
         if (st.At("srt") is JsonNode srt)
         {
-            Add("detail.srtLatency", $"{srt.Int("latencyMs")} ms");
+            Add("detail.srtLatency", $"{SrtUrl.UsFromMs(srt.Int("latencyMs"))} µs");  // URL と同じマイクロ秒
             Add("detail.srtRtt", $"{srt.Num("rttMs"):0.0} ms");
             Add("detail.srtBuffer", $"{srt.Int("rcvBufMs")} ms");
             Add("detail.srtLoss", $"{srt.Num("lost"):0} / {srt.Num("retrans"):0} / {srt.Num("dropped"):0}");
@@ -701,12 +771,18 @@ public sealed class ChannelViewModel : ObservableObject, IDisposable
         }
         if (st.At("audioOut") is JsonNode ao)
         {
-            Add("detail.audioOut", F(ao.Bool("exclusive") ? "detail.audioOutValueExclusive" : "detail.audioOutValue",
-                                     ("device", ao.Str("device")), ("channels", $"{ao.Int("startChannel")}-{ao.Int("startChannel") + 1}")));
+            var outKey = ao.Bool("exclusive") ? "detail.audioOutValueExclusive"
+                         : ao.Str("exclusiveFallback").Length > 0 ? "detail.audioOutValueSharedFallback"
+                         : "detail.audioOutValue";
+            Add("detail.audioOut", F(outKey, ("device", ao.Str("device")), ("channels", $"{ao.Int("startChannel")}-{ao.Int("startChannel") + 1}")));
+            if (Message(ao.At("error")) is { Length: > 0 } audioError) Add("detail.audioError", audioError);
             if (ao.At("latencyMs") != null)
             {
-                Add("detail.audioLatency", F("detail.audioLatencyValue", ("latency", $"{ao.Num("latencyMs"):0.0}"),
-                                             ("error", $"{ao.Num("errorMs"):+0.00;-0.00}")));
+                // 鳴っていないとき (デバイスを失った、ドライバが止まった、出力チャンネルが範囲外など) は、engine が返す
+                // 直前の値を出さない。重複・間引きなどの回数は残す
+                Add("detail.audioLatency", ao.Bool("playing")
+                    ? F("detail.audioLatencyValue", ("latency", $"{ao.Num("latencyMs"):0.0}"), ("error", $"{ao.Num("errorMs"):+0.00;-0.00}"))
+                    : "-");
                 Add("detail.audioSlips", $"{ao.Num("slips"):0} / {ao.Num("underruns"):0} / {ao.Num("resyncs"):0}");
             }
         }
