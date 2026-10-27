@@ -86,7 +86,7 @@ sleep 1
 # Microsoft Store 版の Python は AppData の下が見えないので、ログを写してから渡す
 rm -rf "$OUT/disruption-logs"
 cp -r "$LOGS" "$OUT/disruption-logs"
-python -E "$ROOT/tools/testsrc/disruption_report.py" "$OUT/disruption-logs" --since "$SINCE" --until "$UNTIL" >"$OUT/disruption_report.txt"
+python -E "$ROOT/tools/testsrc/disruption_report.py" "$OUT/disruption-logs" --since "$SINCE" --until "$UNTIL" --no-windows-events >"$OUT/disruption_report.txt"
 grep -E "^■" "$OUT/disruption_report.txt"
 
 FAIL=0

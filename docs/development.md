@@ -89,7 +89,8 @@ python -E tools/testsrc/disruption_report.py <ログのフォルダ> --since "20
 ```
 
 - ログのフォルダは `%LOCALAPPDATA%\denpachan\logs` (既定)。Microsoft Store 版の Python はここが見えないので、ほかの場所に写してから渡す。
-- 途切れの行と、その前後の手がかり (`stall:`、`SRT: no data ...`、`RTMP: no data ...`、`decoder: decoding one ... took`) を時刻でまとめ、件ごとに「PC 全体が止まった」「プロセスが止まった」「受信が読めていなかった」「デコードが遅れた」「データが届かなかった」のどれかを出す。
+- 途切れの行と、その前後の手がかり (`stall:`、`SRT: no data ...`、`RTMP: no data ...`、`decoder: decoding one ... took`) を時刻でまとめ、件ごとに「PC 全体が止まった」「プロセスが止まった」「GPU のドライバが回復した」「モニターのつながりが変わった」「受信が読めていなかった」「デコードが遅れた」「データが届かなかった」のどれかを出す。
+- Windows のイベント (モニターの音声の出口の変化、画面の点灯・ロックの解除、GPU のドライバの回復) は、スクリプトを回した PC のものを読む。ログをほかの PC から持ってきたときは `--no-windows-events` を付けるか、乱れた PC で回す。
 - 届く間隔による途切れ (`arrival gap`) は debug のログにだけ出る。調べる間は engine を `SPDLOG_LEVEL=debug` (worker だけなら `SPDLOG_LEVEL="info,ch1=debug,ch2=debug"` など) で起動しておく。
 
 ## 画面の文言
