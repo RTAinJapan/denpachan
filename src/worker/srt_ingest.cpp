@@ -146,16 +146,44 @@ void SrtIngest::update_stats(int sock) {
 
 namespace {
 
+// 読めるデータが kRecvGapLogMs を超えて途絶えたら、明けたときに一度に読めた量を記録する (乱れの調べ方。設計書 §6.3)。
+// 途絶えている間もデータが SRT の受信バッファに溜まっていた (= この worker が読めなかった) なら、明けた瞬間に途絶えた
+// 長さに近い分が一度に読める。データが届いていなかった (送り側・回線) なら、一度に読めるのは少しだけ
+struct RecvGap {
+    int64_t last_qpc = 0;  // 最後に読めた時刻 (0 = この接続ではまだ読んでいない)
+};
+constexpr int64_t kRecvGapLogMs = 300;
+
 // 読めるだけ読んでキューに入れる。接続が壊れていたら false。
-bool pump(int sock, ByteQueue& queue, ChannelMetrics& metrics) {
+bool pump(int sock, ByteQueue& queue, ChannelMetrics& metrics, RecvGap& gap) {
     char buf[1500];
+    int64_t gap_ms = 0;
+    uint64_t burst = 0;  // 途絶えたあと、この呼び出しで一度に読めた量
+    auto log_gap = [&] {
+        if (gap_ms == 0) return;
+        double mbps = 0;
+        {
+            std::lock_guard lk(metrics.mutex);
+            mbps = metrics.srt.recv_mbps;
+        }
+        const double stream_ms = mbps > 0.1 ? double(burst) * 8 / (mbps * 1000) : 0;
+        spdlog::info("SRT: no data for {} ms, then {} KB at once (about {:.0f} ms of the stream at {:.1f} Mbps)", gap_ms, burst / 1024,
+                     stream_ms, mbps);
+    };
     for (;;) {
         const int r = srt_recvmsg(sock, buf, sizeof(buf));
         if (r > 0) {
+            const int64_t now = qpc_now();
+            if (gap.last_qpc != 0 && gap_ms == 0 && now - gap.last_qpc > qpc_from_ms(kRecvGapLogMs)) {
+                gap_ms = qpc_to_us(now - gap.last_qpc) / 1000;
+            }
+            gap.last_qpc = now;
+            if (gap_ms != 0) burst += uint64_t(r);
             metrics.bytes_in += uint64_t(r);
             if (!queue.push(reinterpret_cast<const uint8_t*>(buf), size_t(r))) metrics.overflow_bytes += uint64_t(r);
             continue;
         }
+        log_gap();
         if (r == SRT_ERROR) {
             if (srt_getlasterror(nullptr) == SRT_EASYNCRCV) return true;
             spdlog::warn("SRT: recv failed: {}", last_error());
@@ -203,6 +231,7 @@ void SrtIngest::run_listener() {
         int64_t last_stats = qpc_now();
         int64_t last_data_qpc = 0;  // 今の相手から最後にデータを受けた時刻 (接続した時刻を含む)
         uint64_t seen_bytes = 0;
+        RecvGap recv_gap;  // 読めるデータが途絶えたときの記録 (pump)
         int rejected = 0;  // まだログに出していない、断った接続の数
         std::string rejected_peer;
         int64_t rejected_log_qpc = 0;
@@ -245,6 +274,7 @@ void SrtIngest::run_listener() {
                     }
                     last_data_qpc = qpc_now();
                     seen_bytes = metrics_.bytes_in.load();
+                    recv_gap = RecvGap{};
                     client = c;
                     const int no = 0;
                     srt_setsockflag(client, SRTO_RCVSYN, &no, sizeof(no));
@@ -259,7 +289,7 @@ void SrtIngest::run_listener() {
                     }
                     spdlog::info("SRT: connected from {}", address_string(peer));
                 } else if (events[i].fd == client) {
-                    if ((events[i].events & SRT_EPOLL_ERR) || !pump(client, queue_, metrics_)) {
+                    if ((events[i].events & SRT_EPOLL_ERR) || !pump(client, queue_, metrics_, recv_gap)) {
                         spdlog::info("SRT: disconnected");
                         close_client();
                     }
@@ -334,11 +364,12 @@ void SrtIngest::run_caller() {
         spdlog::info("SRT: connected to {}:{}", options_.host, options_.port);
 
         int64_t last_stats = qpc_now();
+        RecvGap recv_gap;  // 読めるデータが途絶えたときの記録 (pump)
         while (!stop_) {
             metrics_.heartbeat_ingest();
             SRT_EPOLL_EVENT events[1];
             const int n = srt_epoll_uwait(eid, events, 1, 100);
-            if (n > 0 && ((events[0].events & SRT_EPOLL_ERR) || !pump(sock, queue_, metrics_))) break;
+            if (n > 0 && ((events[0].events & SRT_EPOLL_ERR) || !pump(sock, queue_, metrics_, recv_gap))) break;
             if (broken(sock)) break;
             if (const int64_t now = qpc_now(); now - last_stats >= qpc_from_ms(1000)) {
                 last_stats = now;

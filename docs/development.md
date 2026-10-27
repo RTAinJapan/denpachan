@@ -75,9 +75,23 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 | `ffmpeg_missing_test.sh` | FFmpeg が無いときの動きと、置いたあとの自動復帰 |
 | `package_test.sh` | 配布用の zip を展開して起動 (仮想カメラの登録、DirectShow での取り込み) |
 | `close_test.ps1` | 画面を閉じたときの確認ダイアログと、受信の停止。画面の二重起動の防止 |
+| `disruption_test.sh` | 乱れの調べ方: 送り側 (SRT / RTMP)、worker、rtmpd、全プロセスをそれぞれ止めて、`disruption_report.py` が止まった場所を言い当てること (Python を使う) |
 | `pull_test.sh <url>` | 実際のサーバーからの RTMP pull / SRT caller の受信状況 |
 
 画面の見た目は `tools/ui_screenshots/run.ps1` (engine なしで、試験用の状態を流し込んでスクリーンショットを撮る。CI でも動く)。
+
+### 乱れ (途切れ) を調べるとき
+
+全チャンネルが同時に乱れたときなど、denpachan 由来か、PC・送り側・回線由来かは、ログから見分ける (設計書 §6.3「乱れの調べ方」)。
+
+```bash
+python -E tools/testsrc/disruption_report.py <ログのフォルダ> --since "2026-11-01 20:00:00" --until "2026-11-01 21:00:00"
+```
+
+- ログのフォルダは `%LOCALAPPDATA%\denpachan\logs` (既定)。Microsoft Store 版の Python はここが見えないので、ほかの場所に写してから渡す。
+- 途切れの行と、その前後の手がかり (`stall:`、`SRT: no data ...`、`RTMP: no data ...`、`decoder: decoding one ... took`) を時刻でまとめ、件ごとに「PC 全体が止まった」「プロセスが止まった」「GPU のドライバが回復した」「モニターのつながりが変わった」「受信が読めていなかった」「デコードが遅れた」「データが届かなかった」のどれかを出す。
+- Windows のイベント (モニターの音声の出口の変化、画面の点灯・ロックの解除、GPU のドライバの回復) は、スクリプトを回した PC のものを読む。ログをほかの PC から持ってきたときは `--no-windows-events` を付けるか、乱れた PC で回す。
+- 届く間隔による途切れ (`arrival gap`) は debug のログにだけ出る。調べる間は engine を `SPDLOG_LEVEL=debug` (worker だけなら `SPDLOG_LEVEL="info,ch1=debug,ch2=debug"` など) で起動しておく。
 
 ## 画面の文言
 
