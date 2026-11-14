@@ -99,6 +99,9 @@ struct Case {
     LateFn late_ms = [](int, double, uint32_t) { return 0.0; };
     // V1: 映像だけの遅れ (音声は late_ms のまま)
     LateFn video_late_ms = [](int, double, uint32_t) { return 0.0; };
+    // V2: 映像だけの途切れ {始まり (秒), 長さ (秒)}。その間に送った映像のフレームは届かない (音声は届き続ける)。
+    // 送り側が映像だけを止めたとき、映像のパケットだけが落ちたとき
+    std::pair<double, double> video_drop = {0, 0};
     // L1: 欠落 (SRT で再送が間に合わなかった)。かたまりが届かない。単独 (loss_prob) と、まとめて (loss_burst_every_sec ごとに
     // loss_burst_chunks 個)
     double loss_prob = 0;
@@ -504,6 +507,7 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             next_video_jitter = chunk_jitter(video_rng);
             const int64_t pts_us = int64_t(vf) * frame_us;
             ++vf;
+            if (c.video_drop.second > 0 && sent >= c.video_drop.first && sent < c.video_drop.first + c.video_drop.second) continue;  // V2
             ++video_received, ++sec_video_received;
             note_video_arrival(clock, arrival);
             if (video_queue->push(SimFrame{1, pts_us, arrival})) ++video_queue_drops, ++sec_queue_drops;
@@ -1398,6 +1402,27 @@ int main(int argc, char** argv) {
                .max_reanchors = 0};
         for (const auto& [t, ms] : list) c.fps_grace.push_back({t, t + (ms > 500 ? 6 : 2)});
         cases.push_back(c);
+    }
+    {
+        // 映像だけが 3 秒途切れ、音声は揺れの中で届き続ける (実機の reanchor_test.sh と同じ)。時間軸を取り直さず、一度にも
+        // 動かさない (音声を合わせ直さない)。送り側の時計が速いと、遅延の余りが動かさない幅を少し超えた所で 1 ms ずつ
+        // 詰め続ける。そこで映像だけが途切れると、途切れの間に遅らせていないのに、明けたあとでその余り (5 ms 強) を一度に
+        // 戻して、合わせ直していた (実機では、開始直後に詰め残した 8〜9 ms を戻していた)
+        for (const auto& [ppm, at] : std::vector<std::pair<double, double>>{{0, 40}, {100, 250}, {200, 250}}) {
+            Case c{.name = fmt::format("T11. video-only 3 s gap at {:.0f} s, sender {:+.0f} ppm", at, ppm),
+                   .seconds = at + 70,
+                   .sender_ppm = ppm,
+                   .seeds = 5,
+                   .video = true,
+                   .jitter_ms = 4,
+                   .video_drop = {at, 3},
+                   .settle_sec = 20,
+                   .max_slips = 1'000'000,
+                   .max_resyncs = 1,
+                   .max_settled_jumps = 0,
+                   .max_reanchors = 0};
+            cases.push_back(c);
+        }
     }
     cases.push_back(t1("T6a. RTMP 790 ms + 62 ms outage, 30 fps", 30, 4, true));
     cases.push_back(t3("T6b. RTMP 500 ms outages every 30 s for 5 min, 30 fps", 30));
