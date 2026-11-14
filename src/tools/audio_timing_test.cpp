@@ -1373,6 +1373,32 @@ int main(int argc, char** argv) {
                .max_up_while_spare = 3};
         cases.push_back(c);
     }
+    {
+        // RTMP で小さな途切れ (TCP の再送待ちなど) が 1 分ごとに続き、ずっと「繰り返している」間に、1 回だけ 1 秒の途切れ。
+        // 備えは直近の途切れを覆う大きさに戻す (1 秒の途切れに合わせた備えを、小さな途切れが続く限り持ち続けない)。
+        // 6 時間の試験 (RTMP 1536x864) で、1 秒の途切れの後、遅延が約 1 秒のまま何時間も戻らなかった
+        std::vector<std::pair<double, double>> list;
+        // 1 秒の途切れを覆う備えは、繰り返している間は kOutageNeedMemoryMs (4 分) 保ち、その後は小さな途切れに見合う大きさに戻す
+        for (double t = 30; t < 660; t += 60) list.push_back({t, 150});
+        list.push_back({200, 1000});
+        std::sort(list.begin(), list.end());
+        Case c{.name = "T10. RTMP 150 ms outages every 60 s, one 1000 ms outage at 200 s",
+               .seconds = 660,
+               .seeds = 5,
+               .video = true,
+               .jitter_ms = 4,
+               .late_ms = stalls(list, 4),
+               .in_order = true,
+               .settle_sec = 60,
+               .max_slips = 1'000'000,
+               .max_resyncs = 1'000,
+               .delay_check = {195, 560},
+               .max_delay_growth_ms = 250,
+               .min_fps = 55,
+               .max_reanchors = 0};
+        for (const auto& [t, ms] : list) c.fps_grace.push_back({t, t + (ms > 500 ? 6 : 2)});
+        cases.push_back(c);
+    }
     cases.push_back(t1("T6a. RTMP 790 ms + 62 ms outage, 30 fps", 30, 4, true));
     cases.push_back(t3("T6b. RTMP 500 ms outages every 30 s for 5 min, 30 fps", 30));
     {
@@ -1405,7 +1431,8 @@ int main(int argc, char** argv) {
         const std::string& name = cases[i].name;
         // 途切れの後の映像 (T1〜T5) も同じ
         bool matrix = false;
-        for (const char* prefix : {"1. ", "4. ", "7. ", "10. ", "T1. ", "T1s. ", "T2. ", "T2s. ", "T3. ", "T4. ", "T5. ", "T9. "}) {
+        for (const char* prefix :
+             {"1. ", "4. ", "7. ", "10. ", "T1. ", "T1s. ", "T2. ", "T2s. ", "T3. ", "T4. ", "T5. ", "T9. ", "T10. "}) {
             matrix |= name.rfind(prefix, 0) == 0;
         }
         if (!matrix) continue;
