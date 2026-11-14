@@ -68,9 +68,11 @@
 //     前の途切れから kOutageMemoryMs 以内にまた途切れたら「繰り返している」とし、備えを途切れを覆う大きさに増やして保つ
 //     (遅延が多少増えても、毎回途切れるよりよい)。途切れのあった窓とその後 kOutageTailMs の間の窓は、包絡にも決め直しにも
 //     入れず、1 ms ずつも動かさない。映像の途切れは、フレームが届いた (デコードした) 時刻の間隔で見る (note_video_arrival)。
-//   - 音声が kHeadroomReviewMs の間遅れて届かず、途切れも繰り返していなければ、その間の窓ごとの最小の余裕の
+//   - 音声が kHeadroomReviewMs の間 (途切れではなく) 揺れで遅れて届かなければ、その間の窓ごとの最小の余裕の
 //     散らばり (時間軸の動きを差し引いたもの) に上乗せした値で決め直す (音声・映像それぞれ)。今の備えがそれより
 //     kHeadroomCutMs を超えて多ければ、一度に下げて時間軸も一度に詰める (余分な遅延を長く引きずらない)。
+//     途切れが繰り返している間も決め直すが、直近 kOutageNeedMemoryMs にあった途切れを覆う大きさ (OutageNeeds) より下げない。
+//     大きな途切れが 1 回だけで、あとは小さな途切れ (RTMP の再送待ちなど) が続くときは、小さな途切れに見合う大きさまで戻る。
 
 #include <spdlog/spdlog.h>
 
@@ -115,6 +117,8 @@ public:
         reviewed_headroom_ = 0;
         last_outage_qpc_ = 0;
         repeated_until_qpc_ = 0;
+        audio_outage_needs_.clear();
+        video_outage_needs_.clear();
         catch_up_pending_ = 0;
         anchor_locked(session, pts_us, arrival_qpc);
     }
@@ -145,7 +149,10 @@ public:
         last_video_arrival_qpc_ = arrival_qpc;
         const bool gap = prev != 0 && video_gaps_.outage(arrival_qpc - prev);
         if (!anchored_ || now_() < window_start_qpc_) return;  // 接続直後のまとめ届きの間は使わない
-        if (gap) note_outage_locked(now_());
+        if (gap) {
+            debug_.push_back(fmt::format("playout: video arrival gap {:.0f} ms (outage)", qpc_to_us(arrival_qpc - prev) / 1000.0));
+            note_outage_locked(now_());
+        }
         flush_log(lk);
     }
 
@@ -162,6 +169,7 @@ public:
         if (gap) {
             // 届く間隔が開いた: 途切れ。止まっていた間の分がまとめて届くので、続くかたまりも窓の最小に入れない
             // (揺れの備えが途切れを覆っていて遅れて届かなくても、途切れと分かるように)
+            debug_.push_back(fmt::format("playout: audio arrival gap {:.0f} ms (outage)", qpc_to_us(arrival_qpc - prev_arrival) / 1000.0));
             note_outage_locked(now);
             last_audio_late_report_qpc_ = now;
         }
@@ -174,19 +182,25 @@ public:
             // 遅れて届いた: 即座に遅らせ、同じ大きさの揺れが次は間に合うよう備えを増やす。
             // このかたまりは窓の最小には入れない (入れると、増やした備えとの差で次の調整がもう一度動かす)
             const int64_t late = -slack_qpc;
-            review_start_locked(now);  // 遅れて届いた: 揺れの備えを決め直す間を数え直す
             const char* kind = "";
             if (!settled_) {
                 // 最初の調整の前: 映像と音声の届き方の差 (同じ pts でも音声が後に届く) で、揺れではない。備えは増やさない
                 kind = " before the first adjustment";
-            } else if (outage_locked(late, now) && repeated_outages_locked(now)) {
-                // 途切れが繰り返している: 遅延が増えても途切れない方がよいので、備えをその途切れを覆う大きさにする
-                grow_headroom_locked(audio_headroom_, late, kOutageHeadroomMaxMs, now, last_audio_late_qpc_, kOutageHeadroomMaxMs);
-                kind = " (repeated outages)";
             } else if (outage_locked(late, now)) {
-                // 1 回きりの途切れ (とその直後のまとめ届き): 時間軸は遅らせるが、揺れの備えは増やさない (余りは caught up で一度に戻す)
-                kind = " (outage)";
+                // 途切れ: その途切れを覆うのに要る備えを覚える (繰り返している間の決め直しの下限。review_headroom_locked)
+                audio_outage_needs_.add(now, std::min(audio_headroom_ + late, qpc_from_ms(kOutageHeadroomMaxMs)));
+                if (repeated_outages_locked(now)) {
+                    // 途切れが繰り返している: 遅延が増えても途切れない方がよいので、備えをその途切れを覆う大きさにする
+                    grow_headroom_locked(audio_headroom_, late, kOutageHeadroomMaxMs, now, last_audio_late_qpc_, kOutageHeadroomMaxMs);
+                    kind = " (repeated outages)";
+                } else {
+                    // 1 回きりの途切れ (とその直後のまとめ届き): 時間軸は遅らせるが、揺れの備えは増やさない (余りは caught up で一度に戻す)
+                    kind = " (outage)";
+                }
             } else {
+                // 揺れで遅れて届いた: 揺れの備えを決め直す間を数え直す。途切れでは数え直さない (途切れが 1 分ごとに続くと、
+                // 決め直しが来ず、大きな途切れに合わせた備えを持ち続けた)
+                review_start_locked(now);
                 grow_headroom_locked(audio_headroom_, late, kAudioHeadroomMaxMs, now, last_audio_late_qpc_, kHeadroomGrowMaxMs);
                 // 備えが、測った揺れ (直近の窓のずれの散らばり) の半分より小さければ、そこまで増やす。遅れた分ずつでは、
                 // 揺れの大きい回線で備えが小さいまま遅れて届き続け、決め直す (review_headroom_locked) 間も取れなかった
@@ -458,13 +472,15 @@ private:
                 // 映像が 3 フレームを超えて遅れた: 遅れた分だけ一度に遅らせ、備えを増やす (音声は合わせ直しになる)
                 step = -video_lateness;
                 reason = "video late";
-                if (outage_locked(video_lateness, now) && repeated_outages_locked(now)) {
+                const bool outage = outage_locked(video_lateness, now);
+                if (outage) video_outage_needs_.add(now, std::min(video_headroom_ + video_lateness, qpc_from_ms(kOutageHeadroomMaxMs)));
+                if (outage && repeated_outages_locked(now)) {
                     grow_headroom_locked(video_headroom_, video_lateness, kOutageHeadroomMaxMs, now, last_video_late_qpc_,
                                          kOutageHeadroomMaxMs);
                     log_.push_back(
                         fmt::format("playout: video arrived {:.1f} ms late (repeated outages); delay increased, video headroom {:.0f} ms",
                                     qpc_to_us(video_lateness) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
-                } else if (outage_locked(video_lateness, now)) {
+                } else if (outage) {
                     log_.push_back(
                         fmt::format("playout: video arrived {:.1f} ms late (outage); delay increased, video headroom kept {:.0f} ms",
                                     qpc_to_us(video_lateness) / 1000.0, qpc_to_us(video_headroom_) / 1000.0));
@@ -595,8 +611,13 @@ private:
     // 返す (0 = 下げない)
     int64_t review_headroom_locked(int64_t now) {
         if (now - review_start_qpc_ < qpc_from_ms(kHeadroomReviewMs)) return 0;
-        // 途切れが繰り返している間は決め直さない (その間も数え続け、止んだらすぐ決め直して、余りを 1 回で戻す)
-        if (repeated_outages_locked(now)) return 0;
+        // 途切れが繰り返している間も決め直す。ただし、直近 kOutageNeedMemoryMs にあった途切れを覆う大きさより下げない
+        // (繰り返している間は、その途切れに備えたい)。前は繰り返している間は決め直さなかったので、小さな途切れ
+        // (RTMP の再送待ちなど) が 2 分以内ごとに続くと「繰り返している」が明けず、1 回きりの大きな途切れに合わせた備えを
+        // 何時間も持ち続けた (6 時間の試験で、1 秒の途切れの後、遅延が約 1 秒のまま戻らなかった)
+        const bool repeated = repeated_outages_locked(now);
+        const int64_t audio_floor = repeated ? audio_outage_needs_.max_since(now - qpc_from_ms(kOutageNeedMemoryMs)) : 0;
+        const int64_t video_floor = repeated ? video_outage_needs_.max_since(now - qpc_from_ms(kOutageNeedMemoryMs)) : 0;
         const int enough = int(kHeadroomReviewMs / 1000 / 2);
         const bool audio = review_windows_ >= enough;
         const bool video = review_video_windows_ >= enough;
@@ -610,7 +631,7 @@ private:
         };
         int64_t cut = 0;
         if (audio) {
-            const int64_t n = needed(audio_spread, qpc_from_ms(kAudioHeadroomMinMs));
+            const int64_t n = needed(audio_spread, std::max(qpc_from_ms(kAudioHeadroomMinMs), audio_floor));
             reviewed_headroom_ = n;  // 少しずつ減らすのも、ここまで (decay_headroom_locked)
             if (audio_headroom_ - n > qpc_from_ms(kHeadroomCutMs)) {
                 cut = audio_headroom_ - n;
@@ -618,8 +639,9 @@ private:
             }
         }
         if (video) {
-            // 映像の備えは、繰り返す途切れのときだけ大きくなる。途切れが止んだら、映像の揺れに見合う大きさに戻す
-            const int64_t n = needed(video_spread, 0);
+            // 映像の備えは、繰り返す途切れのときだけ大きくなる。途切れが止んだら (大きな途切れが kOutageMemoryMs なければ)、
+            // 映像の揺れ (と直近の途切れ) に見合う大きさに戻す
+            const int64_t n = needed(video_spread, video_floor);
             if (video_headroom_ - n > qpc_from_ms(kHeadroomCutMs)) {
                 cut = std::max(cut, video_headroom_ - n);
                 video_headroom_ = n;
@@ -803,6 +825,14 @@ private:
     // 最後の途切れからこの間が過ぎたら、備えを決め直して一度に詰められる (途切れが止んでから 3 分以内に戻すため、
     // 決め直しの kHeadroomReviewMs と合わせて 3 分に収まる長さ)
     static constexpr int64_t kOutageMemoryMs = 120'000;
+    // 途切れを覆うのに要った備えを覚えておく数 (OutageNeeds)。kOutageMemoryMs の間に起きうる途切れの数より多く
+    // (途切れの続きは kOutageTailMs の間まとめて 1 回なので、2 分に 40 回を超えることはない)
+    static constexpr int kOutageNeeds = 64;
+    // 繰り返している間の決め直しで、途切れを覆うのに要った備えを見る長さ。映像が遅れる途切れは、音声ほど毎回は起きない
+    // (300〜800 ms の途切れが 30 秒ごとでも、映像が遅れたのは 2 分以上空いて 2 回)。kOutageMemoryMs だけでは、繰り返している
+    // 最中に映像の備えを下げ、次の途切れでまた増やして、一度に動かすのが増えた。止んだ後 (繰り返しが明けた後) の決め直しは
+    // これを見ないので、戻る速さは変わらない
+    static constexpr int64_t kOutageNeedMemoryMs = 2 * kOutageMemoryMs;
     // 繰り返す途切れに合わせて増やす備えの上限。数百 ms の途切れ (RTMP の再送待ち) を覆える大きさ
     static constexpr int64_t kOutageHeadroomMaxMs = 1'000;
     // 届く速さが足りないとみなす: 1 窓で、届いたかたまりの kShortfallLatePercent % 以上 (かつ kShortfallMinLates 個以上) が
@@ -884,6 +914,30 @@ private:
     };
     GapTracker audio_gaps_;
     GapTracker video_gaps_;
+
+    // 途切れを覆うのに要った備え (その時の備え + 遅れ) を、時刻と一緒に覚える (音声・映像それぞれ、直近 kOutageNeeds 回)。
+    // 繰り返している間の決め直しで、直近 kOutageNeedMemoryMs のものの最大より下げない (review_headroom_locked)
+    struct OutageNeeds {
+        int64_t at[kOutageNeeds] = {};
+        int64_t need[kOutageNeeds] = {};
+        int next = 0;
+
+        void add(int64_t now, int64_t n) {
+            at[next] = now;
+            need[next] = n;
+            next = (next + 1) % kOutageNeeds;
+        }
+        int64_t max_since(int64_t since) const {
+            int64_t m = 0;
+            for (int i = 0; i < kOutageNeeds; ++i) {
+                if (at[i] != 0 && at[i] >= since) m = std::max(m, need[i]);
+            }
+            return m;
+        }
+        void clear() { *this = OutageNeeds{}; }
+    };
+    OutageNeeds audio_outage_needs_;
+    OutageNeeds video_outage_needs_;
     int64_t review_start_qpc_ = 0;    // 揺れの備えを決め直す間の始まり (review_headroom_locked)
     int64_t review_min_ = LLONG_MAX;  // その間の、窓の最小の音声の余裕 - anchor_qpc_ の最小と最大
     int64_t review_max_ = LLONG_MIN;
