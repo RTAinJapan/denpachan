@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "denpachan/crash_dump.h"
+#include "denpachan/stall_watch.h"
 #include "denpachan/worker_status.h"
 
 using namespace denpachan;
@@ -104,6 +105,7 @@ int main(int argc, char** argv) {
         return 1;  // engine が間隔を空けて再起動する
     }
 
+    StallWatch stall_watch("rtmpd");  // プロセスが止まったら記録する (乱れの調べ方)
     HANDLE handles[2] = {g_stop_event.get(), engine_stop.get()};
     int ticks = 0;
     while (WaitForMultipleObjects(2, handles, FALSE, 200) == WAIT_TIMEOUT) {

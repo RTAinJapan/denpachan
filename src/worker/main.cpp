@@ -25,6 +25,7 @@
 #include "byte_queue.h"
 #include "denpachan/crash_dump.h"
 #include "denpachan/ffmpeg_runtime.h"
+#include "denpachan/stall_watch.h"
 #include "denpachan/worker_status.h"
 #include "decoder.h"
 #include "filename.h"
@@ -175,7 +176,7 @@ void setup_logging(const Options& o) {
 // 1 秒ごとのメトリクス出力 (ログと、engine に見せる共有メモリ)
 class MetricsReporter {
 public:
-    explicit MetricsReporter(ChannelMetrics& m) : m_(m) {}
+    MetricsReporter(ChannelMetrics& m, StallWatch& stall) : m_(m), stall_(stall) {}
 
     void report() {
         const uint64_t bytes = m_.bytes_in.load();
@@ -194,16 +195,18 @@ public:
         const float peak_l = m_.audio_peak_l.exchange(0);
         const float peak_r = m_.audio_peak_r.exchange(0);
         auto dbfs = [](float v) { return v > 1e-5f ? 20.0 * std::log10(v) : -100.0; };
+        // この 1 秒で、プロセスが動けなかった最大 (StallWatch)。乱れたときに、プロセスが止まっていたかを見る
+        const int64_t stall_ms = stall_.take_max_ms();
         if (m_.connected) {
             spdlog::info(
                 "{} {} {}x{} {} | {:.2f} Mbps | dec {} fps, out {} fps, delay {} ms | drop late {} queue {} | "
                 "err {} | audio {} Hz peak {:.1f}/{:.1f} dBFS gaps {} delay {} ms a/v {:+} ms | "
-                "srt latency {} ms rtt {:.1f} ms buf {} ms lost {} retrans {} drop {}",
+                "srt latency {} ms rtt {:.1f} ms buf {} ms lost {} retrans {} drop {} | stall {} ms",
                 peer, codec, m_.width.load(), m_.height.load(), m_.hw_decode ? "hw" : "sw", double(bytes - last_bytes_) * 8 / 1e6,
                 decoded - last_decoded_, presented - last_presented_, m_.delay_us.load() / 1000, m_.frames_dropped_late.load(),
                 m_.frames_dropped_queue.load(), m_.decode_errors.load(), audio_frames - last_audio_frames_, dbfs(peak_l), dbfs(peak_r),
                 m_.audio_gaps.load(), m_.audio_delay_us.load() / 1000, m_.av_offset_us.load() / 1000, srt.tsbpd_delay_ms, srt.rtt_ms,
-                srt.rcv_buf_ms, srt.lost_total, srt.retrans_total, srt.dropped_total);
+                srt.rcv_buf_ms, srt.lost_total, srt.retrans_total, srt.dropped_total, stall_ms);
         }
 
         if (m_.status) {
@@ -267,6 +270,7 @@ public:
 
 private:
     ChannelMetrics& m_;
+    StallWatch& stall_;
     uint64_t last_bytes_ = 0;
     uint64_t last_decoded_ = 0;
     uint64_t last_presented_ = 0;
@@ -409,7 +413,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    MetricsReporter reporter(metrics);
+    StallWatch stall_watch("worker ch" + std::to_string(opts->ch));
+    MetricsReporter reporter(metrics, stall_watch);
     HANDLE stop_handles[2] = {g_stop_event.get(), engine_stop.get()};
     // 録画の設定は 100 ms ごとに見る (オン・オフをすぐ反映する)。状態の報告は 1 秒ごと。
     int64_t next_report = qpc_now() + qpc_from_ms(1000);

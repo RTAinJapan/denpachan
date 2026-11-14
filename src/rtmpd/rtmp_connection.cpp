@@ -18,6 +18,7 @@ constexpr uint32_t kOutChunkSize = 4096;
 constexpr uint32_t kWindowAckSize = 2'500'000;
 constexpr uint32_t kPublishStreamId = 1;
 constexpr size_t kMaxChunkStreams = 64;  // 1 接続あたりのチャンクストリーム数 (送出側は数個しか使わない)
+constexpr int64_t kRecvGapLogMs = 300;   // publish 中にデータがこれを超えて途絶えたら記録する (recv_exact)
 
 // メッセージ種別
 constexpr uint8_t kSetChunkSize = 1;
@@ -97,6 +98,19 @@ bool Connection::recv_exact(uint8_t* buf, size_t n) {
             }
         }
         if (r > 0) {
+            // データが kRecvGapLogMs を超えて途絶えた後: そのとき TCP に溜まっていた量を記録する (乱れの調べ方。設計書 §6.3)。
+            // 途絶えている間も届いていた (= rtmpd が読めなかった) なら、途絶えた長さに近い分が溜まっている。届いて
+            // いなかった (送り側・回線) なら、溜まっているのは少しだけ
+            if (publishing_ && last_data_qpc_ != 0 && now - last_data_qpc_ > qpc_from_ms(kRecvGapLogMs)) {
+                u_long pending = 0;
+                ioctlsocket(sock_, FIONREAD, &pending);
+                const uint64_t waiting = uint64_t(r) + pending;
+                // 溜まっていた量が何 ms 分の配信か (接続してからの平均のビットレートで)
+                const double elapsed_s = double(qpc_to_us(last_data_qpc_ - connected_qpc_)) / 1e6;
+                const double bytes_per_ms = elapsed_s > 1 ? double(total_in_) / elapsed_s / 1000 : 0;
+                spdlog::info("RTMP: no data from {} for {} ms, then {} KB waiting in TCP (about {:.0f} ms of the stream)", peer_,
+                             qpc_to_us(now - last_data_qpc_) / 1000, waiting / 1024, bytes_per_ms > 0 ? double(waiting) / bytes_per_ms : 0);
+            }
             buf += r;
             n -= size_t(r);
             last_data_qpc_ = now;
