@@ -120,6 +120,8 @@ public:
         audio_outage_needs_.clear();
         video_outage_needs_.clear();
         catch_up_pending_ = 0;
+        catch_up_limit_ = LLONG_MAX;
+        outage_delay_ = 0;
         anchor_locked(session, pts_us, arrival_qpc);
     }
 
@@ -189,6 +191,7 @@ public:
             } else if (outage_locked(late, now)) {
                 // 途切れ: その途切れを覆うのに要る備えを覚える (繰り返している間の決め直しの下限。review_headroom_locked)
                 audio_outage_needs_.add(now, std::min(audio_headroom_ + late, qpc_from_ms(kOutageHeadroomMaxMs)));
+                outage_delay_ += late;  // 明けたら、遅らせた分まで一度に戻す
                 if (repeated_outages_locked(now)) {
                     // 途切れが繰り返している: 遅延が増えても途切れない方がよいので、備えをその途切れを覆う大きさにする
                     grow_headroom_locked(audio_headroom_, late, kOutageHeadroomMaxMs, now, last_audio_late_qpc_, kOutageHeadroomMaxMs);
@@ -401,8 +404,17 @@ private:
             // 790 ms の後は戻せないまま遅延が待ち行列を超えてコマ送りになった)
             const bool after_outage = window_outage_ || window_start_qpc_ < tail_end;
             // 明けたら、次の窓で余りを一度に戻す (3 フレームに届かない余りも。2 窓続くのを待たない: 途切れより前の窓も包絡に
-            // 入っているので、揺れの良い窓だけで余って見えることはない)。途切れが繰り返している間は戻さない (備えを保つ)
-            if (tail_ended && !repeated_outages_locked(now)) catch_up_pending_ = std::max(catch_up_pending_, 2);
+            // 入っているので、揺れの良い窓だけで余って見えることはない)。途切れが繰り返している間は戻さない (備えを保つ)。
+            // 一度に戻すのは、途切れの間に時間軸を遅らせた分まで。遅らせなかったとき (映像だけが途切れ、音声は間に合って届いた、
+            // など) は戻さない: それを超える余りは途切れによるものではなく、一度に戻すと数 ms でも engine の合わせ直しになる
+            // (1 ms ずつ詰めれば重複・間引きで済む。映像だけの途切れの後に、揺れの 8 ms を一度に戻して合わせ直していた)
+            if (tail_ended) {
+                if (outage_delay_ > 0 && !repeated_outages_locked(now)) {
+                    catch_up_pending_ = std::max(catch_up_pending_, 2);
+                    catch_up_limit_ = outage_delay_;
+                }
+                outage_delay_ = 0;
+            }
             // 帯域不足から追いついた窓も入れない (この窓の映像の余裕は、遅く届いていた間のもので小さい。入れると、
             // 追いついた後に戻す余りがその分だけ残り、その窓が包絡から抜けるまで約 2 分戻らなかった)
             const bool shortfall_window = shortfall_ || window_shortfall_;
@@ -410,6 +422,7 @@ private:
                 // 追いついた: 帯域不足のときに増やした備えを戻す (余りは caught up で一度に戻す)
                 shortfall_ = false;
                 catch_up_pending_ = kCatchUpWindows + 1;
+                catch_up_limit_ = LLONG_MAX;
                 audio_headroom_ = std::min(audio_headroom_, shortfall_headroom_);
                 log_.push_back(
                     fmt::format("playout: audio caught up after arriving slower than real time; audio headroom back to {:.0f} ms",
@@ -451,11 +464,13 @@ private:
             } else if (excess_windows_ >= kCatchUpWindows || (catch_up_pending_ > 0 && excess > band_)) {
                 // 遅延の余りが続いている (短い途切れのあとのまとめ届きなど): 一度に戻す。帯域不足から追いついた直後は、
                 // 3 フレームに届かない余りも一緒に戻す (追いつくときに一度合わせ直すので、そのあと何十秒も 1 ms ずつ詰めない)
-                step = excess;
+                // 途切れが明けた後は、その途切れで遅らせた分まで (catch_up_limit_。余りが続いて戻すときは全部)
+                step = excess_windows_ >= kCatchUpWindows ? excess : std::min(excess, catch_up_limit_);
                 excess_windows_ = 0;
                 catch_up_pending_ = 0;
+                catch_up_limit_ = LLONG_MAX;
                 reason = "catch up";
-                log_.push_back(fmt::format("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(excess) / 1000.0));
+                log_.push_back(fmt::format("playout: delay {:.1f} ms more than needed; caught up", qpc_to_us(step) / 1000.0));
             } else if (const int64_t cut = review_headroom_locked(now); cut > 0) {
                 // 揺れの備えを、実際の揺れに合わせて一度に下げた (review_headroom_locked): 余った遅延も一度に詰める
                 // (engine は 1 回合わせ直す)。映像側の余裕が足りなければ、その分は詰めない
@@ -473,7 +488,10 @@ private:
                 step = -video_lateness;
                 reason = "video late";
                 const bool outage = outage_locked(video_lateness, now);
-                if (outage) video_outage_needs_.add(now, std::min(video_headroom_ + video_lateness, qpc_from_ms(kOutageHeadroomMaxMs)));
+                if (outage) {
+                    video_outage_needs_.add(now, std::min(video_headroom_ + video_lateness, qpc_from_ms(kOutageHeadroomMaxMs)));
+                    outage_delay_ += video_lateness;  // 明けたら、遅らせた分まで一度に戻す
+                }
                 if (outage && repeated_outages_locked(now)) {
                     grow_headroom_locked(video_headroom_, video_lateness, kOutageHeadroomMaxMs, now, last_video_late_qpc_,
                                          kOutageHeadroomMaxMs);
@@ -947,13 +965,15 @@ private:
     int review_video_windows_ = 0;
     int window_audio_reports_ = 0;  // この窓で届いた音声のかたまりと、そのうち遅れて届いたもの
     int window_audio_lates_ = 0;
-    int64_t window_audio_late_sum_ = 0;  // そのうち遅れた量の合計
-    bool window_outage_ = false;         // この窓で途切れた (push_history_locked)
-    bool shortfall_ = false;             // 帯域不足で遅らせてから、追いつくまで
-    bool output_stopped_ = false;        // engine の出力が鳴っていない (note_output_stopped から restart_after_output_gap まで)
-    bool window_shortfall_ = false;      // この窓で帯域不足とみなした
-    int64_t shortfall_headroom_ = 0;     // 帯域不足で増やす前の音声の揺れの備え
-    int catch_up_pending_ = 0;           // 帯域不足から追いついた: この窓数のうちに余りを一度に戻す
+    int64_t window_audio_late_sum_ = 0;   // そのうち遅れた量の合計
+    bool window_outage_ = false;          // この窓で途切れた (push_history_locked)
+    bool shortfall_ = false;              // 帯域不足で遅らせてから、追いつくまで
+    bool output_stopped_ = false;         // engine の出力が鳴っていない (note_output_stopped から restart_after_output_gap まで)
+    bool window_shortfall_ = false;       // この窓で帯域不足とみなした
+    int64_t shortfall_headroom_ = 0;      // 帯域不足で増やす前の音声の揺れの備え
+    int catch_up_pending_ = 0;            // 帯域不足から追いついた: この窓数のうちに余りを一度に戻す
+    int64_t catch_up_limit_ = LLONG_MAX;  // catch_up_pending_ の間に一度に戻す上限 (途切れの後は、その途切れで遅らせた分)
+    int64_t outage_delay_ = 0;            // いまの途切れの間に時間軸を遅らせた量 (明けたらここまで一度に戻す)
     int64_t window_audio_headroom_ = qpc_from_ms(kAudioHeadroomMinMs);  // この窓の始めの音声の揺れの備え
     int64_t band_ = qpc_from_ms(kDeadbandMs);                           // 動かさない幅 (update_band_locked)
     int windows_since_move_ = kStepWindows;                             // 前に時間軸を 1 ms ずつの調整などで動かしてからの窓の数
