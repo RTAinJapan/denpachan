@@ -373,6 +373,7 @@ json Engine::metrics_hello() {
             {"version", DENPACHAN_VERSION},
             {"channelCount", config_.general.channel_count},
             {"allowControl", config_.general.metrics.allow_control},
+            {"allowConfigure", config_.general.metrics.allow_control && config_.general.metrics.allow_configure},
             {"intervalMs", 1000}};
 }
 
@@ -393,17 +394,28 @@ json Engine::handle_remote(const std::string& method, const json& params) {
     static const std::set<std::string> control = {"startChannel", "stopChannel", "setRecording", "patchChannel"};
     if (!control.count(method)) throw std::runtime_error("method not allowed: " + method);
     const int ch = channel_param(params);
+    bool allow_configure = false;
     {
         std::lock_guard lk(mutex_);
         if (!config_.general.metrics.allow_control) throw std::runtime_error("control is disabled (metrics.allowControl is off)");
         if (!config_.channels[size_t(ch - 1)].test_slot) {
             throw std::runtime_error("ch" + std::to_string(ch) + " is not a test slot (testSlot is off)");
         }
+        allow_configure = config_.general.metrics.allow_configure;
     }
     if (method == "patchChannel") {
-        // 変えてよいのは latency と名前だけ (ポート・パスフレーズ・録画先などは画面で決める)
+        // 変えてよいのは latency と名前だけ (ポート・パスフレーズ・録画先などは画面で決める)。
+        // allowConfigure が on なら、受信の設定 (source の中) も変えられる: bot が、フローの出力や RTMP サーバに合わせて
+        // 設定を入れる。source の外 (録画先、音声の出力先、仮想カメラ、配信テスト用の印) は、on でも変えられない。
+        // 値が正しいか (ポートの重複、パスフレーズの長さなど) は、画面からの変更と同じ validate が見る
         const json& patch = params.at("patch");
-        const auto refuse = [] { throw std::runtime_error("only name and source.latencyMs can be changed"); };
+        const auto refuse = [&] {
+            throw std::runtime_error(allow_configure ? "only name and source.* can be changed"
+                                                     : "only name and source.latencyMs can be changed (metrics.allowConfigure is off)");
+        };
+        // source の中で変えられる項目と、その型
+        static const std::set<std::string> source_strings = {"protocol", "mode", "host", "passphrase", "streamId", "app", "key", "url"};
+        static const std::set<std::string> source_integers = {"port", "latencyMs", "pbkeylen"};
         if (!patch.is_object()) refuse();
         for (const auto& [key, value] : patch.items()) {
             if (key == "name") {
@@ -411,7 +423,17 @@ json Engine::handle_remote(const std::string& method, const json& params) {
             } else if (key == "source") {
                 if (!value.is_object()) refuse();
                 for (const auto& [skey, svalue] : value.items()) {
-                    if (skey != "latencyMs" || !svalue.is_number_integer()) refuse();
+                    if (skey == "latencyMs") {
+                        if (!svalue.is_number_integer()) refuse();
+                    } else if (!allow_configure) {
+                        refuse();
+                    } else if (source_strings.count(skey)) {
+                        if (!svalue.is_string()) refuse();
+                    } else if (source_integers.count(skey)) {
+                        if (!svalue.is_number_integer()) refuse();
+                    } else {
+                        refuse();
+                    }
                 }
             } else {
                 refuse();

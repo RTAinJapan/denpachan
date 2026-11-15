@@ -73,6 +73,9 @@ struct MetricsConfig {
     int port = 9100;
     std::string token;  // 空なら認証なし (loopback に bind するときだけ許す)
     bool allow_control = false;
+    // 配信テスト用のチャンネルの受信の設定 (方式、接続先、ポート、パスフレーズ、キー、URL) を、受信口から変えることを許す。
+    // bot がフローの出力や RTMP サーバに合わせて設定を入れるためのもの。allow_control も on のときだけ効く
+    bool allow_configure = false;
 
     bool operator==(const MetricsConfig&) const = default;
 };

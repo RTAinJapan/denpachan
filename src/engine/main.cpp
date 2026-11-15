@@ -184,6 +184,7 @@ int wmain(int argc, wchar_t** argv) {
     auto apply_metrics = [&] {
         MetricsConfig m = engine.metrics_config();
         m.allow_control = false;  // 操作を許すかは要求ごとに見るので、開き直さない
+        m.allow_configure = false;
         const bool changed = !ws_applied || !(m == ws_config);
         if (!changed && (!m.enabled || ws.running() || qpc_now() < ws_retry_qpc)) return;
         if (changed) ws.stop();

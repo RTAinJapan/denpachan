@@ -101,7 +101,7 @@ bot がここから使うのは: 受信の状態 (繋がっている、映像が
 `general.metrics` を足す (全体設定の画面にも出す)。
 
 ```json
-"metrics": { "enabled": false, "bind": "127.0.0.1", "port": 9100, "tokenProtected": "", "allowControl": false }
+"metrics": { "enabled": false, "bind": "127.0.0.1", "port": 9100, "tokenProtected": "", "allowControl": false, "allowConfigure": false }
 ```
 
 | 項目 | 内容 |
@@ -110,6 +110,7 @@ bot がここから使うのは: 受信の状態 (繋がっている、映像が
 | `bind` / `port` | 既定は loopback の 9100 (SRT の 9001〜9008 と離す)。RTMP サーバ (`rtmpServer.port`) と同じポートは設定を受け付けない。別の PC の bot から繋ぐなら `0.0.0.0` |
 | `token` | 共有の秘密 (16〜128 文字、空白と制御文字なし)。**loopback 以外に bind するときは必須** (無ければ設定を受け付けない。設定ファイルを直接書き換えて無い状態になっていたら、engine は待ち受けずにログに出す)。パスフレーズと同じく DPAPI で保存する (`tokenProtected`)。IPC では返さず、設定済みかどうか (`hasToken`) だけ返す。画面に「作り直す」ボタン (32 バイトの乱数、Base64url。保存するまでの間だけ表示) |
 | `allowControl` | 操作のメソッド (下) を許すか。既定 off (読むだけ)。bot にチャンネルと録画の開始・停止をさせるなら on。on でも、操作できるのは「配信テスト用」のチャンネルだけ。変えても受信口は開き直さない (要求ごとに見る) |
+| `allowConfigure` | 「配信テスト用」のチャンネルの**受信の設定** (方式、caller / listener、接続先、ポート、パスフレーズ、RTMP のキー、pull の URL) を、bot から変えることを許すか。既定 off。`allowControl` も on のときだけ効く。bot が、MediaConnect のフローの出力や RTMP サーバに合わせて設定を入れるためのもの (人が画面で合わせると、SRT と RTMP、caller と listener を取り違えやすい)。on でも、受信の設定の外 (録画先、音声の出力先、仮想カメラ、「配信テスト用」の印) は変えられない |
 
 設定が変わると engine は受信口を開き直す。ポートが使われているなどで待ち受けられなければ、10 秒ごとにやり直す。
 
@@ -181,10 +182,10 @@ bot は denpachan の区間の数字を判定には使わず、記録 (運営の
 `hello`:
 
 ```json
-{ "event": "hello", "version": "0.2.0", "channelCount": 4, "allowControl": true, "intervalMs": 1000 }
+{ "event": "hello", "version": "0.2.0", "channelCount": 4, "allowControl": true, "allowConfigure": false, "intervalMs": 1000 }
 ```
 
-`channelCount` は全体設定のチャンネル数、`allowControl` は今の設定の値。
+`channelCount` は全体設定のチャンネル数、`allowControl` は今の設定の値。`allowConfigure` は、受信の設定を変えられるか (`allowControl` と `allowConfigure` の両方が on のとき true)。この項目が無い版の engine は、受信の設定を変えられない。
 
 #### メソッド (要求 / 応答)
 
@@ -195,7 +196,14 @@ bot は denpachan の区間の数字を判定には使わず、記録 (運営の
 | 読む | `getState`、`getConfig` (IPC 形。RTMP のキーと pull の URL は外して `hasKey` / `hasUrl` だけ、受信口のトークンは `hasToken` だけ)、`getChannels` (`channels` と同じ内容を 1 回) | いつでも |
 | 操作 | `startChannel`、`stopChannel`、`setRecording` (`enabled` は bool)、`patchChannel` | `allowControl` が on で、**対象のチャンネルが `testSlot`** のとき (でなければ `error`) |
 
-`patchChannel` は bot が壊せる範囲を狭める: **`source.latencyMs` と `name` だけ**を受け付ける (他の項目が入っていれば `error`)。応答のチャンネルの設定からも秘密は外す。MediaConnect 経由では bot が denpachan の latency を変える必要はほぼ無いが、MediaConnect → denpachan の区間が悪いときに運営が `/techcheck latency-receiver` で上げられるよう残す。SRT の枠と RTMP の枠は別のチャンネルにしておき、bot はプロトコルの切り替えでチャンネルの設定を変えない。
+`patchChannel` は bot が壊せる範囲を狭める: **`source.latencyMs` と `name` だけ**を受け付ける (他の項目が入っていれば `error`)。応答のチャンネルの設定からも秘密は外す。
+
+`allowConfigure` も on なら、`patchChannel` は **`source` の中の項目**も受け付ける: `protocol`、`mode`、`host`、`port`、`latencyMs`、`passphrase`、`pbkeylen`、`streamId`、`app`、`key`、`url`。文字の項目は文字列、数の項目は整数でなければ `error`。値が正しいか (ポートの重複、パスフレーズの長さなど) は、画面からの変更と同じ検証で見る。`source` の外の項目は、on でも `error`。受信の設定を変えると、動いている worker は新しい設定で起動し直す (bot は、チャンネルを開始する前に入れる)。
+
+```json
+{ "id": 2, "method": "patchChannel", "params": { "ch": 3, "patch": { "source": {
+    "protocol": "srt", "mode": "caller", "host": "203.0.113.5", "port": 30001, "latencyMs": 120, "passphrase": "" } } } }
+```MediaConnect 経由では bot が denpachan の latency を変える必要はほぼ無いが、MediaConnect → denpachan の区間が悪いときに運営が `/techcheck latency-receiver` で上げられるよう残す。SRT の枠と RTMP の枠は別のチャンネルにしておき、bot はプロトコルの切り替えでチャンネルの設定を変えない。
 
 #### 実装 (engine)
 

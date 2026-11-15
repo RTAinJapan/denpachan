@@ -86,6 +86,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <CheckBox x:Name="MetricsEnabledBox" Grid.ColumnSpan="2" Content="{l:Tr general.metricsEnabled}" />
                 <Label Grid.Row="1" Content="{l:Tr general.metricsBind}" VerticalAlignment="Center" />
@@ -101,6 +102,10 @@
                 <TextBlock x:Name="MetricsTokenHint" Grid.Row="4" Grid.Column="1" Style="{StaticResource DimText}" FontSize="12"
                            TextWrapping="Wrap" Margin="0,0,0,4" />
                 <CheckBox x:Name="MetricsAllowControlBox" Grid.Row="5" Grid.ColumnSpan="2" Content="{l:Tr general.metricsAllowControl}" />
+                <!-- 操作を許しているときだけ効く (engine の側でも見る)。字下げして、上の項目の一部だと分かるようにする -->
+                <CheckBox x:Name="MetricsAllowConfigureBox" Grid.Row="6" Grid.ColumnSpan="2" Margin="20,4,0,0"
+                          Content="{l:Tr general.metricsAllowConfigure}"
+                          IsEnabled="{Binding IsChecked, ElementName=MetricsAllowControlBox}" />
             </Grid>
         </GroupBox>
         <TextBlock Text="{l:Tr general.metricsNote}" Style="{StaticResource DimText}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />

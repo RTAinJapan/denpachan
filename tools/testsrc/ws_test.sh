@@ -5,6 +5,7 @@
 # 1. basic: hello と channels (1 秒ごと)、読むメソッド (getConfig は秘密を外す)、操作の拒否 (allowControl off)、
 #    壊れた JSON、ping / pong、close の応答 (1000)
 # 2. control: allowControl on でも、配信テスト用の印 (testSlot) の無いチャンネルと、name / source.latencyMs 以外の変更は断る
+#    2b. configure: allowConfigure も on なら、印のあるチャンネルの受信の設定 (source の中) は変えられる。source の外は断る
 # 3. limits: /ws 以外は 404、ブラウザ (Origin 付き) は 403、9 本目は 503
 # 4. token: トークン無し / 違うトークンは 401、Bearer と ?token= で繋がる
 # 5. idle: ping は 10 秒ごと、pong を返さない相手は 30 秒で切る
@@ -66,6 +67,15 @@ echo "==== 2. control (allowControl on)"
 "$CTL" set-general '{"metrics":{"allowControl":true}}' >/dev/null
 sleep 1
 phase control
+echo "==== 2b. configure (allowConfigure on)"
+"$CTL" set-general '{"metrics":{"allowConfigure":true}}' >/dev/null
+sleep 1
+phase configure
+"$CTL" set-general '{"metrics":{"allowControl":false}}' >/dev/null
+sleep 1
+phase configure-off
+"$CTL" set-general '{"metrics":{"allowControl":true,"allowConfigure":false}}' >/dev/null
+sleep 1
 echo "==== 3. limits"
 phase limits
 echo "==== 4. token"

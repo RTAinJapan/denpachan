@@ -42,7 +42,8 @@ public:
     nlohmann::json metrics_hello();
     // 受信口からの要求。読むもの (getState / getConfig / getChannels) はいつでも、操作 (startChannel / stopChannel /
     // setRecording / patchChannel) は allowControl が on で、対象が配信テスト用のチャンネル (testSlot) のときだけ通す。
-    // patchChannel は source.latencyMs と name だけを受け付ける。エラーは例外で返す
+    // patchChannel は source.latencyMs と name だけを受け付ける。allowConfigure も on なら、受信の設定 (source の中の
+    // 方式、接続先、ポート、パスフレーズ、キー、URL) も受け付ける。エラーは例外で返す
     nlohmann::json handle_remote(const std::string& method, const nlohmann::json& params);
     // stop_workers = false なら worker は動かしたまま終わる (engine を入れ替えるとき用)
     void shutdown(bool stop_workers);

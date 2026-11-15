@@ -2,6 +2,8 @@
 
     python -E tools/testsrc/ws_test.py <port> basic            hello / channels、読むメソッド、操作の拒否、ping、close
     python -E tools/testsrc/ws_test.py <port> control          allowControl on のときの操作の制限 (ch1 に testSlot が要る)
+    python -E tools/testsrc/ws_test.py <port> configure        allowConfigure on のときの受信の設定の変更 (ch1 に testSlot が要る)
+    python -E tools/testsrc/ws_test.py <port> configure-off    allowControl が off なら allowConfigure は効かない
     python -E tools/testsrc/ws_test.py <port> limits           404 / 403 (Origin) / 503 (9 本目)
     python -E tools/testsrc/ws_test.py <port> token <token>    401、Bearer と ?token=
     python -E tools/testsrc/ws_test.py <port> idle             ping の間隔、pong を返さない相手を切るまで (約 30 秒、最大 45 秒)
@@ -156,6 +158,59 @@ async def control():
         check("12. stopChannel が通る", "result" in r, str(r)[:160])
 
 
+async def configure():
+    """allowConfigure on: 配信テスト用のチャンネルの受信の設定 (source の中) を変えられる。source の外は変えられない"""
+    async with connect(URL, open_timeout=5) as ws:
+        hello = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        check("1. hello の allowConfigure が true", hello.get("allowConfigure") is True, json.dumps(hello))
+        r = await call(ws, "patchChannel", {"ch": 1, "patch": {"source": {
+            "protocol": "srt", "mode": "caller", "host": "127.0.0.1", "port": 30001, "latencyMs": 200}}})
+        src = r.get("result", {}).get("source", {})
+        check("2. SRT の caller と接続先を入れられる",
+              (src.get("protocol"), src.get("mode"), src.get("host"), src.get("port"), src.get("latencyMs"))
+              == ("srt", "caller", "127.0.0.1", 30001, 200), str(r)[:240])
+        r = await call(ws, "patchChannel", {"ch": 1, "patch": {"source": {"passphrase": "0123456789ab", "pbkeylen": 16}}})
+        src = r.get("result", {}).get("source", {})
+        check("3. パスフレーズを入れられる (応答には hasPassphrase だけ)",
+              src.get("hasPassphrase") is True and "passphrase" not in src and src.get("pbkeylen") == 16, str(r)[:240])
+        r = await call(ws, "patchChannel", {"ch": 1, "patch": {"source": {"passphrase": "short"}}})
+        check("4. 短すぎるパスフレーズは、画面からの変更と同じ検証で断られる", "error" in r, str(r)[:160])
+        r = await call(ws, "patchChannel", {"ch": 1, "patch": {"source": {
+            "protocol": "rtmp", "mode": "pull", "url": "rtmp://127.0.0.1:1936/live/key", "passphrase": ""}}})
+        src = r.get("result", {}).get("source", {})
+        check("5. RTMP の pull と URL を入れられる (応答には hasUrl だけ)",
+              (src.get("protocol"), src.get("mode"), src.get("hasUrl")) == ("rtmp", "pull", True) and "url" not in src, str(r)[:240])
+        r = await call(ws, "getConfig")
+        src = r.get("result", {}).get("channels", [{}])[0].get("source", {})
+        check("6. getConfig でも URL は返らない", "url" not in src and src.get("hasUrl") is True, json.dumps(src))
+        for desc, patch in [
+            ("7. source の知らない項目は断られる", {"source": {"nope": 1}}),
+            ("8. source の型が違えば断られる", {"source": {"port": "9001"}}),
+            ("9. record は変えられない", {"record": {"enabled": True}}),
+            ("10. 配信テスト用の印は変えられない", {"testSlot": False}),
+            ("11. 仮想カメラは変えられない", {"vcam": 2}),
+            ("12. 音声の出力先は変えられない", {"audio": {"device": "x"}}),
+        ]:
+            r = await call(ws, "patchChannel", {"ch": 1, "patch": patch})
+            check(desc, "error" in r, str(r)[:160])
+        r = await call(ws, "patchChannel", {"ch": 2, "patch": {"source": {"port": 30002}}})
+        check("13. 印の無い ch2 の受信の設定は変えられない", "error" in r, str(r)[:160])
+        # 元に戻す (あとの試験が ch1 を SRT の listener として使う)
+        r = await call(ws, "patchChannel", {"ch": 1, "patch": {"source": {
+            "protocol": "srt", "mode": "listener", "host": "0.0.0.0", "port": 9001, "latencyMs": 120, "url": "", "pbkeylen": 0}}})
+        src = r.get("result", {}).get("source", {})
+        check("14. 元の設定に戻せる", (src.get("protocol"), src.get("mode"), src.get("port")) == ("srt", "listener", 9001), str(r)[:200])
+
+
+async def configure_off():
+    """allowControl が off なら、allowConfigure が on でも何も変えられない"""
+    async with connect(URL, open_timeout=5) as ws:
+        hello = json.loads(await asyncio.wait_for(ws.recv(), 5))
+        check("1. allowControl が off なら hello の allowConfigure は false", hello.get("allowConfigure") is False, json.dumps(hello))
+        r = await call(ws, "patchChannel", {"ch": 1, "patch": {"source": {"port": 30001}}})
+        check("2. 受信の設定は変えられない", "error" in r, str(r)[:160])
+
+
 async def token():
     try:
         async with connect(URL, open_timeout=5) as ws:
@@ -290,5 +345,6 @@ if PHASE == "idle":
 elif PHASE == "closed":
     closed()
 else:
-    asyncio.run({"basic": basic, "control": control, "token": token, "limits": limits}[PHASE]())
+    phases = {"basic": basic, "control": control, "configure": configure, "configure-off": configure_off, "token": token, "limits": limits}
+    asyncio.run(phases[PHASE]())
 sys.exit(FAIL)
