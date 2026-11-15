@@ -142,8 +142,10 @@ std::string summary_line(const json& ch) {
     }
     if (ch.contains("record") && ch.at("record").at("state") != "off") {
         const json& r = ch.at("record");
-        snprintf(buf, sizeof(buf), " | rec %s %.0fs %.1fMB drop %llu", r.at("state").get<std::string>().c_str(),
-                 r.at("seconds").get<double>(), r.at("bytes").get<double>() / 1e6, (unsigned long long)r.at("dropped").get<uint64_t>());
+        // 録画を始めてからの時間と、録画ファイルの中の位置 (途切れがあると、位置の方が手前になる)
+        snprintf(buf, sizeof(buf), " | rec %s %.0fs (file %.1fs) %.1fMB drop %llu", r.at("state").get<std::string>().c_str(),
+                 r.at("seconds").get<double>(), r.value("position", 0.0), r.at("bytes").get<double>() / 1e6,
+                 (unsigned long long)r.at("dropped").get<uint64_t>());
         line += buf;
         if (const std::string err = message_text(r.at("error")); !err.empty()) line += " err: " + err;
     }

@@ -63,6 +63,10 @@ struct ChannelMetrics {
     std::atomic<uint64_t> rec_bytes{0};
     std::atomic<uint64_t> rec_dropped{0};
     std::atomic<int64_t> rec_started_qpc{0};
+    // 録画ファイルの中の位置: 書いているファイルの時間軸 (先頭が 0) で、最後に書いたパケットの時刻。
+    // 途切れていた時間はファイルに入らないので、録画を始めてからの実時間 (rec_started_qpc) より遅れていく。
+    // rec_file と食い違わないよう、ファイルを開くときは mutex の中で 0 に戻し、報告も mutex の中で読む
+    std::atomic<int64_t> rec_position_us{0};
 
     std::mutex mutex;  // 以下を保護
     std::string peer;

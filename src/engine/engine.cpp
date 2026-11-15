@@ -487,7 +487,9 @@ json Engine::state_locked() {
             static const char* rec_states[] = {"off", "waiting", "recording", "error"};
             j["record"] = {{"state", rec_states[std::min<uint32_t>(m.rec_state, 3)]},
                            {"file", m.rec_file},
-                           {"seconds", m.rec_seconds},
+                           {"seconds", m.rec_seconds},  // 録画を始めてからの実時間
+                           // 録画ファイルの中の位置 (ファイルの時間軸で、最後に書いたパケットの時刻)。途切れていた時間を含まない
+                           {"position", double(w.rec_position_us) / 1e6},
                            {"bytes", m.rec_bytes},
                            {"dropped", m.rec_dropped},
                            {"error", message_json(m.rec_error)}};

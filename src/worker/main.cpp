@@ -253,12 +253,14 @@ public:
             s.rec_seconds = rec_started ? double(qpc_to_us(qpc_now() - rec_started)) / 1e6 : 0;
             s.rec_bytes = m_.rec_bytes.load();
             s.rec_dropped = m_.rec_dropped.load();
+            int64_t rec_position_us = 0;  // 録画ファイルの中の位置。ファイル名と同じ時点の値を取る (metrics.h)
             {
                 std::lock_guard lk(m_.mutex);
                 strncpy_s(s.rec_file, m_.rec_file.c_str(), _TRUNCATE);
                 strncpy_s(s.rec_error, m_.rec_error.c_str(), _TRUNCATE);
+                rec_position_us = m_.rec_position_us.load();
             }
-            worker_status::write_metrics(m_.status, s);
+            worker_status::write_metrics(m_.status, s, rec_position_us);
             m_.status->rejected_senders.store(m_.rejected_senders.load());  // Metrics の外 (末尾に足した欄)
             m_.status->playout_restarts.store(m_.playout_restarts.load());
         }
