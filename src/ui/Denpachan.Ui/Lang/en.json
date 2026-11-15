@@ -182,6 +182,7 @@
   "general.metricsTokenNew": "This is the new token. Put it in the bot's settings (it is not shown again after saving)",
   "general.metricsRegenerate": "Regenerate",
   "general.metricsAllowControl": "Allow the bot to control stream test slots (start, stop, record, latency)",
+  "general.metricsAllowConfigure": "Also allow changing their receive settings (protocol, address, port, passphrase, key, URL)",
   "general.metricsNote": "The stream test bot receives the receiving status here. A token is required when listening on an address other than 127.0.0.1",
   "general.notNumber": "Enter numbers",
   "status.stopped": "Stopped",

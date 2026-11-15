@@ -184,7 +184,11 @@ json to_json(const ChannelConfig& c, JsonForm form) {
 
 json to_json(const GeneralConfig& g, JsonForm form) {
     const auto& m = g.metrics;
-    json metrics = {{"enabled", m.enabled}, {"bind", m.bind}, {"port", m.port}, {"allowControl", m.allow_control}};
+    json metrics = {{"enabled", m.enabled},
+                    {"bind", m.bind},
+                    {"port", m.port},
+                    {"allowControl", m.allow_control},
+                    {"allowConfigure", m.allow_configure}};
     switch (form) {
     case JsonForm::File:
         metrics["tokenProtected"] = protect(m.token);
@@ -274,6 +278,7 @@ GeneralConfig general_from_json(const json& j) {
         g.metrics.bind = get_or(m, "bind", def.metrics.bind);
         g.metrics.port = get_or(m, "port", def.metrics.port);
         g.metrics.allow_control = get_or(m, "allowControl", def.metrics.allow_control);
+        g.metrics.allow_configure = get_or(m, "allowConfigure", def.metrics.allow_configure);
         // 平文 (IPC / 内部) と暗号化 (保存ファイル) のどちらでも読む
         if (m.contains("token")) {
             g.metrics.token = get_or<std::string>(m, "token", "");

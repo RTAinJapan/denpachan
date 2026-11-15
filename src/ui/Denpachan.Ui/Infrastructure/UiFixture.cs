@@ -184,7 +184,8 @@ public static class UiFixture
         ["rtmpServer"] = new JsonObject { ["bind"] = "0.0.0.0", ["port"] = 1935, ["idleTimeoutMs"] = 5000 },
         ["metrics"] = new JsonObject
         {
-            ["enabled"] = false, ["bind"] = "127.0.0.1", ["port"] = 9100, ["allowControl"] = false, ["hasToken"] = false,
+            ["enabled"] = false, ["bind"] = "127.0.0.1", ["port"] = 9100, ["allowControl"] = false, ["allowConfigure"] = false,
+            ["hasToken"] = false,
         },
     };
 

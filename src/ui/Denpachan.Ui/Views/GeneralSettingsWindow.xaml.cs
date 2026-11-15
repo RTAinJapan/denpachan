@@ -35,6 +35,7 @@ public partial class GeneralSettingsWindow : Window
         MetricsBindBox.Text = metrics.Str("bind", "127.0.0.1");
         MetricsPortBox.Text = metrics.Int("port", 9100).ToString();
         MetricsAllowControlBox.IsChecked = metrics.Bool("allowControl");
+        MetricsAllowConfigureBox.IsChecked = metrics.Bool("allowConfigure");
         // トークンは engine から返らない (設定済みかどうかだけ)。作り直したときだけ値を出す
         MetricsTokenBox.Text = T(metrics.Bool("hasToken") ? "general.metricsTokenSet" : "general.metricsTokenUnset");
     }
@@ -86,6 +87,7 @@ public partial class GeneralSettingsWindow : Window
             ["bind"] = MetricsBindBox.Text.Trim(),
             ["port"] = metricsPort,
             ["allowControl"] = MetricsAllowControlBox.IsChecked == true,
+            ["allowConfigure"] = MetricsAllowConfigureBox.IsChecked == true,
         };
         if (_newToken != null) metrics["token"] = _newToken;  // 作り直したときだけ送る (送らなければ今のトークンのまま)
         patch["metrics"] = metrics;

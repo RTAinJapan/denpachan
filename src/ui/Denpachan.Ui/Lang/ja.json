@@ -182,6 +182,7 @@
   "general.metricsTokenNew": "新しいトークンです。bot の設定に入れてください (保存すると、以後は表示されません)",
   "general.metricsRegenerate": "作り直す",
   "general.metricsAllowControl": "bot に配信テスト用のチャンネルの操作を許す (開始・停止・録画・latency)",
+  "general.metricsAllowConfigure": "受信の設定 (方式・接続先・ポート・パスフレーズ・キー・URL) の変更も許す",
   "general.metricsNote": "配信テストの bot が受信の状態を受け取る口です。127.0.0.1 以外で待ち受けるときはトークンが必要です",
   "general.notNumber": "数値で入力してください",
   "status.stopped": "停止",
