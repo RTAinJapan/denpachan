@@ -105,6 +105,10 @@ struct Header {
     std::atomic<uint64_t> rejected_senders;
     // 映像が遅延に追いつけず、時間軸を作り直した回数 (worker の PlayoutCore::check_progress。累計)
     std::atomic<uint64_t> playout_restarts;
+    // 録画ファイルの中の位置 (µs): 書いているファイルの時間軸 (先頭が 0) で、最後に書いたパケットの時刻。録画していなければ 0。
+    // metrics.rec_seconds (録画を始めてからの実時間) と違い、途切れていた時間を含まない。
+    // metrics.rec_file と組で読むので、metrics と同じ seqlock (metrics_seq) の中で読み書きする (write_metrics / read_metrics)
+    std::atomic<int64_t> rec_position_us;
 };
 
 static_assert(sizeof(Header) <= kMappingBytes);
@@ -164,19 +168,22 @@ inline Header* open_shared(SharedMapping& mapping, int ch) {
     return h;
 }
 
-inline void write_metrics(Header* h, const Metrics& m) {
+// rec_position_us は Header の末尾の欄 (Metrics の外) だが、m.rec_file と同じ時点の値として一緒に書く
+inline void write_metrics(Header* h, const Metrics& m, int64_t rec_position_us) {
     const uint32_t s = h->metrics_seq.load(std::memory_order_relaxed);
     h->metrics_seq.store(s + 1, std::memory_order_relaxed);
     std::atomic_thread_fence(std::memory_order_release);
     memcpy(&h->metrics, &m, sizeof(m));
+    h->rec_position_us.store(rec_position_us, std::memory_order_relaxed);
     h->metrics_seq.store(s + 2, std::memory_order_release);
 }
 
-inline bool read_metrics(const Header* h, Metrics& out) {
+inline bool read_metrics(const Header* h, Metrics& out, int64_t& rec_position_us) {
     for (int i = 0; i < 100; ++i) {
         const uint32_t s1 = h->metrics_seq.load(std::memory_order_acquire);
         if (s1 & 1) continue;
         memcpy(&out, &h->metrics, sizeof(out));
+        rec_position_us = h->rec_position_us.load(std::memory_order_relaxed);
         std::atomic_thread_fence(std::memory_order_acquire);
         if (h->metrics_seq.load(std::memory_order_relaxed) == s1) return s1 != 0;
     }

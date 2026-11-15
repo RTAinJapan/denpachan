@@ -186,7 +186,11 @@ json ChannelsView::build(const json& state, const Config& config, int64_t now_qp
 
         json record_out = nullptr;
         if (record.is_object()) {
-            record_out = {{"state", str(record, "state")}, {"file", str(record, "file")}, {"seconds", pick(record, "seconds")}};
+            // seconds は録画を始めてからの実時間、position は録画ファイルの中の位置 (録画の区間や ffmpeg の -ss にはこちらを使う)
+            record_out = {{"state", str(record, "state")},
+                          {"file", str(record, "file")},
+                          {"seconds", pick(record, "seconds")},
+                          {"position", pick(record, "position")}};
         }
 
         channels.push_back({{"ch", id},

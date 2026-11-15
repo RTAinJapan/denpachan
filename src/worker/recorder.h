@@ -109,6 +109,7 @@ private:
     void encode_video(const AVFrame* frame, int64_t out_us);
     void encode_audio(const float* data, int frames, int64_t out_us);
     void drain_encoder(AVCodecContext* ctx, int stream_index);
+    void note_written(int64_t ts, AVRational tb);  // 書いたパケットの時刻を、録画ファイルの中の位置として覚える
     int64_t remap_us(int64_t in_us, bool video);
     int64_t frame_us() const;
     bool same_params(const StreamInfo& a, const StreamInfo& b) const;

@@ -69,6 +69,7 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 | `vcam_pace_test.sh` | 仮想カメラ (60 fps) が 30 fps / 60 fps の映像を受けたときに、同じ絵を余分に挟まないこと |
 | `burst_test.sh` | 送出側が短く止まってからまとめて送ったときに、増えた遅延が数秒で戻ること (VB-Audio Virtual Cable を使う) |
 | `record_test.sh` | 録画 (パススルー / GPU / CPU、区切り、再接続時の継続、ファイル名) |
+| `record_position_test.sh` | 受信口の `record.position` (録画ファイルの中の位置) が、途切れての再接続・タイムスタンプの巻き戻りをまたいでも、録画ファイルの最後のパケットの時刻と合うこと。新しいファイルでは 0 から数え直すこと (Python の websockets を使う) |
 | `ext_encoder_stall_test.sh` | CPU 録画で外部 ffmpeg が入力を読まなくなったとき、10 秒で止めて新しいファイルで続けること |
 | `reanchor_test.sh` | 映像だけが 3 秒途切れて音声は届き続けるとき (worker の `--test-drop-video`) に、時間軸を取り直さず、その途切れで音声を合わせ直さないこと。合わせ直しの回数ではなく、worker の debug のログで時間軸を一度に動かした理由を見て判定する (音声が揺れで遅れて届いた分は、途切れとは別なので許す) |
 | `rewind_test.sh` | 録画中に同じ接続のままタイムスタンプが戻ったとき (worker の `--test-ts-rewind`) に、ファイルが壊れず音声も続くこと。途絶のあとに戻ったとき (配信の始め直しを、中継が同じ接続のまま流す。`--test-ts-rewind-gap`、`--test-ts-rewind-by`) も含めて、戻ってから 2 秒後には映像の出力が戻っていること (worker の 1 秒ごとのログの、出力の fps と受信の fps) |

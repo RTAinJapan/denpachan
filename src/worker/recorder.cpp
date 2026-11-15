@@ -692,6 +692,7 @@ bool Recorder::open_segment(const AVFrame* first_frame) {
     {
         std::lock_guard lk(metrics_.mutex);
         metrics_.rec_file = path8;
+        metrics_.rec_position_us = 0;  // 新しいファイルの位置は 0 から。ファイル名と一緒に変える (前のファイルの位置を新しい名前で出さない)
         metrics_.rec_error.clear();
     }
     spdlog::info("record: started {}", path8);
@@ -880,7 +881,9 @@ bool Recorder::write_packet(int stream_index, AVPacket* pkt, AVRational src_tb) 
     }
     if (video) last_video_out_us_ = std::max(last_video_out_us_, out_dts);
     last = p->dts;
+    const int64_t written_pts = p->pts;  // av_interleaved_write_frame はパケットを空にする
     const int err = av_interleaved_write_frame(segment_->oc, p.get());
+    if (err >= 0) note_written(written_pts, st->time_base);
     if (err < 0) {
         const std::string detail = !segment_->ext ? av_error_string(err)
                                    : segment_->ext->stalled()
@@ -900,11 +903,24 @@ void Recorder::drain_encoder(AVCodecContext* ctx, int stream_index) {
     while (avcodec_receive_packet(ctx, pkt.get()) == 0) {
         av_packet_rescale_ts(pkt.get(), ctx->time_base, st->time_base);
         pkt->stream_index = stream_index;
+        const int64_t written_pts = pkt->pts;  // av_interleaved_write_frame はパケットを空にする
         if (av_interleaved_write_frame(segment_->oc, pkt.get()) < 0) {
             av_packet_unref(pkt.get());
             return;
         }
+        note_written(written_pts, st->time_base);
     }
+}
+
+// 録画ファイルの中の位置 (メトリクスの record.position): ファイルの時間軸で、書いたパケットの時刻のうち最も先のもの。
+// ファイルに書く時刻は、最初の映像を 0 にし、再接続やタイムスタンプの飛びのあとは前の映像の 1 フレーム後ろにつなぐ (remap_us) ので、
+// 途切れていた時間は入らない。録画を始めてからの実時間 (record.seconds) はその分だけ先へ進むので、ファイルの中を指すにはこちらを使う。
+// 映像と音声の先の方を取る: 映像だけが止まって音声が続く間も、ファイルは音声で伸びる。
+// 外部 ffmpeg では ffmpeg に渡した時刻なので、ffmpeg がエンコードして書き終えるまでの分だけ、ファイルより先になる
+void Recorder::note_written(int64_t ts, AVRational tb) {
+    if (ts == AV_NOPTS_VALUE) return;
+    const int64_t us = av_rescale_q(ts, tb, kUs);
+    if (us > metrics_.rec_position_us.load(std::memory_order_relaxed)) metrics_.rec_position_us.store(us, std::memory_order_relaxed);
 }
 
 void Recorder::encode_video(const AVFrame* frame, int64_t out_us) {
@@ -1001,6 +1017,7 @@ void Recorder::close_segment(const char* reason) {
     segment_info_.reset();
     continuation_pending_ = false;
     metrics_.rec_started_qpc = 0;
+    metrics_.rec_position_us = 0;
 }
 
 }  // namespace denpachan::worker

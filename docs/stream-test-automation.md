@@ -154,7 +154,7 @@ WebSocket (RFC 6455)、テキストフレーム、1 フレームに JSON 1 つ�
       },
       "tcp": null,
       "audio": { "peakDb": [-9.5, -9.8], "gaps": 0, "silentSec": 0 },
-      "record": { "state": "recording", "file": "D:\\rec\\1 - 202611\\01 12-33-10.mkv", "seconds": 106 },
+      "record": { "state": "recording", "file": "D:\\rec\\1 - 202611\\01 12-33-10.mkv", "seconds": 106, "position": 96.2 },
       "rejectedSenders": 0,
       "lastError": null
     }
@@ -173,11 +173,25 @@ WebSocket (RFC 6455)、テキストフレーム、1 フレームに JSON 1 つ�
 | `latency.verdict` | 画面の経路の行の色と同じ規則 | `measuring` (推奨値がまだ無い) / `insufficient` (直近 60 秒に取りこぼしがある = 画面の赤) / `tight` (推奨値 > 実際の latency = 画面の黄) / `ok` / `generous` (実際の latency が推奨値の 2 倍以上) |
 | `tcp` | `tcp.*` | RTMP push のときだけ (それ以外は null。**RTMP pull には TCP の統計が無い**)。`rttMs`、`retransBytes`、直近 60 秒の再送 (`retransBytesLastMin`)、`verdict` (`ok` / 再送があれば `tight`) |
 | `audio` | `audioIn.*` | worker のメトリクスが無いときは null。`peakDb` (左右、dBFS)、`gaps`、`silentSec` (両チャンネルとも −60 dBFS 未満が続いた秒数。engine で数える) |
-| `record` | `record.*` | worker のメトリクスが無いときは null。`state`、`file`、`seconds` (録画の開始からの秒数。bot はチェックの手順の録画の区間に使う) |
+| `record` | `record.*` | worker のメトリクスが無いときは null。`state`、`file`、`seconds`、`position` |
+| `record.seconds` | `record.seconds` | 今のファイルに録画を始めてからの実時間 (秒)。途切れていた間も進むので、**ファイルの中の位置ではない** |
+| `record.position` | `record.position` | **録画ファイルの中の位置** (秒、小数): 今書いているファイル (`file`) の時間軸で、最後に書いたパケットの時刻。ファイルの先頭が 0。録画の区間の記録や、ffmpeg の `-ss` にはこれを使う。下の「録画ファイルの中の位置」 |
 | `rejectedSenders` | `video.rejectedSenders` | 同じ宛先に別の送出元がつないできて断った数 |
 | `lastError` | `video.lastError` | worker のメッセージ (`{"id": "...", ...}` の形の JSON) か null |
 
 bot は denpachan の区間の数字を判定には使わず、記録 (運営の区間の RTT・取りこぼし) と、運営側の問題の切り分けに使う。配信者の区間の判定は MediaConnect の数字 (§3.1) で行う。
+
+**録画ファイルの中の位置 (`record.position`)**
+
+録画は、短い途切れや繋ぎ直しをまたいで同じファイルに続けて書き、配信が来なかった時間はファイルに入れない (設計書 §8.2)。そのため `record.seconds` (実時間) は、途切れた時間の合計だけファイルより先へ進む (例: 配信者が OBS の配信を始め直して 10 秒データが来なければ、以後 10 秒ずれたままになる)。「今」が録画のどこにあたるかは `record.position` で知る。
+
+- `position` で ffmpeg の `-ss` を指定すれば、その値が出た瞬間の絵と音に当たる。手順の始めと終わりで読めば、その手順の録画の区間になる。
+- `state` が `recording` のときだけ意味がある。録画していない間は 0。
+- ファイルが切り替わると 0 から数え直す (途切れが `gapTimeoutSec` を超えて閉じたあと、録画をオンにし直したとき、解像度・コーデックが変わったときなど)。`file` と同じメッセージの値なので、`file` と `position` を組で控える。
+- 映像と音声のうち先の方の時刻。映像だけが止まって音声が届き続ける間も、音声で進む。途切れている間 (何も書いていない間) は止まる。
+- 1 秒ごとの値なので、読んだ時点から最大 1 秒ほど古い。また、書いたパケットがファイルに出るまでに少し間がある (映像と音声を時刻の順に並べて書くため)。**書いている途中のファイルの最後の辺りを読むときは、`position` より少し手前から探す**。
+- パススルーと GPU の再エンコードでは、ファイルに書いた時刻 (ファイルの先頭からの時間)。CPU の再エンコード (外部 ffmpeg) では ffmpeg に渡した時刻なので、ffmpeg がエンコードして書き終えるまでの分だけファイルより先になる。
+- この項目を足す前のビルドの denpachan には `position` が無い (`seconds` だけ)。bot は `position` があればそれを、無ければ `seconds` を使う。
 
 `hello`:
 
