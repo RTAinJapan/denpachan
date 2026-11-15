@@ -53,8 +53,6 @@ void Playout::run() {
     const int64_t stall = qpc_from_ms(options_.stall_ms);
     PlayoutCore core(clock_, stall);  // フレームごとの判断 (試験と同じコード)
 
-    bool live = false;
-    int64_t last_output_qpc = 0;
     FramePtr held;  // 最後に出したフレーム (途絶中に読み手が来たら書き直す)
 
     const int64_t test_hang_at =
@@ -73,16 +71,12 @@ void Playout::run() {
         metrics_.playout_restarts = core.restarts();
 
         if (!f) {
-            // 途絶中は最後のフレームを出し続ける (NO SIGNAL にはしない)
-            if (live && now - last_output_qpc > stall) {
-                live = false;
-                // 時間軸を捨てるのは音声も来ていないときだけ。音声が届き続けているなら、映像が戻ったときも同じ時間軸で
-                // 出せる (捨てると、次に届いた音声で取り直されて、音声がフェードして合わせ直しになる)
-                const bool audio_flowing = clock_.audio_reported_within(stall);
-                if (!audio_flowing) clock_.invalidate();
+            // 途絶中は最後のフレームを出し続ける (NO SIGNAL にはしない)。途絶に入るかどうかは PlayoutCore::on_idle
+            if (const auto idle = core.on_idle(now); idle != PlayoutCore::Idle::None) {
                 if (writer_) writer_->set_state(vcam::WriterState::Hold);
                 metrics_.video_state = uint32_t(worker_status::VideoState::Hold);
-                spdlog::info("playout: stalled, holding last frame{}", audio_flowing ? " (audio continues)" : "");
+                spdlog::info("playout: stalled, holding last frame{}",
+                             idle == PlayoutCore::Idle::StalledAudioContinues ? " (audio continues)" : "");
             }
             if (writer_) writer_->refresh(held.get());
             if (preview_) preview_->refresh(held.get());
@@ -92,28 +86,37 @@ void Playout::run() {
         const FrameMeta meta{f->session, f->pts_us, f->arrival_qpc};
         int64_t target = 0;
         if (core.on_frame(meta, now, queue_.size(), target) != PlayoutCore::Decision::Present) {
-            ++metrics_.frames_dropped_late;  // 取り残された、または遅れたフレーム (PlayoutCore)
+            ++metrics_.frames_dropped_late;  // 取り残された、遅れた、または今の時間軸から外れたフレーム (PlayoutCore)
             continue;
         }
-        // 待っている間に音声側の都合で時間軸が遅らされることがあるので、待ち終わったら確かめ直す
-        bool stopped = false;
-        while (target > qpc_now()) {
-            if (!wait_until(target)) {
+        // 出す時刻まで待つ。kWaitCheckMs ごとに起きて、出す時刻を取り直し (待っている間に音声側の都合で時間軸が動くことが
+        // ある)、映像が出せているかも見る (check_progress)。1 枚のフレームを待ったまま長く止まらないように (keep_waiting)
+        bool stopped = false, abandoned = false;
+        for (int64_t t = qpc_now(); target > t; t = qpc_now()) {
+            if (!wait_until(std::min(target, t + qpc_from_ms(PlayoutCore::kWaitCheckMs)))) {
                 stopped = true;
                 break;
             }
-            target = core.target(meta);
+            const int64_t woke = qpc_now();
+            core.check_progress(woke, queue_.pushed(), queue_.dropped(), metrics_.frames_presented.load());
+            if (!core.keep_waiting(meta, woke, target)) {
+                abandoned = true;
+                break;
+            }
         }
         if (stopped) break;
+        if (abandoned) {
+            ++metrics_.frames_dropped_late;
+            continue;
+        }
 
         if (writer_) writer_->write(f->frame.get());
         if (preview_) preview_->submit(f->frame.get());  // 縮小は別スレッド
-        last_output_qpc = qpc_now();
+        const int64_t output_qpc = qpc_now();
         ++metrics_.frames_presented;
-        metrics_.delay_us = qpc_to_us(last_output_qpc - f->arrival_qpc);
+        metrics_.delay_us = qpc_to_us(output_qpc - f->arrival_qpc);
         held = std::move(f->frame);
-        if (!live) {
-            live = true;
+        if (core.on_presented(output_qpc)) {
             if (writer_) writer_->set_state(vcam::WriterState::Live);
             metrics_.video_state = uint32_t(worker_status::VideoState::Live);
             spdlog::info("playout: live");

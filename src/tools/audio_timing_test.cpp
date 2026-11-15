@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -102,6 +103,16 @@ struct Case {
     // V2: 映像だけの途切れ {始まり (秒), 長さ (秒)}。その間に送った映像のフレームは届かない (音声は届き続ける)。
     // 送り側が映像だけを止めたとき、映像のパケットだけが落ちたとき
     std::pair<double, double> video_drop = {0, 0};
+    // 配信の始め直し (同じ接続のまま) {止まる時刻 (秒), 止まっている長さ (秒)}: 配信者が配信を止めて始め直し、中継
+    // (AWS MediaConnect など) が接続を保ったまま新しい配信を流す。止まっている間は何も届かず、明けると、タイムスタンプが
+    // restart_rewind_sec 戻った配信が届く (負なら進む)。新しい映像は、明けてから restart_video_wait_ms 後の分から
+    // デコードされる (キーフレームを待つ間。0 なら、映像が音声より先に届く)
+    std::pair<double, double> restart = {0, 0};
+    double restart_rewind_sec = 0;
+    double restart_video_wait_ms = 0;
+    // デコーダが持つ映像の枚数 (並べ替えの分)。フレームは、この枚数だけ後のフレームが入ったときに出てくる (届いた時刻も
+    // そのとき)。配信が止まると、止まる前の末尾がデコーダに残り、次に届いた映像に押し出されて出てくる
+    int decoder_frames = 0;
     // L1: 欠落 (SRT で再送が間に合わなかった)。かたまりが届かない。単独 (loss_prob) と、まとめて (loss_burst_every_sec ごとに
     // loss_burst_chunks 個)
     double loss_prob = 0;
@@ -279,6 +290,26 @@ void check_progress(Core& core, int64_t now, uint64_t received, uint64_t queue_d
         core.check_progress(now, received, queue_dropped, presented);
     }
 }
+template <typename Core>
+void on_idle(Core& core, int64_t now) {
+    if constexpr (requires { core.on_idle(now); }) core.on_idle(now);
+}
+template <typename Core>
+void on_presented(Core& core, int64_t now) {
+    if constexpr (requires { core.on_presented(now); }) core.on_presented(now);
+}
+// 出す時刻を待っているフレームをどうするか (出力スレッドが待っている間に見るのと同じ判断)
+enum class Wait { Present, Keep, Abandon };
+template <typename Core>
+Wait wait_state(Core& core, const worker::FrameMeta& meta, int64_t now) {
+    int64_t target = 0;
+    if constexpr (requires { core.keep_waiting(meta, now, target); }) {
+        if (!core.keep_waiting(meta, now, target)) return Wait::Abandon;
+    } else {
+        target = core.target(meta);
+    }
+    return target > now ? Wait::Keep : Wait::Present;
+}
 
 // worker のログ 1 行から、時間軸を動かした理由を取り出す (無ければ空)
 std::string move_reason(const std::string& line) {
@@ -344,6 +375,12 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
     worker::PlayoutCore core(clock, qpc_from_ms(2000));
     const int64_t frame_us = int64_t(1e6 / c.video_fps);
     std::optional<SimFrame> holding;  // 出す時刻を待っているフレーム
+    std::deque<int64_t> decoder;      // デコーダの中の映像 (pts)
+    // 配信の始め直し
+    const bool restarting = c.restart.second > 0;
+    const double restart_end = c.restart.first + c.restart.second;
+    const int64_t rewind_us = int64_t(c.restart_rewind_sec * 1e6);
+    int64_t pts_shift_us = 0, last_pts_shift_us = 0;  // 始め直した後の音声の pts のずれ (時間軸の動きを見るとき)
     uint64_t video_received = 0, video_presented = 0, video_queue_drops = 0;
     if (!writer.open(ch)) {
         std::printf("FAIL %s: cannot open the audio ring\n", c.name.c_str());
@@ -469,9 +506,14 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
                 const double phase = std::fmod(sent, c.loss_burst_every_sec);
                 if (sent >= c.loss_burst_every_sec && phase < c.loss_burst_chunks * chunk_sec) lost = true;
             }
-            const int64_t pts_us = int64_t(double(k) * kChunkFrames * 1e6 / audio::kSampleRate);
+            int64_t pts_us = int64_t(double(k) * kChunkFrames * 1e6 / audio::kSampleRate);
             ++k;
             if (lost) continue;
+            if (restarting && sent >= c.restart.first) {
+                if (sent < restart_end) continue;  // 配信が止まっている
+                pts_us -= rewind_us;
+                pts_shift_us = -rewind_us;
+            }
             for (int i = 0; i < kChunkFrames; ++i) {
                 const float v = 0.25f * float(std::sin(2 * 3.14159265 * 440.0 * (double(k - 1) * kChunkFrames + i) / audio::kSampleRate));
                 chunk[2 * size_t(i)] = v;
@@ -505,9 +547,20 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             if (arrival > g_now) break;
             last_video_arrival = arrival;
             next_video_jitter = chunk_jitter(video_rng);
-            const int64_t pts_us = int64_t(vf) * frame_us;
+            int64_t pts_us = int64_t(vf) * frame_us;
             ++vf;
             if (c.video_drop.second > 0 && sent >= c.video_drop.first && sent < c.video_drop.first + c.video_drop.second) continue;  // V2
+            if (restarting && sent >= c.restart.first) {
+                if (sent < restart_end + c.restart_video_wait_ms / 1000.0) continue;  // 配信が止まっている、キーフレームを待っている
+                pts_us -= rewind_us;
+            }
+            if (c.decoder_frames > 0) {
+                // デコーダ: 入れたフレームは、decoder_frames 枚後のフレームを入れたときに出てくる
+                decoder.push_back(pts_us);
+                if (decoder.size() <= size_t(c.decoder_frames)) continue;
+                pts_us = decoder.front();
+                decoder.pop_front();
+            }
             ++video_received, ++sec_video_received;
             note_video_arrival(clock, arrival);
             if (video_queue->push(SimFrame{1, pts_us, arrival})) ++video_queue_drops, ++sec_queue_drops;
@@ -517,18 +570,27 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
             check_progress(core, g_now, video_received, video_queue_drops, video_presented);
             if (!holding) {
                 auto f = video_queue->pop(std::chrono::milliseconds(0));
-                if (!f) break;
+                if (!f) {
+                    on_idle(core, g_now);  // 届いていない: 途絶とみなす時間が過ぎたら、時間軸を捨てる (音声も来ていなければ)
+                    break;
+                }
                 int64_t target = 0;
                 if (core.on_frame(worker::FrameMeta{f->session, f->pts_us, f->arrival_qpc}, g_now, video_queue->size(), target) !=
                     worker::PlayoutCore::Decision::Present) {
-                    continue;  // 取り残された、または遅れたフレーム
+                    continue;  // 取り残された、遅れた、または今の時間軸から外れたフレーム
                 }
                 holding = *f;
             }
             const worker::FrameMeta meta{holding->session, holding->pts_us, holding->arrival_qpc};
-            if (core.target(meta) > g_now) break;  // まだ出す時刻ではない (待っている間に時間軸が動いたら取り直す)
+            const Wait wait = wait_state(core, meta, g_now);
+            if (wait == Wait::Keep) break;  // まだ出す時刻ではない (待っている間に時間軸が動いたら取り直す)
+            if (wait == Wait::Abandon) {    // 待つのをやめて捨てる
+                holding.reset();
+                continue;
+            }
             ++video_presented, ++sec_video_fps;
             sec_video_delay_sum += double(qpc_to_us(g_now - holding->arrival_qpc)) / 1000.0;
+            on_presented(core, g_now);
             holding.reset();
         }
         if (!source && c.device_open_sec > 0 && t >= c.device_open_sec && next_change == 0) {
@@ -547,8 +609,13 @@ Result run(const Case& c, int ch, uint32_t seed, const std::string& csv_path) {
                 renders = 0;
             }
         }
-        if (started) {
-            const int64_t due0 = clock.due(1, 0, g_now);
+        if (started && !clock.anchored_for(1)) {
+            last_due0 = 0;  // 途絶で時間軸を捨てた: 次に取り直すまで見ない (ここで due() を呼ぶと、時間軸を作ってしまう)
+        } else if (started) {
+            // 配信を始め直した後は、戻った分だけずらした pts で見る (取り直しそのものは動きに数えない)
+            const int64_t due0 = clock.due(1, pts_shift_us, g_now);
+            if (pts_shift_us != last_pts_shift_us) last_due0 = 0;
+            last_pts_shift_us = pts_shift_us;
             if (last_due0 != 0) {
                 const double d = double(qpc_to_us(due0 - last_due0)) / 1000.0;
                 moved_ms += std::fabs(d);
@@ -1420,6 +1487,39 @@ int main(int argc, char** argv) {
                    .max_slips = 1'000'000,
                    .max_resyncs = 1,
                    .max_settled_jumps = 0,
+                   .max_reanchors = 0};
+            cases.push_back(c);
+        }
+    }
+    {
+        // 配信の始め直し (同じ接続のまま): 配信者が配信を止めて始め直し、中継 (AWS MediaConnect など) が接続を保ったまま
+        // 新しい配信を流す。途絶 (3 秒) のあと、タイムスタンプが戻った配信が届く。デコーダに残っていた止まる前の映像
+        // (並べ替えの分の 3 枚) は、新しい映像に押し出されて出てくる。新しい音声が先に届いて時間軸を取り直していると、
+        // 残っていた映像を出す時刻は、戻った幅 (前の配信の長さ) だけ先になる。それを待つと、その間ずっと映像が止まる
+        // (実機で 870 秒戻り、音声は出るのに映像が戻らなかった)。数秒以内に出力が戻ること (保険の作り直しによらずに)
+        struct Restart {
+            const char* what;
+            double rewind_sec;     // 戻る幅 (負: 進む)
+            double video_wait_ms;  // 新しい映像がデコードされ始めるまで (0: 映像が先に届く)
+        };
+        for (const Restart& v : {Restart{"rewound 870 s, audio first", 870, 500}, Restart{"rewound 870 s, video first", 870, 0},
+                                 Restart{"rewound 8 s, audio first", 8, 500}, Restart{"rewound 2 s, audio first", 2, 500},
+                                 Restart{"jumped ahead 100 s, audio first", -100, 500}}) {
+            Case c{.name = fmt::format("T12. stream restarted on the same connection after 3 s ({})", v.what),
+                   .seconds = 80,
+                   .seeds = 5,
+                   .video = true,
+                   .jitter_ms = 4,
+                   .restart = {40, 3},
+                   .restart_rewind_sec = v.rewind_sec,
+                   .restart_video_wait_ms = v.video_wait_ms,
+                   .decoder_frames = 3,
+                   .settle_sec = 20,
+                   .disturbances = {{40, 44}},
+                   .max_slips = 1'000'000,
+                   .max_resyncs = 1'000,
+                   .min_fps = 55,
+                   .fps_grace = {{40, 47}},
                    .max_reanchors = 0};
             cases.push_back(c);
         }

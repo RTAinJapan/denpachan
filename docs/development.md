@@ -71,7 +71,7 @@ FFmpeg の DLL は `tools/testsrc/dev_env.sh` が PATH に足す。普段の設�
 | `record_test.sh` | 録画 (パススルー / GPU / CPU、区切り、再接続時の継続、ファイル名) |
 | `ext_encoder_stall_test.sh` | CPU 録画で外部 ffmpeg が入力を読まなくなったとき、10 秒で止めて新しいファイルで続けること |
 | `reanchor_test.sh` | 映像だけが 3 秒途切れて音声は届き続けるとき (worker の `--test-drop-video`) に、時間軸を取り直さず、その途切れで音声を合わせ直さないこと。合わせ直しの回数ではなく、worker の debug のログで時間軸を一度に動かした理由を見て判定する (音声が揺れで遅れて届いた分は、途切れとは別なので許す) |
-| `rewind_test.sh` | 録画中に同じ接続のままタイムスタンプが戻ったとき (worker の `--test-ts-rewind`) に、ファイルが壊れず音声も続くこと |
+| `rewind_test.sh` | 録画中に同じ接続のままタイムスタンプが戻ったとき (worker の `--test-ts-rewind`) に、ファイルが壊れず音声も続くこと。途絶のあとに戻ったとき (配信の始め直しを、中継が同じ接続のまま流す。`--test-ts-rewind-gap`、`--test-ts-rewind-by`) も含めて、戻ってから 2 秒後には映像の出力が戻っていること (worker の 1 秒ごとのログの、出力の fps と受信の fps) |
 | `ffmpeg_missing_test.sh` | FFmpeg が無いときの動きと、置いたあとの自動復帰 |
 | `package_test.sh` | 配布用の zip を展開して起動 (仮想カメラの登録、DirectShow での取り込み) |
 | `close_test.ps1` | 画面を閉じたときの確認ダイアログと、受信の停止。画面の二重起動の防止 |

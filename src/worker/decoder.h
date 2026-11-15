@@ -41,6 +41,13 @@ public:
     // (同じ接続のまま送出側が再起動した、MPEG-TS の折り返しなどの代わり)。音声は kTestRewindAudioLagMs 遅れて戻す。
     // start() の前に呼ぶ。
     void set_test_ts_rewind(int after_sec) { test_ts_rewind_after_sec_ = after_sec; }
+    // 試験用: 戻す前に、この ms の間に受信したパケットをすべて捨てる (途絶の代わり)。そのあとは新しい配信が始まったときと
+    // 同じく、映像も音声も同時に戻し、映像は次のキーフレームから渡す (配信者が配信を止めて始め直したのを、中継が同じ接続の
+    // まま流すとき: AWS MediaConnect など)。by_sec > 0 なら、戻す幅を kTestRewindSec の代わりにその秒数にする
+    void set_test_ts_rewind_gap(int gap_ms, int by_sec) {
+        test_ts_rewind_gap_ms_ = gap_ms;
+        if (by_sec > 0) test_ts_rewind_sec_ = by_sec;
+    }
     // 試験用: セッションが始まってからこの秒数後から kTestDropVideoMs の間、受信した映像のパケットを捨てる
     // (映像だけが途切れて音声は届き続ける送出元の代わり)。start() の前に呼ぶ。
     void set_test_drop_video(int after_sec) { test_drop_video_after_sec_ = after_sec; }
@@ -106,6 +113,8 @@ private:
     int test_ts_rewind_after_sec_ = 0;
     static constexpr int64_t kTestRewindSec = 8;
     static constexpr int64_t kTestRewindAudioLagMs = 300;
+    int test_ts_rewind_gap_ms_ = 0;
+    int64_t test_ts_rewind_sec_ = kTestRewindSec;
     int test_drop_video_after_sec_ = 0;
     static constexpr int64_t kTestDropVideoMs = 3000;
 
