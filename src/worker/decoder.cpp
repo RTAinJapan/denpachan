@@ -507,6 +507,7 @@ bool Decoder::run_session(uint64_t session) {
     bool started = false;  // 映像を 1 枚でもデコーダに渡せた
     const int64_t test_rewind_at = test_ts_rewind_after_sec_ > 0 ? qpc_now() + qpc_from_ms(int64_t(test_ts_rewind_after_sec_) * 1000) : 0;
     bool test_rewound = false;
+    bool test_gap = false;
     const int64_t test_drop_at = test_drop_video_after_sec_ > 0 ? qpc_now() + qpc_from_ms(int64_t(test_drop_video_after_sec_) * 1000) : 0;
     bool test_dropping = false;
     while (!stop_ && (codec_ || vidx < 0)) {
@@ -525,18 +526,37 @@ bool Decoder::run_session(uint64_t session) {
                 continue;
             }
         }
-        // 映像以外は 0.3 秒遅れて戻す (MPEG-TS の折り返しはストリームごとに別の時刻で起きるので、その代わり)
-        if (test_rewind_at != 0 && qpc_now() >= test_rewind_at + (pkt->stream_index == vidx ? 0 : qpc_from_ms(kTestRewindAudioLagMs))) {
-            if (!test_rewound) spdlog::warn("decoder: test: timestamps rewound by {} s", kTestRewindSec);
-            test_rewound = true;
-            const int64_t d =
-                av_rescale_q(kTestRewindSec * 1'000'000, AVRational{1, 1'000'000}, fmt->streams[pkt->stream_index]->time_base);
-            if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= d;
-            if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= d;
-        }
         if (url_mode) {
             io_deadline_qpc_ = qpc_now() + qpc_from_ms(kReadTimeoutMs);
             metrics_.bytes_in += uint64_t(pkt->size);  // URL を直接読むときは受信量をここで数える
+        }
+        if (test_rewind_at != 0 && test_ts_rewind_gap_ms_ > 0) {
+            // 途絶を挟んで戻す: その間に届いたものは捨て、明けたら新しい配信として映像も音声も同時に戻す
+            const int64_t now = qpc_now();
+            const bool gap = now >= test_rewind_at && now < test_rewind_at + qpc_from_ms(test_ts_rewind_gap_ms_);
+            if (gap != test_gap) spdlog::warn("decoder: test: {} everything received", gap ? "dropping" : "stopped dropping");
+            if (test_gap && !gap) {  // 新しい配信はキーフレームから始まる
+                need_key = true;
+                key_deadline = now + qpc_from_ms(kKeyframeWaitMs);
+            }
+            test_gap = gap;
+            if (gap) {
+                av_packet_unref(pkt.get());
+                continue;
+            }
+        }
+        // 映像以外は 0.3 秒遅れて戻す (MPEG-TS の折り返しはストリームごとに別の時刻で起きるので、その代わり)。
+        // 途絶を挟むときは同時に戻す
+        const int64_t test_rewind_lag = qpc_from_ms(test_ts_rewind_gap_ms_ > 0  ? test_ts_rewind_gap_ms_
+                                                    : pkt->stream_index == vidx ? 0
+                                                                                : kTestRewindAudioLagMs);
+        if (test_rewind_at != 0 && qpc_now() >= test_rewind_at + test_rewind_lag) {
+            if (!test_rewound) spdlog::warn("decoder: test: timestamps rewound by {} s", test_ts_rewind_sec_);
+            test_rewound = true;
+            const int64_t d =
+                av_rescale_q(test_ts_rewind_sec_ * 1'000'000, AVRational{1, 1'000'000}, fmt->streams[pkt->stream_index]->time_base);
+            if (pkt->pts != AV_NOPTS_VALUE) pkt->pts -= d;
+            if (pkt->dts != AV_NOPTS_VALUE) pkt->dts -= d;
         }
         if (vidx < 0) {
             // 映像を待っている: 映像のストリームが現れたらデコーダを開く。それまでの音声は捨てる (映像と一緒に始める)
