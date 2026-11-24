@@ -33,7 +33,12 @@ Visual Studio 2026 (C++ によるデスクトップ開発)、.NET 10 SDK、vcpkg
 手順:
 
 1. `CMakeLists.txt` の版を上げて main にコミットする (PR でよい)。
-2. そのコミットにタグ `vX.Y.Z` (プレリリースなら `vX.Y.Z-rc.1` など) を付けて push する。
+2. GitHub の Actions で「release」を選び、「Run workflow」で main を選んで、版 (`X.Y.Z`、プレリリースなら `X.Y.Z-rc.1` など。`v` は付けない) を入れて実行する。
+   - 版が `CMakeLists.txt` と合っているか、そのタグと Release がまだ無いかを先に確かめ、合わなければビルドせずに失敗する。
+   - ビルドと試験は build.yml と同じ。通ったら、ビルドした main のコミットにタグ `vX.Y.Z` を付けて Release を作る。
+   - タグを push できない環境 (Claude Code のクラウドのセッションなど) からも、ワークフローを動かすだけでリリースできる。
+
+   タグを手で push してもよい (どちらか一方でよい)。そのコミットにタグ `vX.Y.Z` (プレリリースなら `vX.Y.Z-rc.1` など) を付けて push する。
 
    ```bash
    git tag v1.2.0
@@ -43,9 +48,9 @@ Visual Studio 2026 (C++ によるデスクトップ開発)、.NET 10 SDK、vcpkg
    git push origin v1.2.0
    ```
 
-3. GitHub Actions がタグでビルドし、GitHub Release「denpachan X.Y.Z」を作って `denpachan-X.Y.Z-win64.zip` と PDB の zip を付ける。リリースノートは前のタグからの PR とコミットで GitHub が作るので、必要なら Release の画面で書き足す。
+3. GitHub Actions がビルドし、GitHub Release「denpachan X.Y.Z」を作って `denpachan-X.Y.Z-win64.zip` と PDB の zip を付ける。リリースノートは前のタグからの PR とコミットで GitHub が作るので、必要なら Release の画面で書き足す。
 
-タグの形が違う、またはタグの版が `CMakeLists.txt` と合わないときは、ビルドの最初で失敗し、リリースは作られない。そのときはタグを消して付け直す (`git push origin :refs/tags/v1.2.0` で GitHub のタグを消す)。
+タグを手で push したときに、タグの形が違う、またはタグの版が `CMakeLists.txt` と合わないときは、ビルドの最初で失敗し、リリースは作られない。そのときはタグを消して付け直す (`git push origin :refs/tags/v1.2.0` で GitHub のタグを消す)。「release」のワークフローでは、タグはビルドと試験が通ってから付くので、失敗してもタグは残らない。
 
 ## 試験
 

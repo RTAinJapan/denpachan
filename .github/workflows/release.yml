@@ -1,0 +1,68 @@
+# リリースを作る (docs/development.md の「リリース」)。Actions の「release」を「Run workflow」で、main を選んで実行する。
+#
+# - 入力の版 (X.Y.Z、プレリリースは X.Y.Z-rc.1 など) が CMakeLists.txt の project(... VERSION X.Y.Z) と合っているか、
+#   そのタグ・Release がまだ無いかを先に確かめる
+# - build.yml を呼んでビルド・試験し、GitHub Release を作る。タグ vX.Y.Z は、Release を作るときにビルドしたコミットに付ける
+#   (このトークンで付けたタグでは build.yml のタグの起動は動かないので、二重には作られない)
+# - タグを手で push しても、今までどおり build.yml がリリースを作る。どちらか一方でよい
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 版 (X.Y.Z、プレリリースは X.Y.Z-rc.1 など。X.Y.Z は CMakeLists.txt と同じ)
+        type: string
+        required: true
+
+# リリースは 1 つずつ。途中で取り消さない
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the version
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          # main から実行したときだけ (リリースは main のコミットから作る)
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::run this workflow on main (it was run on $GITHUB_REF)"; exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z][0-9A-Za-z.]*)?$ ]]; then
+            echo "::error::version '$VERSION' must be X.Y.Z or X.Y.Z-label (e.g. 1.2.0, 1.2.0-rc.1)"; exit 1
+          fi
+          base="${BASH_REMATCH[1]}"
+          cmake_version=$(sed -nE 's/^project\(denpachan .*VERSION ([0-9.]+)\).*/\1/p' CMakeLists.txt)
+          if [ "$base" != "$cmake_version" ]; then
+            echo "::error::version $VERSION does not match CMakeLists.txt ($cmake_version); raise the version there first"; exit 1
+          fi
+          tag="v$VERSION"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent 2>/dev/null; then
+            echo "::error::tag $tag already exists"; exit 1
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $tag already exists"; exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release $tag from $GITHUB_SHA"
+
+  build:
+    needs: check
+    uses: ./.github/workflows/build.yml
+    with:
+      release_tag: ${{ needs.check.outputs.tag }}
+    permissions:
+      contents: write  # build.yml の release ジョブが Release とタグを作る

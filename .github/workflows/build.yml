@@ -6,6 +6,8 @@
 # - 配布用の zip (展開すればすぐ使える。FFmpeg は含まない) と PDB の zip を artifact にする (tools/package.ps1)
 # - タグ vX.Y.Z (プレリリースは vX.Y.Z-rc.1 など) を push すると、同じビルドで GitHub Release を作る (release ジョブ)。
 #   タグの版は CMakeLists.txt の project(... VERSION X.Y.Z) と合っていなければならない (docs/development.md の「リリース」)
+# - release.yml (Actions の「release」を手動で実行) からも呼ばれる (workflow_call。release_tag にタグの名前)。そのときは
+#   タグはまだ無く、release ジョブが Release を作るときに、ビルドしたコミットに付ける
 # - 手動: Actions の「Run workflow」でブランチを選んで実行できる (workflow が既定ブランチにあるときに出る)
 # - 動くのは PR、main への push、タグ、手動のとき。PR のブランチへの push では動かない (pull_request と二重に動いて、
 #   並列数の枠を食うだけなので)。PR にしていないブランチは手動で動かす
@@ -17,17 +19,26 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: 作るリリースのタグ (vX.Y.Z または vX.Y.Z-ラベル。まだ無いタグ)
+        type: string
+        required: true
 
-# 同じブランチ / PR に続けて push したら、前の run は取り消す (タグは取り消さない)
+# 同じブランチ / PR に続けて push したら、前の run は取り消す (タグとリリースは取り消さない。release.yml から呼ばれたときは
+# github.ref が main なので、main への push の run と別の組にする)
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  group: build-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' && !inputs.release_tag }}
 
 permissions:
   contents: read
 
 env:
   VCPKG_COMMIT: bf19794383e8fb95eba5aa553235bc8ec2271688  # vcpkg.json の builtin-baseline と同じ
+  # 作るリリースのタグ (タグの push、または release.yml から呼ばれたとき。それ以外は空)
+  RELEASE_TAG: ${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name || '') }}
 
 jobs:
   build:
@@ -42,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 版は CMakeLists.txt の project(... VERSION X.Y.Z) だけに書いてある。タグで動いたときは、タグが vX.Y.Z または
+      # 版は CMakeLists.txt の project(... VERSION X.Y.Z) だけに書いてある。リリースを作るときは、タグが vX.Y.Z または
       # vX.Y.Z-ラベル の形で、X.Y.Z が CMakeLists.txt と同じかを先に確かめる (違えばビルドせずに失敗。リリースも作らない)
       - name: Version
         id: version
@@ -50,10 +61,10 @@ jobs:
         run: |
           $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(denpachan .*VERSION ([0-9.]+)').Matches[0].Groups[1].Value
           $label = ''
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
-            $m = [regex]::Match($env:GITHUB_REF_NAME, '^v(\d+\.\d+\.\d+)(?:-([0-9A-Za-z][0-9A-Za-z.]*))?$')
-            if (-not $m.Success) { throw "tag '$env:GITHUB_REF_NAME' must be vX.Y.Z or vX.Y.Z-label (e.g. v1.2.0, v1.2.0-rc.1)" }
-            if ($m.Groups[1].Value -ne $version) { throw "tag $env:GITHUB_REF_NAME does not match the version in CMakeLists.txt ($version)" }
+          if ($env:RELEASE_TAG) {
+            $m = [regex]::Match($env:RELEASE_TAG, '^v(\d+\.\d+\.\d+)(?:-([0-9A-Za-z][0-9A-Za-z.]*))?$')
+            if (-not $m.Success) { throw "tag '$env:RELEASE_TAG' must be vX.Y.Z or vX.Y.Z-label (e.g. v1.2.0, v1.2.0-rc.1)" }
+            if ($m.Groups[1].Value -ne $version) { throw "tag $env:RELEASE_TAG does not match the version in CMakeLists.txt ($version)" }
             $label = $m.Groups[2].Value
           }
           "label=$label" >> $env:GITHUB_OUTPUT
@@ -103,7 +114,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      # タグ vX.Y.Z-ラベル のときは、ラベルを exe の製品版と画面のタイトルの版に付ける
+      # リリースのタグが vX.Y.Z-ラベル のときは、ラベルを exe の製品版と画面のタイトルの版に付ける
       - name: Build
         shell: pwsh
         env:
@@ -175,14 +186,14 @@ jobs:
           path: out/ui-screenshots
           if-no-files-found: ignore
 
-      # zip の名前: タグのときは denpachan-X.Y.Z[-ラベル]-win64.zip、それ以外は版の後ろにコミットの短いハッシュを付ける
+      # zip の名前: リリースのときは denpachan-X.Y.Z[-ラベル]-win64.zip、それ以外は版の後ろにコミットの短いハッシュを付ける
       - name: Package
         id: package
         shell: pwsh
         env:
           LABEL: ${{ steps.version.outputs.label }}
         run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag') { ./tools/package.ps1 -Suffix $env:LABEL } else { ./tools/package.ps1 }
+          if ($env:RELEASE_TAG) { ./tools/package.ps1 -Suffix $env:LABEL } else { ./tools/package.ps1 }
           $zip = Get-ChildItem out/dist -Filter '*-win64.zip' | Select-Object -First 1
           $symbols = Get-ChildItem out/dist -Filter '*-win64-symbols.zip' | Select-Object -First 1
           "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
@@ -201,7 +212,7 @@ jobs:
 
       # リリースに付けるファイル (release ジョブが受け取る)
       - name: Hand over the release files
-        if: github.ref_type == 'tag'
+        if: env.RELEASE_TAG != ''
         uses: actions/upload-artifact@v7
         with:
           name: release-files
@@ -210,11 +221,12 @@ jobs:
             ${{ steps.package.outputs.symbols }}
           retention-days: 1
 
-  # タグのときだけ: GitHub Release を作り、配布用の zip と PDB の zip を付ける。
-  # リリースノートは前のタグからの PR・コミットで GitHub が作る (あとで画面から直せる)。ラベル付きのタグはプレリリースにする
+  # リリースのときだけ: GitHub Release を作り、配布用の zip と PDB の zip を付ける。
+  # リリースノートは前のタグからの PR・コミットで GitHub が作る (あとで画面から直せる)。ラベル付きのタグはプレリリースにする。
+  # release.yml から呼ばれたときはタグがまだ無いので、ビルドしたコミット (github.sha) に付けて作る
   release:
     needs: build
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || inputs.release_tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -227,9 +239,10 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.RELEASE_TAG }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
-          flags=(--repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "denpachan ${TAG#v}")
+          flags=(--repo "$GITHUB_REPOSITORY" --generate-notes --title "denpachan ${TAG#v}")
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then flags+=(--verify-tag); else flags+=(--target "$GITHUB_SHA"); fi
           if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
           gh release create "$TAG" release-files/*.zip "${flags[@]}"
